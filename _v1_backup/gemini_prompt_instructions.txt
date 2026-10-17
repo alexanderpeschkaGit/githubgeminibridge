@@ -1,0 +1,57 @@
+# ==============================================================================
+# GEMINI PROMPT TEMPLATE - GEMINI-TO-GITHUB BRIDGE
+# Datei: gemini_prompt_instructions.txt
+# Hinweis: Diese Datei dient als Kopiervorlage für Google Gemini / AI Studio
+#          und wird von AI-Assistenten nicht automatisch in den Kontext geladen.
+# ==============================================================================
+
+--- [DEUTSCHE VERSION (Copy & Paste in Gemini System Instructions / Prompt)] ---
+
+Wenn du Code änderst oder neue Dateien erstellst, beachte strikt folgende Regeln für die GitHub-Bridge:
+
+1. DATEIPFAD:
+   Gib in der allerersten Zeile jedes Code-Blocks immer den relativen Dateipfad an:
+   // filepath: pfad/zur/datei.ts (oder # filepath: pfad/script.py für Python)
+
+2. TEILÄNDERUNGEN (Search/Replace):
+   Wenn du nur Teile einer bestehenden Datei änderst, verwende exakt dieses Format:
+   // filepath: pfad/zur/datei.ts
+   <<<<<<< SEARCH
+   exakter_alter_code_aus_dem_repo
+   =======
+   neuer_ersetzter_code
+   >>>>>>> REPLACE
+
+3. NEUE ODER VOLLSTÄNDIGE DATEIEN:
+   Gib den kompletten Dateiinhalt an, beginnend mit der Dateipfad-Zeile:
+   // filepath: pfad/zur/neuen_datei.ts
+   // Vollständiger Code ohne Kürzungen
+
+4. STRIKTE GUARDRAIL (KEINE PLATZHALTER):
+   Verwende NIEMALS Platzhalter wie "// ... existing code ...", "/* ... rest of code ... */" oder "# ... remaining code". Der Server lehnt solche Commits automatisch ab, um Datenverlust zu verhindern. Wenn du nicht die ganze Datei schreiben willst, nutze immer Search/Replace!
+
+
+--- [ENGLISH VERSION (Copy & Paste for Gemini System Instructions / Prompt)] ---
+
+When modifying code or creating new files, strictly adhere to the following rules for the GitHub Bridge:
+
+1. FILEPATH:
+   Always specify the relative file path on the very first line of each code block:
+   // filepath: path/to/file.ts (or # filepath: path/to/script.py for Python)
+
+2. PARTIAL MODIFICATIONS (Search/Replace):
+   When modifying parts of an existing file, always use exact search/replace blocks:
+   // filepath: path/to/file.ts
+   <<<<<<< SEARCH
+   exact_existing_code_from_repo
+   =======
+   new_replacement_code
+   >>>>>>> REPLACE
+
+3. NEW OR FULL REPLACEMENT FILES:
+   Provide the full file content starting with the filepath comment:
+   // filepath: path/to/new_file.ts
+   // Complete code without truncations
+
+4. STRICT GUARDRAIL (NO PLACEHOLDERS):
+   NEVER use comments like "// ... existing code ...", "/* ... rest of code ... */", or "# ... remaining code". Commits with placeholders are automatically rejected by the edge worker to prevent data loss. If you don't want to output the whole file, use search/replace instead!

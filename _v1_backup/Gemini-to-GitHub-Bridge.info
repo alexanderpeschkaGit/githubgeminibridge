@@ -1,0 +1,53 @@
+# Gemini-to-GitHub Bridge (.info)
+
+Universelle Edge-Brücke und Browser-Integration für atomare 1-Click-Git-Commits und Search/Replace-Patches direkt aus **Google Gemini** (`gemini.google.com`) und **Google AI Studio** (`aistudio.google.com`) in beliebige GitHub-Repositories.
+
+---
+
+## 1. Installation im Browser
+
+Um die 1-Click-Commit-Buttons in Google Gemini und Google AI Studio zu nutzen:
+
+1. **Tampermonkey** oder **Violentmonkey** im Browser öffnen.
+2. **Neues Skript erstellen**.
+3. **Inhalt von `gemini-bridge.user.js` hineinkopieren und speichern.**
+
+### Konfiguration im Browser:
+- Nach der Installation erscheint auf `gemini.google.com` und `aistudio.google.com` ein Einstellungs-Icon bzw. Bridge-Badge.
+- Hier können die **Worker-URL** (Standard: `https://gemini-git-bridge.sikanda.workers.dev`), das **Bridge-Secret**, das **Standard-Repository** (`owner/repo`) und der **Standard-Branch** (z. B. `preview` oder `main`) hinterlegt werden.
+
+---
+
+## 2. Cloudflare Worker Setup & Deployment
+
+Der Worker-Code liegt im Unterverzeichnis `cf-gemini-git-bridge/`.
+
+### Schnellbefehle (Wrangler CLI)
+Vor der Ausführung immer in das Verzeichnis wechseln:
+```bash
+cd cf-gemini-git-bridge
+```
+
+- **Abhängigkeiten installieren:** `npm install`
+- **Lokaler Test:** `npx wrangler dev`
+- **Live Deployment:** `npx wrangler deploy`
+- **GitHub Token hinterlegen:** `npx wrangler secret put GITHUB_TOKEN`
+- **Bridge Secret hinterlegen:** `npx wrangler secret put BRIDGE_SECRET`
+
+### Credentials (Cloudflare Secrets)
+- `GITHUB_TOKEN`: Fine-Grained Personal Access Token (Permissions: `Contents: Read and write`)
+- `BRIDGE_SECRET`: Shared Secret zur Authentifizierung der API-Calls (`Authorization: Bearer <token>` oder `x-bridge-secret: <token>`)
+
+---
+
+## 3. Endpunkte & Nutzung
+
+- `GET /health` (oder `GET /`): Öffentlicher Status-Check (prüft, ob Worker läuft und Secrets gesetzt sind).
+- `POST /push` (oder `/commit`): Führt atomare Commits und Search/Replace-Patches aus.
+- `POST /graphql`: Authentifizierter Proxy für freie GitHub GraphQL Abfragen.
+
+---
+
+## 4. Schutz vor Code-Kürzungen (Hard Guardrail)
+
+Der Worker lehnt Commits automatisch ab (`400 Bad Request`), falls die Patches oder Dateiinhalte Platzhalter wie `// ... existing code ...` oder `/* ... rest of code ... */` enthalten. Damit wird verhindert, dass unvollständiger KI-Code bestehende Dateien zerstört.
