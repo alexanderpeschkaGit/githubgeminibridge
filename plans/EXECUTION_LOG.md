@@ -208,3 +208,32 @@
   - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`10/10` Probes bestanden).
 - **Nächster Schritt:** Ausführung des lokalen Git-Checkpoint-Commits.
 
+### [2026-10-17T05:56:30+02:00] | Orchestrator (Argon Medium) | Planung & Start `/delegate` Welle 5 (`Model: 'flash'`, Complexity `5/10 < 6`): Pflicht-Dekomposition `< 500` Zeilen
+- **Status:** `PLAN_START` / `PLAN_DONE` / `DELEGATE_LAUNCH`
+- **Architektur-Entscheidung (Argon Medium):** Probe 10 hat 3 Dateien über der 500-Zeilen-Schwelle aus `agents.md` identifiziert (`linter.ts` [631], `patcher.ts` [596], `shadowHud.ts` [772]). Wir zerlegen diese in `syntaxScanner.ts` + `linter.ts`, `patchInMemory.ts` + `patcher.ts` sowie `hudStylesAndDom.ts` + `shadowHud.ts` bei 100 % Export-Parität und verankern `over500.length === 0` als harte Bedingung in Probe 10.
+- **Complexity-Gate:** Einzel-Komplexität `5/10 < 6` -> Delegation an **Flash-Subagent (`Model: 'flash'`)** mit Artefakt `wave_5_modularity_decomposition_under_500_lines.md`.
+
+
+
+
+### [2026-10-17T05:58:00+02:00] | Flash-Subagent (Complexity 5/10) | Welle 5: Pflicht-Dekomposition aller Dateien >= 500 Zeilen unter die 500-Zeilen-Grenze
+- **Status:** `START`
+- **Aktion:** Starte Modularitäts-Dekomposition der 3 identifizierten Dateien >= 500 Zeilen (`linter.ts` [631], `patcher.ts` [596], `shadowHud.ts` [772]) in kohärente Submodule (`syntaxScanner.ts`, `patchInMemory.ts`, `hudStylesAndDom.ts`) bei 100 % Export- und Verhaltensparität. Anschließend Verschärfung von Probe 10 in `worker-smoke.mjs` (`over500.length === 0`), Rebuild des Userscripts, TypeScript-Prüfung beider Packages, Verifikation `10/10 PASS`, Protokollierung in `TEST_LOG.md`, `EXECUTION_LOG.md` (`DONE`), `STATE.md` und lokaler Git-Checkpoint-Commit.
+
+### [2026-10-17T06:03:30+02:00] | Flash-Subagent (Complexity 5/10) | Welle 5: Pflicht-Dekomposition aller Dateien >= 500 Zeilen unter die 500-Zeilen-Grenze
+- **Status:** `DONE`
+- **Dekomponierte & neu erstellte Module:**
+  - `packages/edge-worker/src/modules/syntaxScanner.ts` (335 Zeilen): Deterministischer Lexer, Klammer-Stack & AST-Verifier sowie `validateJson` und `registerOxcWasmParser`.
+  - `packages/edge-worker/src/modules/linter.ts` (90 Zeilen, vorher 631): Schlanker Orchestrator mit 100 % Export-Parität für `validateSyntaxInWorker`, `runCustomPreflightRules`, `runPreflightLinter` und `registerOxcWasmParser`.
+  - `packages/edge-worker/src/modules/patchInMemory.ts` (290 Zeilen): V2 In-Memory Patch-Prozessor (`applyPatchesInMemory`), Preflight-Regel-Prüfer (`runBuiltinPreflightRules`, `checkPlaceholderErrors`) und `PreflightLinterHook`.
+  - `packages/edge-worker/src/modules/patcher.ts` (366 Zeilen, vorher 596): Modulares Haupttool B mit 100 % Export-Parität für `handlePatchRequest`, `resolveFileContent`, `applySearchReplace`, `validateNoPlaceholders`, `applyPatchesInMemory` und `LLM_PLACEHOLDER_PATTERNS`.
+  - `packages/userscript-hud/src/ui/hudStylesAndDom.ts` (406 Zeilen): Kapselt `HUD_STYLES` / `HUD_SHADOW_STYLES` und Trusted-Types-konforme DOM-Konstruktions-Helfer (`buildHudDomTree`, `createHudElement`).
+  - `packages/userscript-hud/src/ui/shadowHud.ts` (382 Zeilen, vorher 772): Stateful Controller mit `mountShadowHud` und Action-Handlern.
+  - `scripts/patches_and_tests/worker-smoke.mjs`: Probe 10 verschärft auf strikte Invariante `overLimitZone.length === 0`.
+  - `.agents/rules/edge-worker-architecture.md` & `.agents/rules/userscript-shadow-hud.md`: Dokumentation der Submodule aktualisiert.
+- **Verifikation:**
+  - `tsc --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler, Exit Code 0).
+  - `tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler, Exit Code 0).
+  - `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS` (48.7 KB, byte-identisch mit Root `gemini-bridge.user.js`).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`10/10` Probes bestanden, **0/18** TypeScript-Dateien >= 500 Zeilen).
+- **Nächster Schritt:** Git Checkpoint Commit für Welle 5.

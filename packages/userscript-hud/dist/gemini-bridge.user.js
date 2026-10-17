@@ -466,7 +466,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/shadowHud.ts
+  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -700,22 +700,127 @@ Fix Instructions:
     flex: 1;
   }
 `;
-  function mountShadowHud(onApplyPatchCustom) {
-    if (typeof document === "undefined") {
-      throw new Error("mountShadowHud requires a DOM environment");
-    }
+  var HUD_SHADOW_STYLES = HUD_STYLES;
+  function createHudElement(tag, className, textContent) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (textContent !== void 0) el.textContent = textContent;
+    return el;
+  }
+  function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
       existing.remove();
     }
-    const host = document.createElement("div");
+    const host = createHudElement("div");
     host.id = "gemini-edge-hud-root";
     host.style.cssText = "all: initial; position: fixed; z-index: 2147483647;";
     document.body.appendChild(host);
     const shadowRoot = host.attachShadow({ mode: "open" });
-    const styleEl = document.createElement("style");
+    const styleEl = createHudElement("style");
     styleEl.textContent = HUD_STYLES;
     shadowRoot.appendChild(styleEl);
+    const trigger = createHudElement("div", "hud-trigger");
+    const triggerIcon = createHudElement("span", void 0, "\u26A1");
+    const triggerLabel = createHudElement("span", void 0, "Gemini Edge HUD");
+    const triggerBadge = createHudElement("span", "hud-trigger-badge idle", "IDLE");
+    trigger.appendChild(triggerIcon);
+    trigger.appendChild(triggerLabel);
+    trigger.appendChild(triggerBadge);
+    shadowRoot.appendChild(trigger);
+    const panel = createHudElement("div", "hud-panel");
+    const header = createHudElement("div", "hud-header");
+    const title = createHudElement("div", "hud-title", "\u26A1 Cloudflare Edge HUD (Stage 3)");
+    const closeBtn = createHudElement("button", "hud-close-btn", "\xD7");
+    closeBtn.title = "Close Panel";
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+    panel.appendChild(header);
+    const body = createHudElement("div", "hud-body");
+    const repoRow = createHudElement("div", "hud-form-row");
+    const repoLabel = createHudElement("span", "hud-label", "GitHub Repository (owner/repo)");
+    const repoInput = createHudElement("input", "hud-input");
+    repoInput.value = config.repo;
+    repoRow.appendChild(repoLabel);
+    repoRow.appendChild(repoInput);
+    body.appendChild(repoRow);
+    const branchRow = createHudElement("div", "hud-form-row");
+    const branchLabel = createHudElement("span", "hud-label", "Branch");
+    const branchInput = createHudElement("input", "hud-input");
+    branchInput.value = config.branch;
+    branchRow.appendChild(branchLabel);
+    branchRow.appendChild(branchInput);
+    body.appendChild(branchRow);
+    const secretRow = createHudElement("div", "hud-form-row");
+    const secretLabel = createHudElement("span", "hud-label", "Worker Secret (WORKER_SECRET)");
+    const secretInput = createHudElement("input", "hud-input");
+    secretInput.type = "password";
+    secretInput.value = config.workerSecret;
+    secretRow.appendChild(secretLabel);
+    secretRow.appendChild(secretInput);
+    body.appendChild(secretRow);
+    const oidRow = createHudElement("div", "hud-form-row");
+    const oidLabel = createHudElement("span", "hud-label", "Head OID (Optimistic Concurrency)");
+    const oidBadge = createHudElement("div", "hud-badge-oid", state.headOid || "(Not mixed yet)");
+    oidRow.appendChild(oidLabel);
+    oidRow.appendChild(oidBadge);
+    body.appendChild(oidRow);
+    const actionRow = createHudElement("div");
+    actionRow.style.cssText = "display: flex; gap: 8px;";
+    const mixBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u{1F4E6} Load Repo Mix (/api/mix)");
+    mixBtn.style.flex = "1";
+    actionRow.appendChild(mixBtn);
+    body.appendChild(actionRow);
+    const optRow = createHudElement("div");
+    optRow.style.cssText = "display: flex; align-items: center; justify-content: space-between;";
+    const autoPilotLabel = createHudElement("label", "hud-toggle-label");
+    const autoPilotCheck = createHudElement("input");
+    autoPilotCheck.type = "checkbox";
+    autoPilotCheck.checked = config.autoPilot;
+    const autoPilotText = createHudElement("span", void 0, "\u{1F916} Auto-Pilot Self-Healing");
+    autoPilotLabel.appendChild(autoPilotCheck);
+    autoPilotLabel.appendChild(autoPilotText);
+    const retryIndicator = createHudElement("span", void 0, `Retries: ${state.retryCount}/3`);
+    retryIndicator.style.cssText = "font-size: 11px; color: #94a3b8;";
+    optRow.appendChild(autoPilotLabel);
+    optRow.appendChild(retryIndicator);
+    body.appendChild(optRow);
+    const queueLabel = createHudElement("span", "hud-label", "Harvested Patches");
+    body.appendChild(queueLabel);
+    const patchQueueEl = createHudElement("div", "hud-patch-queue");
+    const emptyQueueMsg = createHudElement("div", void 0, "No patches harvested from chat yet.");
+    emptyQueueMsg.style.cssText = "color: #64748b; font-size: 11px; text-align: center; padding: 6px;";
+    patchQueueEl.appendChild(emptyQueueMsg);
+    body.appendChild(patchQueueEl);
+    const statusBox = createHudElement("div", "hud-status-box idle", state.statusMessage);
+    body.appendChild(statusBox);
+    panel.appendChild(body);
+    shadowRoot.appendChild(panel);
+    return {
+      host,
+      shadowRoot,
+      trigger,
+      triggerBadge,
+      panel,
+      closeBtn,
+      repoInput,
+      branchInput,
+      secretInput,
+      oidBadge,
+      mixBtn,
+      autoPilotCheck,
+      retryIndicator,
+      patchQueueEl,
+      emptyQueueMsg,
+      statusBox
+    };
+  }
+
+  // packages/userscript-hud/src/ui/shadowHud.ts
+  function mountShadowHud(onApplyPatchCustom) {
+    if (typeof document === "undefined") {
+      throw new Error("mountShadowHud requires a DOM environment");
+    }
     const config = loadHudConfig();
     const state = {
       headOid: getStoredValue("head_oid", ""),
@@ -726,151 +831,32 @@ Fix Instructions:
       lastErrors: [],
       harvestedPatches: []
     };
-    const trigger = document.createElement("div");
-    trigger.className = "hud-trigger";
-    const triggerIcon = document.createElement("span");
-    triggerIcon.textContent = "\u26A1";
-    const triggerLabel = document.createElement("span");
-    triggerLabel.textContent = "Gemini Edge HUD";
-    const triggerBadge = document.createElement("span");
-    triggerBadge.className = "hud-trigger-badge idle";
-    triggerBadge.textContent = "IDLE";
-    trigger.appendChild(triggerIcon);
-    trigger.appendChild(triggerLabel);
-    trigger.appendChild(triggerBadge);
-    shadowRoot.appendChild(trigger);
-    const panel = document.createElement("div");
-    panel.className = "hud-panel";
-    const header = document.createElement("div");
-    header.className = "hud-header";
-    const title = document.createElement("div");
-    title.className = "hud-title";
-    title.textContent = "\u26A1 Cloudflare Edge HUD (Stage 3)";
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "hud-close-btn";
-    closeBtn.textContent = "\xD7";
-    closeBtn.title = "Close Panel";
-    header.appendChild(title);
-    header.appendChild(closeBtn);
-    panel.appendChild(header);
-    const body = document.createElement("div");
-    body.className = "hud-body";
-    const repoRow = document.createElement("div");
-    repoRow.className = "hud-form-row";
-    const repoLabel = document.createElement("span");
-    repoLabel.className = "hud-label";
-    repoLabel.textContent = "GitHub Repository (owner/repo)";
-    const repoInput = document.createElement("input");
-    repoInput.className = "hud-input";
-    repoInput.value = config.repo;
-    repoRow.appendChild(repoLabel);
-    repoRow.appendChild(repoInput);
-    body.appendChild(repoRow);
-    const branchRow = document.createElement("div");
-    branchRow.className = "hud-form-row";
-    const branchLabel = document.createElement("span");
-    branchLabel.className = "hud-label";
-    branchLabel.textContent = "Branch";
-    const branchInput = document.createElement("input");
-    branchInput.className = "hud-input";
-    branchInput.value = config.branch;
-    branchRow.appendChild(branchLabel);
-    branchRow.appendChild(branchInput);
-    body.appendChild(branchRow);
-    const secretRow = document.createElement("div");
-    secretRow.className = "hud-form-row";
-    const secretLabel = document.createElement("span");
-    secretLabel.className = "hud-label";
-    secretLabel.textContent = "Worker Secret (WORKER_SECRET)";
-    const secretInput = document.createElement("input");
-    secretInput.type = "password";
-    secretInput.className = "hud-input";
-    secretInput.value = config.workerSecret;
-    secretRow.appendChild(secretLabel);
-    secretRow.appendChild(secretInput);
-    body.appendChild(secretRow);
-    const oidRow = document.createElement("div");
-    oidRow.className = "hud-form-row";
-    const oidLabel = document.createElement("span");
-    oidLabel.className = "hud-label";
-    oidLabel.textContent = "Head OID (Optimistic Concurrency)";
-    const oidBadge = document.createElement("div");
-    oidBadge.className = "hud-badge-oid";
-    oidBadge.textContent = state.headOid || "(Not mixed yet)";
-    oidRow.appendChild(oidLabel);
-    oidRow.appendChild(oidBadge);
-    body.appendChild(oidRow);
-    const actionRow = document.createElement("div");
-    actionRow.style.cssText = "display: flex; gap: 8px;";
-    const mixBtn = document.createElement("button");
-    mixBtn.className = "hud-btn hud-btn-primary";
-    mixBtn.style.flex = "1";
-    mixBtn.textContent = "\u{1F4E6} Load Repo Mix (/api/mix)";
-    actionRow.appendChild(mixBtn);
-    body.appendChild(actionRow);
-    const optRow = document.createElement("div");
-    optRow.style.cssText = "display: flex; align-items: center; justify-content: space-between;";
-    const autoPilotLabel = document.createElement("label");
-    autoPilotLabel.className = "hud-toggle-label";
-    const autoPilotCheck = document.createElement("input");
-    autoPilotCheck.type = "checkbox";
-    autoPilotCheck.checked = config.autoPilot;
-    const autoPilotText = document.createElement("span");
-    autoPilotText.textContent = "\u{1F916} Auto-Pilot Self-Healing";
-    autoPilotLabel.appendChild(autoPilotCheck);
-    autoPilotLabel.appendChild(autoPilotText);
-    const retryIndicator = document.createElement("span");
-    retryIndicator.style.cssText = "font-size: 11px; color: #94a3b8;";
-    retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
-    optRow.appendChild(autoPilotLabel);
-    optRow.appendChild(retryIndicator);
-    body.appendChild(optRow);
-    const queueLabel = document.createElement("span");
-    queueLabel.className = "hud-label";
-    queueLabel.textContent = "Harvested Patches";
-    body.appendChild(queueLabel);
-    const patchQueueEl = document.createElement("div");
-    patchQueueEl.className = "hud-patch-queue";
-    const emptyQueueMsg = document.createElement("div");
-    emptyQueueMsg.style.cssText = "color: #64748b; font-size: 11px; text-align: center; padding: 6px;";
-    emptyQueueMsg.textContent = "No patches harvested from chat yet.";
-    patchQueueEl.appendChild(emptyQueueMsg);
-    body.appendChild(patchQueueEl);
-    const statusBox = document.createElement("div");
-    statusBox.className = "hud-status-box idle";
-    statusBox.textContent = state.statusMessage;
-    body.appendChild(statusBox);
-    panel.appendChild(body);
-    shadowRoot.appendChild(panel);
+    const dom = buildHudDomTree(config, state);
     function renderState() {
-      triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
-      triggerBadge.textContent = state.status;
+      dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
+      dom.triggerBadge.textContent = state.status;
       if (state.headOid) {
-        oidBadge.textContent = state.headOid;
-        oidBadge.style.color = "#6ee7b7";
+        dom.oidBadge.textContent = state.headOid;
+        dom.oidBadge.style.color = "#6ee7b7";
       } else {
-        oidBadge.textContent = "(Not mixed yet)";
-        oidBadge.style.color = "#94a3b8";
+        dom.oidBadge.textContent = "(Not mixed yet)";
+        dom.oidBadge.style.color = "#94a3b8";
       }
-      retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
-      statusBox.className = `hud-status-box ${state.status === "ERROR" || state.status === "PREFLIGHT_FAILED" || state.status === "GIT_CONFLICT" ? "error" : state.status === "COMMITTED" ? "success" : state.status === "MIXING" || state.status === "PATCHING" ? "info" : "idle"}`;
-      statusBox.textContent = "";
-      const mainMsg = document.createElement("div");
-      mainMsg.textContent = state.statusMessage;
-      statusBox.appendChild(mainMsg);
+      dom.retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
+      dom.statusBox.className = `hud-status-box ${state.status === "ERROR" || state.status === "PREFLIGHT_FAILED" || state.status === "GIT_CONFLICT" ? "error" : state.status === "COMMITTED" ? "success" : state.status === "MIXING" || state.status === "PATCHING" ? "info" : "idle"}`;
+      dom.statusBox.textContent = "";
+      const mainMsg = createHudElement("div", void 0, state.statusMessage);
+      dom.statusBox.appendChild(mainMsg);
       if (state.lastErrors && state.lastErrors.length > 0) {
-        const errList = document.createElement("ul");
+        const errList = createHudElement("ul");
         errList.style.cssText = "margin: 6px 0 0 16px; padding: 0; font-size: 11px;";
         state.lastErrors.forEach((err) => {
-          const li = document.createElement("li");
-          li.textContent = `[${err.stage}] ${err.file}: ${err.message}`;
+          const li = createHudElement("li", void 0, `[${err.stage}] ${err.file}: ${err.message}`);
           errList.appendChild(li);
         });
-        statusBox.appendChild(errList);
-        const healBtn = document.createElement("button");
-        healBtn.className = "hud-btn hud-btn-secondary";
+        dom.statusBox.appendChild(errList);
+        const healBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F527} Send Self-Healing Prompt to Chat");
         healBtn.style.cssText = "margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;";
-        healBtn.textContent = "\u{1F527} Send Self-Healing Prompt to Chat";
         healBtn.onclick = () => {
           const nextRetry = (state.retryCount || 0) + 1;
           const prompt = buildSelfHealingPrompt(
@@ -886,84 +872,83 @@ Fix Instructions:
             statusMessage: `\u{1F527} Injected self-healing prompt (Turn ${nextRetry}/${MAX_SELF_HEALING_RETRIES}) into chat.`
           });
         };
-        statusBox.appendChild(healBtn);
+        dom.statusBox.appendChild(healBtn);
       }
-      patchQueueEl.textContent = "";
+      dom.patchQueueEl.textContent = "";
       if (state.harvestedPatches.length === 0) {
-        patchQueueEl.appendChild(emptyQueueMsg);
+        dom.patchQueueEl.appendChild(dom.emptyQueueMsg);
       } else {
         state.harvestedPatches.forEach((patch) => {
-          const item = document.createElement("div");
-          item.className = "hud-patch-item";
-          const itemTitle = document.createElement("div");
-          itemTitle.className = "hud-patch-item-title";
-          itemTitle.textContent = `${patch.mode === "v2_json" ? "\u26A1" : "\u{1F4DD}"} ${patch.commitMessage}`;
+          const item = createHudElement("div", "hud-patch-item");
+          const itemTitle = createHudElement(
+            "div",
+            "hud-patch-item-title",
+            `${patch.mode === "v2_json" ? "\u26A1" : "\u{1F4DD}"} ${patch.commitMessage}`
+          );
           itemTitle.title = patch.commitMessage;
-          const applyBtn = document.createElement("button");
-          applyBtn.className = "hud-btn hud-btn-primary";
+          const applyBtn = createHudElement("button", "hud-btn hud-btn-primary", "Apply");
           applyBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
-          applyBtn.textContent = "Apply";
           applyBtn.onclick = () => {
             controller.handleApplyPatch(patch);
           };
           item.appendChild(itemTitle);
           item.appendChild(applyBtn);
-          patchQueueEl.appendChild(item);
+          dom.patchQueueEl.appendChild(item);
         });
       }
     }
     const openPanel = () => {
-      panel.classList.add("open");
+      dom.panel.classList.add("open");
     };
     const closePanel = () => {
-      panel.classList.remove("open");
+      dom.panel.classList.remove("open");
     };
-    trigger.onclick = () => {
-      if (panel.classList.contains("open")) {
+    dom.trigger.onclick = () => {
+      if (dom.panel.classList.contains("open")) {
         closePanel();
       } else {
         openPanel();
       }
     };
-    closeBtn.onclick = closePanel;
-    repoInput.onchange = () => {
+    dom.closeBtn.onclick = closePanel;
+    dom.repoInput.onchange = () => {
       try {
-        const sanitized = sanitizeNoGithubPat(repoInput.value.trim(), "repo");
+        const sanitized = sanitizeNoGithubPat(dom.repoInput.value.trim(), "repo");
         config.repo = sanitized;
         saveHudConfig({ repo: sanitized });
       } catch (e) {
         alert(e.message);
-        repoInput.value = config.repo;
+        dom.repoInput.value = config.repo;
       }
     };
-    branchInput.onchange = () => {
+    dom.branchInput.onchange = () => {
       try {
-        const sanitized = sanitizeNoGithubPat(branchInput.value.trim(), "branch");
+        const sanitized = sanitizeNoGithubPat(dom.branchInput.value.trim(), "branch");
         config.branch = sanitized;
         saveHudConfig({ branch: sanitized });
       } catch (e) {
         alert(e.message);
-        branchInput.value = config.branch;
+        dom.branchInput.value = config.branch;
       }
     };
-    secretInput.onchange = () => {
+    dom.secretInput.onchange = () => {
       try {
-        const sanitized = sanitizeNoGithubPat(secretInput.value.trim(), "workerSecret");
+        const sanitized = sanitizeNoGithubPat(dom.secretInput.value.trim(), "workerSecret");
         config.workerSecret = sanitized;
         saveHudConfig({ workerSecret: sanitized });
       } catch (e) {
         alert(e.message);
-        secretInput.value = config.workerSecret;
+        dom.secretInput.value = config.workerSecret;
       }
     };
-    autoPilotCheck.onchange = () => {
-      config.autoPilot = autoPilotCheck.checked;
+    dom.autoPilotCheck.onchange = () => {
+      config.autoPilot = dom.autoPilotCheck.checked;
       saveHudConfig({ autoPilot: config.autoPilot });
     };
-    mixBtn.onclick = async () => {
+    dom.mixBtn.onclick = async () => {
       try {
-        mixBtn.disabled = true;
-        mixBtn.style.opacity = "0.6";
+        dom.mixBtn.disabled = true;
+        dom.mixBtn.style.opacity = "0.6";
         controller.updateState({
           status: "MIXING",
           statusMessage: `\u23F3 Streaming repo mix for ${config.repo} (${config.branch})...`
@@ -990,8 +975,8 @@ Fix Instructions:
           statusMessage: `\u274C Mix error: ${err.message || String(err)}`
         });
       } finally {
-        mixBtn.disabled = false;
-        mixBtn.style.opacity = "1";
+        dom.mixBtn.disabled = false;
+        dom.mixBtn.style.opacity = "1";
       }
     };
     const handleApplyPatch = async (patch) => {

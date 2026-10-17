@@ -69,3 +69,16 @@
     - Bundle-Integrität & Synchronisation: `PASS` (`dist/gemini-bridge.user.js` und Root `gemini-bridge.user.js` sind byte-identisch [50.466 Bytes], nicht leer).
 - **GESAMTSTATUS**: `PASS`
 
+
+### [2026-10-17T06:03:00+02:00] | Welle 5: Pflicht-Dekomposition unter 500 Zeilen (`linter.ts`, `patcher.ts`, `shadowHud.ts`) & Probe 10 Enforcement
+- **1. TypeScript Compile (`packages/edge-worker`)**: `PASS` (`tsc --noEmit -p packages/edge-worker/tsconfig.json` -> Exit Code 0, 0 Errors in `linter.ts`, `syntaxScanner.ts`, `patcher.ts`, `patchInMemory.ts`, `mixer.ts`, `index.ts`, `github.ts`, `encoding.ts`).
+- **2. TypeScript Compile (`packages/userscript-hud`)**: `PASS` (`tsc --noEmit -p packages/userscript-hud/tsconfig.json` -> Exit Code 0, 0 Errors in `shadowHud.ts`, `hudStylesAndDom.ts`, `selfHealing.ts`, `storage.ts`, `workerClient.ts`, `injector.ts`, `harvester.ts`, `index.ts`).
+- **3. Userscript Bundler (`packages/userscript-hud/scripts/build-userscript.mjs`)**: `PASS` (Bundled via esbuild IIFE target ES2022, generated `dist/gemini-bridge.user.js` [48.7 KB] and synchronized with root `gemini-bridge.user.js`).
+- **4. Smoke-Test-Suite (`node scripts/patches_and_tests/worker-smoke.mjs`)**: `PASS` (`10/10` Probes bestanden mit harter `< 500`-Zeilen-Bedingung):
+  - Probes 1–9 (`PASS`): Monorepo Integrity, Placeholder Guardrail, GitHub Connectors, Worker Dual Secrets, Live `/health`, Stage 1 Mixer, Stage 2 Patcher, Stage 3 Userscript HUD, Stage 4 Pre-Flight Linter & Self-Healing Loop.
+  - Probe 10 (`PASS`): Harte Modularity-Bedingung `overLimitZone.length === 0 && bundlesIdentical && distStat.size > 0`:
+    - Gesamt auditierte TypeScript-Quelldateien: 18 Dateien.
+    - **Dateien >= 500 Zeilen: 0 Dateien! (100 % Konformität mit dem < 500-Zeilen-Grenzwert aus `agents.md`).**
+    - Alle 18 Dateien sind vollständig im grünen Bereich bzw. in der erlaubten Warnzone (300–499 Zeilen).
+    - Bundle-Integrität & Synchronisation: `PASS` (byte-identisch, 48.7 KB, nicht leer).
+- **GESAMTSTATUS**: `PASS`

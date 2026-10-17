@@ -59,7 +59,7 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Erzeuge valides XML im Format `<repository repo="..." branch="..." headOid="..."><file_tree>...</file_tree><files><file path="..."><![CDATA[...]]></file></files></repository>`.
    - Escape vorhandene `]]>`-Sequenzen im Dateiinhalt sicher als `]]]]><![CDATA[>` (`escapeCdata`), damit CDATA-Blöcke niemals aufbrechen.
 
-### B. Untertool B: `src/modules/patcher.ts` & `src/utils/github.ts` (Stufe 2)
+### B. Untertool B: `src/modules/patcher.ts` & `src/modules/patchInMemory.ts` & `src/utils/github.ts` (Stufe 2)
 1. **1-Subrequest GraphQL Batch-Read:**
    - Nutze `fetchMultipleFilesViaGraphQL` in `src/utils/github.ts`, um alle zu patchenden Dateien über dynamische GraphQL-Aliases (`f0: object(expression: $exp_0) { ... on Blob { text isTruncated } }`) in **einem einzigen** Subrequest zu laden.
 2. **Multi-Strategy Search/Replace (`applySearchReplace`):**
@@ -72,17 +72,18 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
 4. **Idempotenz, Concurrency & `PreflightLinterHook`:**
    - Prüfe vorab `expectedHeadOid` gegen `getBranchHeadOid`; weicht der Branch-HEAD ab, gib sofort `status: "GIT_CONFLICT"` zurück.
    - Biete in `handlePatchRequest` einen typisierten Hook (`PreflightLinterHook`) sowie Basis-Prüfungen für `preflight.forbidPatterns` / `preflight.requireExports`, in den sich Stufe 4 (`linter.ts`) ohne Refactoring von `patcher.ts` einklinkt.
+   - Die in-Memory-Verarbeitung und Preflight-Auswertung ist in `src/modules/patchInMemory.ts` gekapselt und bleibt über `patcher.ts` zu 100 % re-exportiert.
    - Ergibt das Patchen exakt denselben Inhalt wie auf GitHub (`additions.length === 0 && deletions.length === 0`), gib `status: "NO_CHANGES_NEEDED"` zurück.
 
-### C. Untertool C: `src/modules/linter.ts` (Stufe 4)
+### C. Untertool C: `src/modules/linter.ts` & `src/modules/syntaxScanner.ts` (Stufe 4)
 1. **Kein Fail-Fast (Fehler-Aggregation):**
    - Brich niemals beim ersten fehlgeschlagenen Search-Block oder Syntaxfehler ab. Sammle alle Fehler aus allen Dateien im Array `errors: LinterError[]` (`SEARCH_REPLACE`, `OXC_SYNTAX`, `CUSTOM_RULE`), damit Gemini alle Probleme in einem einzigen Korrektur-Turn beheben kann.
 2. **Syntax- & AST-Prüfung (`validateSyntaxInWorker`):**
-   - Deterministischer Lexer & Klammer-/Struktur-Verifier (< 5 ms Laufzeit im Worker-RAM) für `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` sowie `JSON.parse` für `.json`.
+   - Deterministischer Lexer & Klammer-/Struktur-Verifier (< 5 ms Laufzeit im Worker-RAM) für `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` sowie `JSON.parse` für `.json` (gekapselt in `src/modules/syntaxScanner.ts`).
    - Erkennt nicht geschlossene Strings/Comments/Templates, Bracket-Mismatches und verbliebene Git-Merge-Conflict-Marker (`<<<<<<<`, `=======`, `>>>>>>>`).
    - Unterstützt optionalen pluggbaren `registerOxcWasmParser` Hook.
 3. **Automatischer Hook (`runPreflightLinter`):**
    - Fungiert als Standard-`preflightHook` in `applyPatchesInMemory` und `handlePatchRequest`, aggregiert Syntax- und Custom-Rules (`validateNoPlaceholders`, `forbidPatterns`, `requireExports`) und dedupliziert identische Fehler-Einträge.
 4. **Validierung vor Abschluss:**
-   - Jede Änderung an `packages/edge-worker/` erfordert zwingend `npx tsc --noEmit` (im Arbeitsverzeichnis `packages/edge-worker`) sowie einen Lauf von `node scripts/patches_and_tests/worker-smoke.mjs` (inkl. Probes 1–9).
+   - Jede Änderung an `packages/edge-worker/` erfordert zwingend `npx tsc --noEmit` (im Arbeitsverzeichnis `packages/edge-worker`) sowie einen Lauf von `node scripts/patches_and_tests/worker-smoke.mjs` (inkl. aller 10 Probes mit harter `< 500`-Zeilen-Bedingung).
 

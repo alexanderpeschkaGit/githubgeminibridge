@@ -392,7 +392,7 @@ async function main() {
       bundleByteIdentical = distBuf.length > 0 && distBuf.equals(rootBuf);
     }
 
-    const pass = allTsFiles.length > 0 && distExists && rootExists && bundleByteIdentical && bundleSize > 0;
+    const pass = allTsFiles.length > 0 && overLimitZone.length === 0 && distExists && rootExists && bundleByteIdentical && bundleSize > 0;
 
     return {
       pass,

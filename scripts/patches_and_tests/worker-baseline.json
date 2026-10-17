@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-17T03:53:11.842Z",
+  "timestamp": "2026-10-17T04:02:11.987Z",
   "overallStatus": "PASS",
   "passedCount": 10,
   "totalProbes": 10,
@@ -104,15 +104,23 @@
       "id": 10,
       "name": "File-Size Modularity Audit (<500 lines) & End-to-End Artifact Completeness",
       "pass": true,
-      "totalTsFilesAudited": 15,
-      "warningZoneFilesCount": 3,
-      "overLimitFilesCount": 3,
+      "totalTsFilesAudited": 18,
+      "warningZoneFilesCount": 7,
+      "overLimitFilesCount": 0,
       "bundleByteIdentical": true,
-      "bundleSize": 50466,
+      "bundleSize": 49842,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
           "lines": 487
+        },
+        {
+          "file": "packages/edge-worker/src/modules/patcher.ts",
+          "lines": 366
+        },
+        {
+          "file": "packages/edge-worker/src/modules/syntaxScanner.ts",
+          "lines": 335
         },
         {
           "file": "packages/edge-worker/src/utils/github.ts",
@@ -121,22 +129,17 @@
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
           "lines": 370
-        }
-      ],
-      "overLimitZone": [
-        {
-          "file": "packages/edge-worker/src/modules/linter.ts",
-          "lines": 631
         },
         {
-          "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 596
+          "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
+          "lines": 406
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 772
+          "lines": 382
         }
       ],
+      "overLimitZone": [],
       "audit": [
         {
           "file": "packages/edge-worker/src/index.ts",
@@ -144,7 +147,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/linter.ts",
-          "lines": 631
+          "lines": 90
         },
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
@@ -152,7 +155,15 @@
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 596
+          "lines": 366
+        },
+        {
+          "file": "packages/edge-worker/src/modules/patchInMemory.ts",
+          "lines": 290
+        },
+        {
+          "file": "packages/edge-worker/src/modules/syntaxScanner.ts",
+          "lines": 335
         },
         {
           "file": "packages/edge-worker/src/types.ts",
@@ -195,8 +206,12 @@
           "lines": 95
         },
         {
+          "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
+          "lines": 406
+        },
+        {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 772
+          "lines": 382
         }
       ]
     }

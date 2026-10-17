@@ -4,9 +4,9 @@
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
 
 ## Aktuelle Phase
-- **Aktive Stufe:** **Welle 4 (Funktionaler E2E-Runtime-Test, Dateigrößen-Audit & Lokaler Git-Checkpoint)** erfolgreich abgeschlossen (`10/10 PASS`). **Alle Stufen (Stufe 0 bis 4) sind vollständig umgesetzt, modular auditiert und verifiziert.**
+- **Aktive Stufe:** **Welle 5 (Pflicht-Dekomposition aller Dateien >= 500 Zeilen, Probe 10 Enforcement & Lokaler Git-Checkpoint)** erfolgreich abgeschlossen (`10/10 PASS`). **100 % aller 18 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
 - **Modell-Politik:** Vorab-Gesamtplanung & Strukturierung aller Parts auf **Argon High oder Argon Medium (`pro`/`inherit`)**; Ausführung & `/delegate` der Arbeitspakete mit `Complexity < 6` auf **Flash (`Model: 'flash'`)** und ab `Complexity >= 6` auf **Argon Medium (`Model: 'pro'`)**
-- **Letztes Update:** 2026-10-17T05:55:00+02:00 (Welle 4 abgeschlossen: Probe 10 Dateigrößen-/Modularitäts-Audit & Bundle-Sync-Prüfung in `worker-smoke.mjs` integriert, 10/10 Probes bestanden, `.gitignore` angelegt und lokaler Git-Checkpoint-Commit vorbereitet).
+- **Letztes Update:** 2026-10-17T06:03:30+02:00 (Welle 5 abgeschlossen: `linter.ts`, `patcher.ts` und `shadowHud.ts` modular dekomponiert in `syntaxScanner.ts`, `patchInMemory.ts` und `hudStylesAndDom.ts`, Probe 10 auf `overLimitZone.length === 0` verschärft, 10/10 Probes bestanden, Userscript neu gebaut & synchronisiert).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**
@@ -37,9 +37,9 @@
 - [x] **Welle 4 (Sub-Chat / `#delegate #flash`): Funktionaler E2E-Runtime-Test, Dateigrößen-Audit & Lokaler Git-Checkpoint**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: Erweiterung der Smoke-Suite um Probe 10 (`10/10 PASS`), Dateigrößen-Audit aller 15 TypeScript-Dateien, Userscript-Bundle Byte-Identitätsprüfung, Root `.gitignore` und lokaler Git-Checkpoint-Commit.
+- [x] **Welle 5 (Sub-Chat / `#delegate #flash`): Pflicht-Dekomposition unter 500 Zeilen & Probe 10 Modularity-Enforcement**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: Zerlegung von `linter.ts` (90 Z.) + `syntaxScanner.ts` (335 Z.), `patcher.ts` (366 Z.) + `patchInMemory.ts` (290 Z.) und `shadowHud.ts` (382 Z.) + `hudStylesAndDom.ts` (406 Z.) bei 100 % Export- und Verhaltensparität. Verschärfung von Probe 10 auf `overLimitZone.length === 0` (`10/10 PASS`). Alle 18 aktiven TypeScript-Quelldateien liegen ausnahmslos unter dem 500-Zeilen-Grenzwert!
 
 ## Offene Entscheidungen / Blocker
-- *Keine Blocker.* Alle Stufen (Stufe 0 bis 4) sind vollständig umgesetzt, typgeprüft und durch 10/10 Probes verifiziert.
-- *Modularisierungs-Vorschau (künftige Argon High Dekomposition):* Für die 3 Dateien in der Dekompositionszone (`packages/edge-worker/src/modules/linter.ts` [631], `packages/edge-worker/src/modules/patcher.ts` [596], `packages/userscript-hud/src/ui/shadowHud.ts` [772]) kann bei Bedarf in einer separaten Refactoring-Session eine Aufteilung in Submodule vorgenommen werden.
-
-
+- *Keine Blocker.* Sämtliche Komponenten (Stufe 0 bis 4) und alle 18 TypeScript-Dateien sind 100 % typgeprüft, modular unter 500 Zeilen dekomponiert und durch alle 10 Smoke-Probes verifiziert.
