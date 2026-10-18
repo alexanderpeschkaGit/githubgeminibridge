@@ -296,3 +296,50 @@
   - `GET /health`: HTTP 200 `{ status: 'ok', service: 'gemini-git-bridge', version: '2.0.0', hasBridgeSecret: true, hasGithubToken: true }`
   - Smoke Suite: `12/12 PASS`.
 
+### [2026-10-18T14:44:00+02:00] | Orchestrator (Argon High) | #plan & #grillme: RepoMix 85k Character-Cutoff & Atomic File Chunking
+- **Status:** `PLAN_START`
+- **Architektur-Entscheidung:**
+  - Root Cause: Gemini schneidet hochgeladene Dateien ab 100.000 Zeichen hart mit `...` ab; der Worker teilte bisher mit `DEFAULT_MAX_CHUNK_BYTES = 512KB` auf 4 Chunks (~160k–250k Chars) auf, wodurch Chunks mitten in Dateien abgeschnitten wurden.
+  - Zielarchitektur: Exakte Zeichen-Budgetierung auf **85.000 Zeichen** (15 % Sicherheitsabstand zum 100k-Cutoff), atomare Trennung strikt **vor** dem Beginn einer neuen Datei (wie bei Repomix), `<file_tree>`-Optimierung für Folgeparts (Part 1 vollständiger Baum, Folgeparts fokussiert) und Übergrößen-Schutz für Einzelfeilen > 85k/100k Zeichen.
+- **Complexity-Score:** `4/10` (Klar begrenzte Änderungen in `mixChunker.ts`, `shared/types.ts`, `hudStylesAndDom.ts`, `shadowHud.ts`, Probe 12).
+- **Modell-Zuweisung:** Planung & #grillme auf **Argon High**, spätere Ausführung via Flash-Subagent (`Model: 'flash'`, Complexity `4/10 < 6`).
+
+### [2026-10-18T14:47:30+02:00] | Orchestrator (Argon Medium) | `#review` & Start `/delegate` (`Model: 'flash'`, Complexity `4/10`): Stage 6.1 RepoMix 85k Character Limit & Atomic File Boundaries
+- **Status:** `PLAN_DONE` / `DELEGATE_LAUNCH`
+- **Review-Befund (`#review`):**
+  1. **Exakte XML-Zeichenbudgetierung vs. rohe String-Schätzung:** In [mixChunker.ts](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/packages/edge-worker/src/modules/mixChunker.ts#L50-L110) wurde bisher mit `+ 60` geschätzt; bei CDATA-Escaping (`escapeCdata`) oder langen `<file_tree>`-Blöcken konnte `partXml.length` höher ausfallen. Der aktualisierte Algorithmus berechnet den exakten `<file path="...">`-Block inkl. `escapeCdata(f.content)` vorab und garantiert `partXml.length <= maxChunkChars` (85.000 Standard, hartes Gemini-Limit 100.000).
+  2. **`<file_tree>`-Budget-Schutz:** Part 1 enthält den gesamten Repository-Baum; Parts `2..N` betten im `<file_tree>` nur die Pfade der im jeweiligen Part enthaltenen Dateien ein, um bis zu 30k Zeichen pro Folgechunk für echten Code freizuhalten.
+  3. **Übergroße Einzeldateien (`> 85k` / `> 100k`):** Dateien, deren kompletter XML-Part `<= 100.000` Zeichen misst, erhalten einen isolierten Einzel-Part; Dateien `> 100.000` Zeichen werden vor der Partitionierung ausgesondert und im `<file_tree>` von Part 1 mit `[SKIPPED: >100k chars for Gemini Chat limit]` markiert.
+  4. **500-Zeilen-Gesetz (`P1` Global Invariant 2):** [mixer.ts](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/packages/edge-worker/src/modules/mixer.ts) (447 Z.), [hudStylesAndDom.ts](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/packages/userscript-hud/src/ui/hudStylesAndDom.ts) (418 Z.) und [shadowHud.ts](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/packages/userscript-hud/src/ui/shadowHud.ts) (404 Z.) bleiben durch kompakte Integration sicher `< 460` Zeilen.
+- **Aktion:** Erzeuge Ausführungs-Artefakt `stage_6_1_repomix_85k_char_chunking.md` und starte isolierten Flash-Subagenten (`Role: "Artifact Executor"`, `Model: "flash"`).
+
+### [2026-10-18T14:50:00+02:00] | Flash-Subagent (Complexity 4/10) | Stage 6.1: RepoMix 85k Character Limit & Atomic File Boundaries
+- **Status:** `START`
+- **Aktion:** Starte Implementierung von Stage 6.1 gemäß Artefakt-Plan:
+  1. Shared Types Update (`MixPart`, `MixRequest.maxChunkChars`, `MixResponse.stats.charCount`, `HudConfig.maxChunkChars`).
+  2. Implementierung von `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, exakter Zeichen-Budgetierung und atomarer File-Partitionierung in `packages/edge-worker/src/modules/mixChunker.ts` und `mixer.ts`.
+  3. UI- und Storage-Erweiterung im Userscript HUD (`storage.ts`, `workerClient.ts`, `hudStylesAndDom.ts`, `shadowHud.ts`).
+  4. Userscript Bundle-Build und Verschärfung von Probe 12 in `worker-smoke.mjs`.
+  5. Verifikation via TypeScript Typecheck über alle 3 Packages und Testsuite-Lauf (`12/12 PASS`).
+
+### [2026-10-18T14:56:00+02:00] | Flash-Subagent (Complexity 4/10) | Stage 6.1: RepoMix 85k Character Limit & Atomic File Boundaries
+- **Status:** `DONE`
+- **Umgesetzte Komponenten:**
+  - `shared/types.ts`: `MixPart.stats.charCount`, `MixRequest.maxChunkChars`, `MixResponse.stats.charCount` hinzugefügt.
+  - `packages/edge-worker/src/modules/mixChunker.ts`: 85k Zeichen-Budgetierung (`DEFAULT_MAX_CHUNK_CHARS = 85_000`), harter 100k-Abschneidungsschutz (`HARD_GEMINI_CHAR_LIMIT = 100_000`), atomare Trennung ohne Zerschneiden von Dateien, hierarchische Baum-Generierung (Part 1 vollständiger Baum bis 14k Chars, Folgeparts fokussierter Teilbaum) und Aussonderung übergroßer Dateien > 100k Chars mit `[SKIPPED: >100k chars for Gemini Chat limit]`.
+  - `packages/edge-worker/src/modules/mixer.ts`: `maxChunkChars` an `buildChunkedMixXml` durchgereicht; Datei bleibt mit 448 Zeilen sicher unter dem 500-Zeilen-Gesetz.
+  - `packages/userscript-hud/src/types.ts`: `maxChunkChars: number;` in `HudConfig` integriert.
+  - `packages/userscript-hud/src/services/storage.ts`: `DEFAULT_HUD_CONFIG.maxChunkChars = 85000`, Speichern und Laden mit Sanitizer (10k-95k) verankert.
+  - `packages/userscript-hud/src/services/workerClient.ts`: `maxChunkChars` in `requestRepoMix` Payload übergeben.
+  - `packages/userscript-hud/src/ui/hudStylesAndDom.ts`: `maxChunkCharsInput` (Type Number, Default 85000) im Drawer ergänzt; 430 Zeilen (< 500).
+  - `packages/userscript-hud/src/ui/shadowHud.ts`: `maxChunkCharsInput.onchange` Event-Handler verdrahtet; Statusmeldung zeigt Part-Breakdown mit exakten Zeichenzahlen an (`[P1: ... chars, P2: ... chars]`); 421 Zeilen (< 500).
+  - `packages/userscript-hud/dist/gemini-bridge.user.js` & `gemini-bridge.user.js`: Erfolgreich neu gebaut und synchronisiert (54.118 Bytes).
+  - `.agents/rules/edge-worker-architecture.md` & `.agents/rules/userscript-shadow-hud.md`: Regeldateien mit neuen Verträgen synchronisiert.
+  - `scripts/patches_and_tests/worker-smoke.mjs`: Probe 12 um 85k Zeichen-Budgetierungs- und Atomic-Boundary-Tests erweitert.
+- **Verifikation:**
+  - TypeScript Typecheck über alle 3 Packages (`edge-worker`, `userscript-hud`, `local-cli`): `PASS` (0 Fehler).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`12/12` Probes bestanden, **0/24** TypeScript-Dateien >= 500 Zeilen).
+
+
+
+

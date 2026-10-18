@@ -204,6 +204,19 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     }
   };
 
+  dom.maxChunkCharsInput.onchange = () => {
+    try {
+      const val = parseInt(dom.maxChunkCharsInput.value, 10);
+      const safe = Math.max(10000, Math.min(95000, Number.isFinite(val) ? val : 85000));
+      config.maxChunkChars = safe;
+      dom.maxChunkCharsInput.value = String(safe);
+      saveHudConfig({ maxChunkChars: safe });
+    } catch (e: any) {
+      alert(e.message);
+      dom.maxChunkCharsInput.value = String(config.maxChunkChars || 85000);
+    }
+  };
+
   dom.secretInput.onchange = () => {
     try {
       const sanitized = sanitizeNoGithubPat(dom.secretInput.value.trim(), 'workerSecret');
@@ -238,18 +251,22 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
         let injected = false;
         if (res.parts && res.parts.length > 1) {
+          const partBreakdown = res.parts
+            .map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`)
+            .join(', ');
           injected = injectRepoMixParts(
             res.parts.map((p) => ({ fileName: p.fileName, xmlContent: p.xmlContent }))
           );
           controller.updateState({
             status: 'IDLE',
-            statusMessage: `✅ Loaded ${res.parts.length} parts (${res.stats.fileCount} files, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
+            statusMessage: `✅ Loaded ${res.parts.length} parts (${res.stats.fileCount} files, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
           });
         } else {
           injected = injectRepoMixFile(res.xmlContent);
+          const charLen = res.stats.charCount ?? res.xmlContent.length;
           controller.updateState({
             status: 'IDLE',
-            statusMessage: `✅ Loaded ${res.stats.fileCount} files (~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
+            statusMessage: `✅ Loaded ${res.stats.fileCount} files (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
           });
         }
       } else {

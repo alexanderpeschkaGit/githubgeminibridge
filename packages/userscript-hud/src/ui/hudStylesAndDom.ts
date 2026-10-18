@@ -247,6 +247,7 @@ export interface HudDomElements {
   branchInput: HTMLInputElement;
   secretInput: HTMLInputElement;
   includePathsInput: HTMLInputElement;
+  maxChunkCharsInput: HTMLInputElement;
   oidBadge: HTMLDivElement;
   mixBtn: HTMLButtonElement;
   autoPilotCheck: HTMLInputElement;
@@ -335,6 +336,16 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   pathsRow.appendChild(includePathsInput);
   body.appendChild(pathsRow);
 
+  // Max Chunk Chars Row (Gemini Chat 85k budget)
+  const maxChunkRow = createHudElement('div', 'hud-form-row');
+  const maxChunkLabel = createHudElement('span', 'hud-label', 'Max Chunk Chars (Default: 85000, max 95000)');
+  const maxChunkCharsInput = createHudElement('input', 'hud-input');
+  maxChunkCharsInput.type = 'number';
+  maxChunkCharsInput.value = String(config.maxChunkChars || 85000);
+  maxChunkRow.appendChild(maxChunkLabel);
+  maxChunkRow.appendChild(maxChunkCharsInput);
+  body.appendChild(maxChunkRow);
+
   // Worker Secret Row
   const secretRow = createHudElement('div', 'hud-form-row');
   const secretLabel = createHudElement('span', 'hud-label', 'Worker Secret (WORKER_SECRET)');
@@ -406,6 +417,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     branchInput,
     secretInput,
     includePathsInput,
+    maxChunkCharsInput,
     oidBadge,
     mixBtn,
     autoPilotCheck,

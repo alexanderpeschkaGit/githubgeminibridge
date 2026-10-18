@@ -21,6 +21,7 @@ export interface MixPart {
   stats: {
     fileCount: number;
     estimatedTokens: number;
+    charCount: number;
   };
 }
 
@@ -29,6 +30,7 @@ export interface MixRequest {
   branch: string;            // z.B. "main"
   includePaths?: string[];   // Optionaler Subpfad-Filter (z.B. ["src/", "shared/"])
   persistToGitHub?: boolean; // Speichert Mix optional nach /_context/repo-mix.xml
+  maxChunkChars?: number;    // Maximale Zeichenanzahl pro Part (Standard: 85_000, unterhalb 100k Gemini-Limit)
   maxChunkBytes?: number;    // Maximale Byte-Größe pro Part (Standard: 512_000 ~500 KB)
   maxChunkTokens?: number;   // Maximale geschätzte Tokens pro Part (Standard: 125_000)
   splitOutput?: boolean;     // Ob Chunking aktiviert werden soll (Standard: true wenn Budget überschritten)
@@ -43,6 +45,7 @@ export interface MixResponse {
   stats: {
     fileCount: number;
     estimatedTokens: number;
+    charCount?: number;
   };
   persistedCommitOid?: string; // Falls persistToGitHub === true ausgeführt wurde
   errorMessage?: string;       // Fehlerbeschreibung bei status === "ERROR"

@@ -60,7 +60,9 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Erzeuge valides XML im Format `<repository repo="..." branch="..." headOid="..."><file_tree>...</file_tree><files><file path="..."><![CDATA[...]]></file></files></repository>`.
    - Escape vorhandene `]]>`-Sequenzen im Dateiinhalt sicher als `]]]]><![CDATA[>` (`escapeCdata`), damit CDATA-Blöcke niemals aufbrechen.
 6. **RepoMix Atomic Chunking & Multi-Part Partitioning (`mixChunker.ts`):**
-   - Wird `splitOutput: true` übergeben oder überschreitet das Repository das Budget (`maxChunkBytes` Standard 512 KB bzw. `maxChunkTokens` Standard 125.000 Tokens), partitioniert `buildChunkedMixXml` die Dateien **atomar** in nummerierte Chunks (`part 1 von N`).
+   - Wird `splitOutput: true` übergeben oder überschreitet das Repository das Budget (`maxChunkChars` Standard 85.000 Zeichen unterhalb des 100k-Gemini-Limits, `maxChunkBytes` 512 KB bzw. `maxChunkTokens` 125.000 Tokens), partitioniert `buildChunkedMixXml` die Dateien **atomar** in nummerierte Chunks (`part 1 von N`).
+   - **Gemini Web UI 100k Cutoff-Schutz:** Jedes generierte `MixPart.xmlContent.length` bleibt strikt `<= 100_000` Zeichen (Target-Budget: `DEFAULT_MAX_CHUNK_CHARS = 85_000` Zeichen). Einzeldateien `> 100_000` Zeichen werden im Stream übersprungen und im `<file_tree>` mit `[SKIPPED: >100k chars for Gemini Chat limit]` markiert; Dateien zwischen 85k und 100k Zeichen erhalten einen isolierten Einzelpart.
+   - Part 1 enthält den vollständigen Repository `<file_tree>` (bis max. 14k Zeichen gedeckelt), Folgeparts `2..N` einen kompakten Baum (`# Part X/N files:`) nur für die im jeweiligen Part enthaltenen Dateien.
    - **Invariante:** Einzelne Dateien werden **niemals** mitten im Quellcode zerschnitten. Jeder Part ist ein in sich geschlossenes, valides XML-Dokument mit vollständigen Header-Metadaten und Filetree.
    - Low-Level TAR-Header-Parsing (`concatBuffers`, `parseAsciiString`, `parseOctal`) ist in `src/utils/tarUtils.ts` ausgelagert, um das `< 500`-Zeilen-Gesetz für `mixer.ts` strikt einzuhalten.
 
@@ -98,5 +100,5 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Um den strikten 10-Sekunden-Timeout von GitHub-Webhooks einzuhalten, antwortet der Worker sofort mit `202 Accepted` und delegiert `executeWorkerWorkflow` (Mixer -> Gemini REST -> Patcher -> PR/Issue-Feedback-Kommentar) an `ctx.waitUntil`.
 
 ### E. Validierung vor Abschluss:
-- Jede Änderung an `packages/edge-worker/` erfordert zwingend `npx tsc --noEmit` (im Arbeitsverzeichnis `packages/edge-worker`) sowie einen erfolgreichen Lauf von `node scripts/patches_and_tests/worker-smoke.mjs` (inkl. aller 11 Probes mit harter `< 500`-Zeilen-Bedingung über alle aktiven TypeScript-Quelldateien).
+- Jede Änderung an `packages/edge-worker/` erfordert zwingend `npx tsc --noEmit` (im Arbeitsverzeichnis `packages/edge-worker`) sowie einen erfolgreichen Lauf von `node scripts/patches_and_tests/worker-smoke.mjs` (inkl. aller 12 Probes mit harter `< 500`-Zeilen-Bedingung über alle aktiven TypeScript-Quelldateien).
 

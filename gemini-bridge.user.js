@@ -104,7 +104,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     branch: "preview",
     includePaths: [],
     autoPilot: false,
-    persistToGitHub: false
+    persistToGitHub: false,
+    maxChunkChars: 85e3
   };
   function loadHudConfig() {
     const workerUrl = getStoredValue("worker_url", DEFAULT_HUD_CONFIG.workerUrl);
@@ -123,6 +124,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
         includePaths = includePathsStr.split(",").map((s) => s.trim()).filter(Boolean);
       }
     }
+    const maxChunkCharsStr = getStoredValue("max_chunk_chars", "85000");
+    const parsedChars = parseInt(maxChunkCharsStr, 10);
+    const maxChunkChars = Number.isFinite(parsedChars) && parsedChars >= 1e4 ? parsedChars : 85e3;
     return {
       workerUrl: workerUrl.replace(/\/+$/, ""),
       workerSecret,
@@ -130,7 +134,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       branch,
       includePaths,
       autoPilot: autoPilotStr === "true",
-      persistToGitHub: persistStr === "true"
+      persistToGitHub: persistStr === "true",
+      maxChunkChars
     };
   }
   function saveHudConfig(cfg) {
@@ -156,6 +161,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
     if (cfg.includePaths !== void 0) {
       setStoredValue("include_paths", JSON.stringify(updated.includePaths));
+    }
+    if (cfg.maxChunkChars !== void 0) {
+      setStoredValue("max_chunk_chars", String(updated.maxChunkChars));
     }
     return updated;
   }
@@ -256,6 +264,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       branch: req?.branch || cfg.branch,
       includePaths: req?.includePaths || (cfg.includePaths.length > 0 ? cfg.includePaths : void 0),
       persistToGitHub: req?.persistToGitHub ?? cfg.persistToGitHub,
+      maxChunkChars: req?.maxChunkChars ?? cfg.maxChunkChars,
       maxChunkBytes: req?.maxChunkBytes,
       maxChunkTokens: req?.maxChunkTokens,
       splitOutput: req?.splitOutput
@@ -776,6 +785,14 @@ Fix Instructions:
     pathsRow.appendChild(pathsLabel);
     pathsRow.appendChild(includePathsInput);
     body.appendChild(pathsRow);
+    const maxChunkRow = createHudElement("div", "hud-form-row");
+    const maxChunkLabel = createHudElement("span", "hud-label", "Max Chunk Chars (Default: 85000, max 95000)");
+    const maxChunkCharsInput = createHudElement("input", "hud-input");
+    maxChunkCharsInput.type = "number";
+    maxChunkCharsInput.value = String(config.maxChunkChars || 85e3);
+    maxChunkRow.appendChild(maxChunkLabel);
+    maxChunkRow.appendChild(maxChunkCharsInput);
+    body.appendChild(maxChunkRow);
     const secretRow = createHudElement("div", "hud-form-row");
     const secretLabel = createHudElement("span", "hud-label", "Worker Secret (WORKER_SECRET)");
     const secretInput = createHudElement("input", "hud-input");
@@ -832,6 +849,7 @@ Fix Instructions:
       branchInput,
       secretInput,
       includePathsInput,
+      maxChunkCharsInput,
       oidBadge,
       mixBtn,
       autoPilotCheck,
@@ -968,6 +986,18 @@ Fix Instructions:
         dom.includePathsInput.value = (config.includePaths || []).join(", ");
       }
     };
+    dom.maxChunkCharsInput.onchange = () => {
+      try {
+        const val = parseInt(dom.maxChunkCharsInput.value, 10);
+        const safe = Math.max(1e4, Math.min(95e3, Number.isFinite(val) ? val : 85e3));
+        config.maxChunkChars = safe;
+        dom.maxChunkCharsInput.value = String(safe);
+        saveHudConfig({ maxChunkChars: safe });
+      } catch (e) {
+        alert(e.message);
+        dom.maxChunkCharsInput.value = String(config.maxChunkChars || 85e3);
+      }
+    };
     dom.secretInput.onchange = () => {
       try {
         const sanitized = sanitizeNoGithubPat(dom.secretInput.value.trim(), "workerSecret");
@@ -997,18 +1027,20 @@ Fix Instructions:
           setStoredValue("head_oid", res.headOid);
           let injected = false;
           if (res.parts && res.parts.length > 1) {
+            const partBreakdown = res.parts.map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`).join(", ");
             injected = injectRepoMixParts(
               res.parts.map((p) => ({ fileName: p.fileName, xmlContent: p.xmlContent }))
             );
             controller.updateState({
               status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
             });
           } else {
             injected = injectRepoMixFile(res.xmlContent);
+            const charLen = res.stats.charCount ?? res.xmlContent.length;
             controller.updateState({
               status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files (~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
             });
           }
         } else {

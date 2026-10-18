@@ -9,6 +9,7 @@ export interface HudConfig {
   includePaths: string[];
   autoPilot: boolean;
   persistToGitHub: boolean;
+  maxChunkChars: number;
 }
 
 export interface HarvestedPatch {

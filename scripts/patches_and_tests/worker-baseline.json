@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-18T12:20:00.550Z",
+  "timestamp": "2026-10-18T12:53:43.424Z",
   "overallStatus": "PASS",
   "passedCount": 12,
   "totalProbes": 12,
@@ -108,11 +108,11 @@
       "warningZoneFilesCount": 8,
       "overLimitFilesCount": 0,
       "bundleByteIdentical": true,
-      "bundleSize": 52384,
+      "bundleSize": 54118,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
-          "lines": 447
+          "lines": 448
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
@@ -136,11 +136,11 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 418
+          "lines": 430
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 404
+          "lines": 421
         }
       ],
       "overLimitZone": [],
@@ -155,11 +155,11 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
-          "lines": 160
+          "lines": 255
         },
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
-          "lines": 447
+          "lines": 448
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
@@ -211,27 +211,27 @@
         },
         {
           "file": "packages/userscript-hud/src/services/storage.ts",
-          "lines": 141
+          "lines": 150
         },
         {
           "file": "packages/userscript-hud/src/services/workerClient.ts",
-          "lines": 154
+          "lines": 155
         },
         {
           "file": "packages/userscript-hud/src/types.ts",
-          "lines": 95
+          "lines": 96
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 418
+          "lines": 430
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 404
+          "lines": 421
         },
         {
           "file": "packages/local-cli/src/cli.ts",
-          "lines": 119
+          "lines": 130
         },
         {
           "file": "packages/local-cli/src/index.ts",
@@ -239,7 +239,7 @@
         },
         {
           "file": "packages/local-cli/src/localRunner.ts",
-          "lines": 272
+          "lines": 273
         }
       ]
     },
@@ -264,9 +264,12 @@
       "pass": true,
       "hasBuildChunked": true,
       "hasInjectParts": true,
+      "hasDefault85k": true,
+      "hasSkipMarker": true,
       "bundleHasInjectParts": true,
       "bundleHasIncludePaths": true,
-      "chunkingPass": true
+      "bundleHasMaxChunkChars": true,
+      "functionalBudgetPass": true
     }
   ]
 }

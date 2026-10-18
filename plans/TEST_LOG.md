@@ -176,7 +176,43 @@
   - `GET https://gemini-git-bridge.sikanda.workers.dev/health` -> HTTP 200 `{ status: 'ok', service: 'gemini-git-bridge', version: '2.0.0', hasBridgeSecret: true, hasGithubToken: true }`
 - **Smoke-Suite nach Deployment**:
   - `node scripts/patches_and_tests/worker-smoke.mjs` -> `PASS` (`12/12` Probes bestanden).
+### [2026-10-18T14:29:00+02:00] | Stufe III: Funktionaler Test des Edge-Worker GitHub Webhooks (POST /api/webhook/github)
+- **Command**: `node packages/edge-worker/scripts/build-worker.mjs` & `node scripts/patches_and_tests/test-webhook-worker.mjs`
+- **Ergebnis**: `PASS` (`18/18` Assertions bestanden).
+- **Geprüfte Features**:
+  - `dist/worker.mjs` Build & ESM Bundle-Integrität.
+  - Web Crypto HMAC-SHA256 Signaturberechnung & -verifikation (71 Zeichen `sha256=<hex>`).
+  - CORS Preflight (`OPTIONS /api/webhook/github`) liefert HTTP 204 mit `Access-Control-Allow-Origin: *`.
+  - Method-Guardrail (`GET /api/webhook/github` liefert HTTP 405 Method Not Allowed).
+  - Security-Guardrails: Fehlende Signatur, manipulierte Payloads, falsches Secret und fehlerhaftes JSON werden strikt abgewiesen (HTTP 401 / 400).
+  - Event-Filter: Kommentare ohne `@gemini`-Mention werden ignoriert (HTTP 200 `{ status: "IGNORED" }`).
+  - Async-Workflow: Kommentare mit `@gemini` liefern sofort HTTP 202 Accepted `{ status: "ACCEPTED" }` und registrieren die Hintergrundaufgabe via `ctx.waitUntil(promise)`.
+  - Live Edge-Worker Verifikation (`https://gemini-git-bridge.sikanda.workers.dev/api/webhook/github`):
+    - `OPTIONS` -> HTTP 204 `access-control-allow-origin: *`.
+    - `POST` ohne Signatur -> HTTP 401 `{ error: "Unauthorized: Invalid GitHub webhook HMAC signature" }`.
 - **GESAMTSTATUS**: `PASS`
+
+### [2026-10-18T14:55:00+02:00] | Stage 6.1: RepoMix 85k Character Limit & Atomic File Partitioning
+- **Command**:
+  - `node packages/userscript-hud/scripts/build-userscript.mjs`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/edge-worker/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/local-cli/tsconfig.json`
+  - `node scripts/patches_and_tests/worker-smoke.mjs`
+- **Ergebnis**: `PASS` (`12/12` Probes bestanden).
+- **Geprüfte Features & Invarianten**:
+  - **Shared Types:** `MixPart.stats.charCount`, `MixRequest.maxChunkChars`, `MixResponse.stats.charCount`, `HudConfig.maxChunkChars` integriert.
+  - **85k Zeichen-Budgetierung & 100k Hard Limit:** `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000` in `mixChunker.ts`. Jedes generierte `MixPart.xmlContent.length` bleibt strikt `<= 100_000` Zeichen, um Gemini Web UIs harte 100k-Abschneidung (`...`) zuverlässig zu verhindern.
+  - **Atomare Dateitrennung (Pre-File Partitioning):** Dateien werden niemals mitten im Code getrennt. Dateien zwischen 85k und 100k Zeichen erhalten einen isolierten Einzel-Part.
+  - **Filetree-Budgetschutz:** Part 1 enthält den vollständigen Repository `<file_tree>` (bis max. 14k Zeichen gedeckelt), Folgeparts `2..N` einen kompakten Baum nur für die in diesem Part enthaltenen Dateien (`# Part X/N files:`).
+  - **Übergrößen-Schutz:** Einzeldateien `> 100_000` Zeichen werden im Stream vor der Partitionierung ausgesondert und im Filetree mit `[SKIPPED: >100k chars for Gemini Chat limit]` annotiert.
+  - **Userscript HUD:** `maxChunkCharsInput` (Standard: 85.000, 10k–95k Validierung) in `hudStylesAndDom.ts`, `storage.ts`, `workerClient.ts` und `shadowHud.ts` verdrahtet. Status-Box zeigt bei Multi-Part Ingestion den exakten Zeichen-Breakdown pro Part an (`[P1: 72,140 chars, P2: 68,910 chars]`).
+  - **Userscript Bundle-Integrität:** `dist/gemini-bridge.user.js` und Root `gemini-bridge.user.js` sind byte-identisch synchronisiert (54.118 Bytes).
+  - **Probe 10 Modularitäts-Audit:** `24/24` TypeScript-Dateien strikt `< 500` Zeilen (`overLimitZone.length === 0`).
+  - **Probe 12 Stage 6.1 Contracts:** `PASS` (funktionale Validierung von 85k Chunking, Baum-Hierarchie und Skip-Marker).
+- **GESAMTSTATUS**: `PASS`
+
+
 
 
 

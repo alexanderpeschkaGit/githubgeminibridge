@@ -400,6 +400,7 @@ export async function handleMixRequest(
     headOid,
     fileTreeEntries,
     files,
+    maxChunkChars: req.maxChunkChars,
     maxChunkBytes: req.maxChunkBytes,
     maxChunkTokens: req.maxChunkTokens,
     splitOutput: req.splitOutput,

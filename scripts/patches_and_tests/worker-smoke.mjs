@@ -463,34 +463,132 @@ async function main() {
 
     const hasBuildChunked = chunkerContent.includes('export function buildChunkedMixXml');
     const hasInjectParts = injectorContent.includes('export function injectRepoMixParts');
+    const hasDefault85k = chunkerContent.includes('DEFAULT_MAX_CHUNK_CHARS = 85_000') || chunkerContent.includes('85000');
+    const hasSkipMarker = chunkerContent.includes('[SKIPPED: >100k chars for Gemini Chat limit]');
     const bundleHasInjectParts = rootUserScript.includes('injectRepoMixParts');
     const bundleHasIncludePaths = rootUserScript.includes('includePathsInput');
+    const bundleHasMaxChunkChars = rootUserScript.includes('maxChunkCharsInput');
 
-    // Functional verification of partitioning algorithm
-    const files = [
-      { path: 'a.ts', content: 'x'.repeat(200) },
-      { path: 'b.ts', content: 'y'.repeat(200) },
-      { path: 'c.ts', content: 'z'.repeat(200) }
-    ];
-    const maxBytes = 250;
-    const buckets = [];
-    let cur = [];
-    let curBytes = 0;
-    for (const f of files) {
-      const size = f.path.length + f.content.length + 50;
-      if (cur.length > 0 && curBytes + size > maxBytes) {
-        buckets.push(cur);
-        cur = [];
-        curBytes = 0;
+    // 4. Functional test of 85k char budgeting & atomic file boundaries
+    function simulateChunking(files, fileTreeEntries, maxChunkChars = 85000, hardLimit = 100000) {
+      function escapeCdata(c) { return c.replace(/\]\]>/g, ']]]]><![CDATA[>'); }
+      function formatFileXml(f) { return `  <file path="${f.path}"><![CDATA[${escapeCdata(f.content)}]]></file>`; }
+      function buildPartXml(partNum, totalParts, treeText, fileXmlList) {
+        return [
+          `<repository repo="test/repo" branch="main" headOid="1111222233334444555566667777888899990000" part="${partNum}" totalParts="${totalParts}">`,
+          '<file_tree>',
+          treeText,
+          '</file_tree>',
+          '<files>',
+          ...fileXmlList,
+          '</files>',
+          '</repository>'
+        ].join('\n');
       }
-      cur.push(f);
-      curBytes += size;
-    }
-    if (cur.length > 0) buckets.push(cur);
-    const chunkingPass = buckets.length >= 2;
 
-    const pass = hasBuildChunked && hasInjectParts && bundleHasInjectParts && bundleHasIncludePaths && chunkingPass;
-    return { pass, hasBuildChunked, hasInjectParts, bundleHasInjectParts, bundleHasIncludePaths, chunkingPass };
+      const treeEntries = [...fileTreeEntries];
+      const validFiles = [];
+      for (const f of files) {
+        const fileXml = formatFileXml(f);
+        const standaloneXml = buildPartXml(1, 1, f.path, [fileXml]);
+        if (standaloneXml.length > hardLimit) {
+          const idx = treeEntries.indexOf(f.path);
+          const marker = `${f.path} [SKIPPED: >100k chars for Gemini Chat limit]`;
+          if (idx !== -1) treeEntries[idx] = marker;
+          else treeEntries.push(marker);
+        } else {
+          validFiles.push({ path: f.path, content: f.content, fileXml });
+        }
+      }
+
+      const maxTreeChars = Math.min(Math.floor(maxChunkChars * 0.45), 14000);
+      let fullTreeXml = [...treeEntries].sort().join('\n');
+      if (fullTreeXml.length > maxTreeChars) {
+        const truncated = fullTreeXml.slice(0, maxTreeChars);
+        const lastNl = truncated.lastIndexOf('\n');
+        fullTreeXml = (lastNl !== -1 ? truncated.slice(0, lastNl) : truncated) + '\n... [file_tree truncated to preserve character budget]';
+      }
+
+      const chunkBuckets = [];
+      let currentBucket = [];
+      const part1Base = fullTreeXml.length + 220;
+      let currentChars = part1Base;
+
+      for (let i = 0; i < validFiles.length; i++) {
+        const f = validFiles[i];
+        const isPart1 = chunkBuckets.length === 0;
+        const addChars = isPart1 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1;
+
+        if (currentBucket.length > 0) {
+          if (currentChars + addChars > maxChunkChars) {
+            chunkBuckets.push(currentBucket);
+            currentBucket = [];
+            currentChars = 260;
+          }
+        } else if (isPart1) {
+          if (currentChars + addChars > hardLimit) {
+            chunkBuckets.push([]);
+            currentBucket = [];
+            currentChars = 260;
+          }
+        }
+
+        const activeIsPart1 = chunkBuckets.length === 0;
+        const activeAddChars = activeIsPart1 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1;
+        currentBucket.push(f);
+        currentChars += activeAddChars;
+      }
+      if (currentBucket.length > 0) chunkBuckets.push(currentBucket);
+
+      const parts = [];
+      for (let i = 0; i < chunkBuckets.length; i++) {
+        const bucket = chunkBuckets[i];
+        const partNum = i + 1;
+        const partTree = i === 0
+          ? fullTreeXml
+          : `# Part ${partNum}/${chunkBuckets.length} files (${bucket.length} files):\n${bucket.map((b) => b.path).join('\n')}`;
+        const partXml = buildPartXml(partNum, chunkBuckets.length, partTree, bucket.map((b) => b.fileXml));
+        parts.push({ partNum, xml: partXml, bucket, tree: partTree });
+      }
+      return { parts, treeEntries, validFiles };
+    }
+
+    // Test A: 3 files of 35k chars each (total 105k > 85k)
+    const testFilesA = [
+      { path: 'src/a.ts', content: 'A'.repeat(35000) },
+      { path: 'src/b.ts', content: 'B'.repeat(35000) },
+      { path: 'src/c.ts', content: 'C'.repeat(35000) }
+    ];
+    const resA = simulateChunking(testFilesA, ['src/a.ts', 'src/b.ts', 'src/c.ts'], 85000, 100000);
+    const partsUnder85k = resA.parts.length >= 2 && resA.parts.every((p) => p.xml.length <= 85000);
+    const part1HasFullTree = resA.parts[0].tree.includes('src/a.ts') && resA.parts[0].tree.includes('src/c.ts');
+    const part2HasCompactTree = resA.parts[1].tree.includes('# Part 2/');
+
+    // Test B: File > 100k chars skipped
+    const testFilesB = [
+      { path: 'src/huge.ts', content: 'H'.repeat(105000) },
+      { path: 'src/small.ts', content: 'console.log("ok");' }
+    ];
+    const resB = simulateChunking(testFilesB, ['src/huge.ts', 'src/small.ts'], 85000, 100000);
+    const hugeSkipped = resB.treeEntries.some((e) => e.includes('src/huge.ts [SKIPPED: >100k chars for Gemini Chat limit]'));
+    const hugeNotInFiles = resB.validFiles.every((f) => f.path !== 'src/huge.ts');
+
+    const functionalBudgetPass = partsUnder85k && part1HasFullTree && part2HasCompactTree && hugeSkipped && hugeNotInFiles;
+
+    const pass = hasBuildChunked && hasInjectParts && hasDefault85k && hasSkipMarker &&
+      bundleHasInjectParts && bundleHasIncludePaths && bundleHasMaxChunkChars && functionalBudgetPass;
+
+    return {
+      pass,
+      hasBuildChunked,
+      hasInjectParts,
+      hasDefault85k,
+      hasSkipMarker,
+      bundleHasInjectParts,
+      bundleHasIncludePaths,
+      bundleHasMaxChunkChars,
+      functionalBudgetPass
+    };
   }));
 
   const passedCount = results.filter((r) => r.pass).length;

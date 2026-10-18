@@ -4,9 +4,9 @@
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
 
 ## Aktuelle Phase
-- **Aktive Stufe:** **Stufe 6 (RepoMix Atomic Chunking, Multi-Part Ingestion & Scoped Filtering)** erfolgreich abgeschlossen (`12/12 PASS`). **100 % aller 24 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
+- **Aktive Stufe:** **Stufe 6.1 (RepoMix 85k Character Limit & Atomic File Partitioning)** erfolgreich abgeschlossen (`12/12 PASS`). **100 % aller 24 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
 - **Modell-Politik:** Vorab-Gesamtplanung & Strukturierung aller Parts auf **Argon High oder Argon Medium (`pro`/`inherit`)**; Ausführung & `/delegate` der Arbeitspakete mit `Complexity < 6` auf **Flash (`Model: 'flash'`)** und ab `Complexity >= 6` auf **Argon Medium (`Model: 'pro'`)**
-- **Letztes Update:** 2026-10-18T14:20:00+02:00 (Stufe 6 abgeschlossen: `shared/types.ts` mit `MixPart`, `packages/edge-worker/src/modules/mixChunker.ts`, `packages/edge-worker/src/utils/tarUtils.ts`, `packages/userscript-hud/src/dom/injector.ts` mit `injectRepoMixParts`, `shadowHud.ts` Multi-Part Flow, `hudStylesAndDom.ts` mit `includePathsInput`, Probe 12 verifiziert, 12/12 Probes bestanden, 24/24 TS-Dateien < 500 Zeilen).
+- **Letztes Update:** 2026-10-18T14:56:00+02:00 (Stufe 6.1 abgeschlossen: `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, atomare Dateigrenzen ohne Filesplits, hierarchischer Filetree, Übergrößen-Ausschluss > 100k Chars, HUD `maxChunkCharsInput`, Probe 12 verifiziert, 12/12 Probes bestanden, 24/24 TS-Dateien < 500 Zeilen).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**
@@ -49,6 +49,10 @@
 - [x] **Stufe 6 (#exec): RepoMix Atomic Chunking, Multi-Part Ingestion & Scoped Path Filtering**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: `MixPart`-Vertrag in `shared/types.ts` (`maxChunkBytes`, `maxChunkTokens`, `splitOutput`, `parts?: MixPart[]`), atomare Zerlegung ohne Code-Zerschneiden in `packages/edge-worker/src/modules/mixChunker.ts`, TAR-Helper-Extraktion in `packages/edge-worker/src/utils/tarUtils.ts` (Schutz der `< 500`-Zeilen-Grenze für `mixer.ts`), Multi-File-Paste im Userscript-HUD via `injectRepoMixParts` (`injector.ts` & `shadowHud.ts`), `includePaths`-UI-Konfiguration im HUD Drawer (`hudStylesAndDom.ts`), Probe 12 verifiziert (`12/12 PASS`), 24/24 TypeScript-Dateien strikt `< 500` Zeilen.
+- [x] **Stufe 6.1 (Flash-Subagent / `#flash`): RepoMix 85k Character Limit & Atomic File Partitioning**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, exakte Zeichen-Budgetierung in `mixChunker.ts`, atomare Trennung ohne Filesplits, hierarchischer Filetree (Part 1 vollständiger Baum bis 14k Chars, Folgeparts fokussierter Teilbaum), Skip-Marker `[SKIPPED: >100k chars for Gemini Chat limit]`, HUD `maxChunkCharsInput`, Probe 12 verifiziert (`12/12 PASS`), 24/24 TypeScript-Dateien strikt `< 500` Zeilen.
 
 ## Offene Entscheidungen / Blocker
-- *Keine Blocker.* Sämtliche Komponenten (Stufe 0 bis 6) und alle 24 TypeScript-Dateien sind 100 % typgeprüft, modular unter 500 Zeilen dekomponiert und durch alle 12 Smoke-Probes (`worker-smoke.mjs` `12/12 PASS`) verifiziert.
+- Keine Blocker. Alle Stufen 0 bis 6.1 sind vollständig implementiert, durch Typechecks und die 12-stufige Smoke-Suite verifiziert.
+

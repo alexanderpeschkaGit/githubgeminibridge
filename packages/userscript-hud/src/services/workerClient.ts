@@ -128,6 +128,7 @@ export async function requestRepoMix(
     branch: req?.branch || cfg.branch,
     includePaths: req?.includePaths || (cfg.includePaths.length > 0 ? cfg.includePaths : undefined),
     persistToGitHub: req?.persistToGitHub ?? cfg.persistToGitHub,
+    maxChunkChars: req?.maxChunkChars ?? cfg.maxChunkChars,
     maxChunkBytes: req?.maxChunkBytes,
     maxChunkTokens: req?.maxChunkTokens,
     splitOutput: req?.splitOutput,

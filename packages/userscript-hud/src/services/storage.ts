@@ -78,6 +78,7 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
   includePaths: [],
   autoPilot: false,
   persistToGitHub: false,
+  maxChunkChars: 85000,
 };
 
 export function loadHudConfig(): HudConfig {
@@ -99,6 +100,10 @@ export function loadHudConfig(): HudConfig {
     }
   }
 
+  const maxChunkCharsStr = getStoredValue('max_chunk_chars', '85000');
+  const parsedChars = parseInt(maxChunkCharsStr, 10);
+  const maxChunkChars = Number.isFinite(parsedChars) && parsedChars >= 10000 ? parsedChars : 85000;
+
   return {
     workerUrl: workerUrl.replace(/\/+$/, ''),
     workerSecret,
@@ -107,6 +112,7 @@ export function loadHudConfig(): HudConfig {
     includePaths,
     autoPilot: autoPilotStr === 'true',
     persistToGitHub: persistStr === 'true',
+    maxChunkChars,
   };
 }
 
@@ -134,6 +140,9 @@ export function saveHudConfig(cfg: Partial<HudConfig>): HudConfig {
   }
   if (cfg.includePaths !== undefined) {
     setStoredValue('include_paths', JSON.stringify(updated.includePaths));
+  }
+  if (cfg.maxChunkChars !== undefined) {
+    setStoredValue('max_chunk_chars', String(updated.maxChunkChars));
   }
 
   return updated;
