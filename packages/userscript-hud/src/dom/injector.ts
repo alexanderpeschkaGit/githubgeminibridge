@@ -40,19 +40,27 @@ export function findPromptInputElement(): HTMLElement | HTMLTextAreaElement | nu
   return document.querySelector<HTMLElement>('textarea, div[contenteditable="true"]');
 }
 
+export interface MixFileItem {
+  fileName: string;
+  xmlContent: string;
+}
+
 /**
- * Injects repo-mix.xml as a virtual file paste into the chat prompt area.
+ * Injects multiple repo-mix parts as a virtual file paste into the chat prompt area.
  */
-export function injectRepoMixFile(xmlContent: string, fileName = 'repo-mix.xml'): boolean {
+export function injectRepoMixParts(parts: MixFileItem[]): boolean {
   if (typeof window === 'undefined' || typeof document === 'undefined') return false;
+  if (!parts || parts.length === 0) return false;
 
   const inputEl = findPromptInputElement();
   const target = inputEl || document.activeElement || document.body;
 
   try {
-    const file = new File([xmlContent], fileName, { type: 'text/xml' });
     const dataTransfer = new DataTransfer();
-    dataTransfer.items.add(file);
+    for (const part of parts) {
+      const file = new File([part.xmlContent], part.fileName, { type: 'text/xml' });
+      dataTransfer.items.add(file);
+    }
 
     const pasteEvent = new ClipboardEvent('paste', {
       clipboardData: dataTransfer,
@@ -63,9 +71,16 @@ export function injectRepoMixFile(xmlContent: string, fileName = 'repo-mix.xml')
     target.dispatchEvent(pasteEvent);
     return true;
   } catch (err) {
-    console.error('[Gemini Bridge Injector] Failed to inject repo mix file:', err);
+    console.error('[Gemini Bridge Injector] Failed to inject repo mix parts:', err);
     return false;
   }
+}
+
+/**
+ * Injects repo-mix.xml as a virtual file paste into the chat prompt area.
+ */
+export function injectRepoMixFile(xmlContent: string, fileName = 'repo-mix.xml'): boolean {
+  return injectRepoMixParts([{ fileName, xmlContent }]);
 }
 
 /**

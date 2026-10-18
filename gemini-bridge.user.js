@@ -255,7 +255,10 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       repo: req?.repo || cfg.repo,
       branch: req?.branch || cfg.branch,
       includePaths: req?.includePaths || (cfg.includePaths.length > 0 ? cfg.includePaths : void 0),
-      persistToGitHub: req?.persistToGitHub ?? cfg.persistToGitHub
+      persistToGitHub: req?.persistToGitHub ?? cfg.persistToGitHub,
+      maxChunkBytes: req?.maxChunkBytes,
+      maxChunkTokens: req?.maxChunkTokens,
+      splitOutput: req?.splitOutput
     };
     return gmRequestJson(url, "POST", cfg.workerSecret, payload);
   }
@@ -298,14 +301,17 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
     return document.querySelector('textarea, div[contenteditable="true"]');
   }
-  function injectRepoMixFile(xmlContent, fileName = "repo-mix.xml") {
+  function injectRepoMixParts(parts) {
     if (typeof window === "undefined" || typeof document === "undefined") return false;
+    if (!parts || parts.length === 0) return false;
     const inputEl = findPromptInputElement();
     const target = inputEl || document.activeElement || document.body;
     try {
-      const file = new File([xmlContent], fileName, { type: "text/xml" });
       const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
+      for (const part of parts) {
+        const file = new File([part.xmlContent], part.fileName, { type: "text/xml" });
+        dataTransfer.items.add(file);
+      }
       const pasteEvent = new ClipboardEvent("paste", {
         clipboardData: dataTransfer,
         bubbles: true,
@@ -314,9 +320,12 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       target.dispatchEvent(pasteEvent);
       return true;
     } catch (err) {
-      console.error("[Gemini Bridge Injector] Failed to inject repo mix file:", err);
+      console.error("[Gemini Bridge Injector] Failed to inject repo mix parts:", err);
       return false;
     }
+  }
+  function injectRepoMixFile(xmlContent, fileName = "repo-mix.xml") {
+    return injectRepoMixParts([{ fileName, xmlContent }]);
   }
   function injectPromptText(promptText, autoSubmit = false) {
     if (typeof document === "undefined") return false;
@@ -759,6 +768,14 @@ Fix Instructions:
     branchRow.appendChild(branchLabel);
     branchRow.appendChild(branchInput);
     body.appendChild(branchRow);
+    const pathsRow = createHudElement("div", "hud-form-row");
+    const pathsLabel = createHudElement("span", "hud-label", "Include Paths (comma-separated, optional)");
+    const includePathsInput = createHudElement("input", "hud-input");
+    includePathsInput.placeholder = "e.g. src/, packages/edge-worker/";
+    includePathsInput.value = (config.includePaths || []).join(", ");
+    pathsRow.appendChild(pathsLabel);
+    pathsRow.appendChild(includePathsInput);
+    body.appendChild(pathsRow);
     const secretRow = createHudElement("div", "hud-form-row");
     const secretLabel = createHudElement("span", "hud-label", "Worker Secret (WORKER_SECRET)");
     const secretInput = createHudElement("input", "hud-input");
@@ -814,6 +831,7 @@ Fix Instructions:
       repoInput,
       branchInput,
       secretInput,
+      includePathsInput,
       oidBadge,
       mixBtn,
       autoPilotCheck,
@@ -939,6 +957,17 @@ Fix Instructions:
         dom.branchInput.value = config.branch;
       }
     };
+    dom.includePathsInput.onchange = () => {
+      try {
+        const raw = dom.includePathsInput.value.trim();
+        const paths = raw.split(",").map((s) => s.trim()).filter(Boolean);
+        config.includePaths = paths;
+        saveHudConfig({ includePaths: paths });
+      } catch (e) {
+        alert(e.message);
+        dom.includePathsInput.value = (config.includePaths || []).join(", ");
+      }
+    };
     dom.secretInput.onchange = () => {
       try {
         const sanitized = sanitizeNoGithubPat(dom.secretInput.value.trim(), "workerSecret");
@@ -962,15 +991,26 @@ Fix Instructions:
           statusMessage: `\u23F3 Streaming repo mix for ${config.repo} (${config.branch})...`
         });
         const res = await requestRepoMix(config);
-        if (res.status === "OK" && res.xmlContent) {
+        if (res.status === "OK" && (res.parts?.length || res.xmlContent)) {
           state.headOid = res.headOid;
           state.lastMixStats = res.stats;
           setStoredValue("head_oid", res.headOid);
-          const injected = injectRepoMixFile(res.xmlContent);
-          controller.updateState({
-            status: "IDLE",
-            statusMessage: `\u2705 Loaded ${res.stats.fileCount} files (~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
-          });
+          let injected = false;
+          if (res.parts && res.parts.length > 1) {
+            injected = injectRepoMixParts(
+              res.parts.map((p) => ({ fileName: p.fileName, xmlContent: p.xmlContent }))
+            );
+            controller.updateState({
+              status: "IDLE",
+              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+            });
+          } else {
+            injected = injectRepoMixFile(res.xmlContent);
+            controller.updateState({
+              status: "IDLE",
+              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files (~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+            });
+          }
         } else {
           controller.updateState({
             status: "ERROR",

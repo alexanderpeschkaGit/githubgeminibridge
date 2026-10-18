@@ -13,17 +13,33 @@ export type Env = WorkerEnv;
 // ==========================================
 // 2. UNTERTOOL A: MIXER (/api/mix)
 // ==========================================
+export interface MixPart {
+  partIndex: number;          // 1-basierter Index (z.B. 1, 2, 3)
+  totalParts: number;         // Gesamtanzahl der Chunks
+  fileName: string;           // z.B. "repo-mix.part1.xml"
+  xmlContent: string;         // Vollständiges, valides XML für diesen Part
+  stats: {
+    fileCount: number;
+    estimatedTokens: number;
+  };
+}
+
 export interface MixRequest {
   repo: string;              // Format: "owner/repository"
   branch: string;            // z.B. "main"
   includePaths?: string[];   // Optionaler Subpfad-Filter (z.B. ["src/", "shared/"])
   persistToGitHub?: boolean; // Speichert Mix optional nach /_context/repo-mix.xml
+  maxChunkBytes?: number;    // Maximale Byte-Größe pro Part (Standard: 512_000 ~500 KB)
+  maxChunkTokens?: number;   // Maximale geschätzte Tokens pro Part (Standard: 125_000)
+  splitOutput?: boolean;     // Ob Chunking aktiviert werden soll (Standard: true wenn Budget überschritten)
 }
 
 export interface MixResponse {
   status: "OK" | "ERROR";
   headOid: string;           // Voller 40-stelliger Commit-SHA als Basis für Folgebefehle
-  xmlContent: string;        // Strukturierter XML-Kontext (<repository><file_tree>...<file>...)
+  xmlContent: string;        // Strukturierter XML-Kontext (Part 1 oder Gesamtmix für Abwärtskompatibilität)
+  parts?: MixPart[];         // Aufgeteilte Parts für Multi-File Ingestion bei großen Repos
+  isChunked?: boolean;       // Zeigt an, ob der Output in mehrere Parts gesplittet wurde
   stats: {
     fileCount: number;
     estimatedTokens: number;

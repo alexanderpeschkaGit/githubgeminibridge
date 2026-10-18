@@ -16,7 +16,7 @@ import {
   requestWorkerPatch,
   requestLegacyCommit
 } from '../services/workerClient';
-import { injectRepoMixFile, injectPromptText } from '../dom/injector';
+import { injectRepoMixFile, injectRepoMixParts, injectPromptText } from '../dom/injector';
 import {
   executeSelfHealingTurn,
   buildSelfHealingPrompt,
@@ -192,6 +192,18 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     }
   };
 
+  dom.includePathsInput.onchange = () => {
+    try {
+      const raw = dom.includePathsInput.value.trim();
+      const paths = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      config.includePaths = paths;
+      saveHudConfig({ includePaths: paths });
+    } catch (e: any) {
+      alert(e.message);
+      dom.includePathsInput.value = (config.includePaths || []).join(', ');
+    }
+  };
+
   dom.secretInput.onchange = () => {
     try {
       const sanitized = sanitizeNoGithubPat(dom.secretInput.value.trim(), 'workerSecret');
@@ -219,17 +231,27 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       });
 
       const res = await requestRepoMix(config);
-      if (res.status === 'OK' && res.xmlContent) {
+      if (res.status === 'OK' && (res.parts?.length || res.xmlContent)) {
         state.headOid = res.headOid;
         state.lastMixStats = res.stats;
         setStoredValue('head_oid', res.headOid);
 
-        const injected = injectRepoMixFile(res.xmlContent);
-
-        controller.updateState({
-          status: 'IDLE',
-          statusMessage: `✅ Loaded ${res.stats.fileCount} files (~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
-        });
+        let injected = false;
+        if (res.parts && res.parts.length > 1) {
+          injected = injectRepoMixParts(
+            res.parts.map((p) => ({ fileName: p.fileName, xmlContent: p.xmlContent }))
+          );
+          controller.updateState({
+            status: 'IDLE',
+            statusMessage: `✅ Loaded ${res.parts.length} parts (${res.stats.fileCount} files, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
+          });
+        } else {
+          injected = injectRepoMixFile(res.xmlContent);
+          controller.updateState({
+            status: 'IDLE',
+            statusMessage: `✅ Loaded ${res.stats.fileCount} files (~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
+          });
+        }
       } else {
         controller.updateState({
           status: 'ERROR',

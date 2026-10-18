@@ -1,5 +1,7 @@
 import type { MixRequest, MixResponse } from '../types';
 import { parseRepoOwner, getBranchHeadOid, commitSingleFileViaGraphQL } from '../utils/github';
+import { concatBuffers, parseAsciiString, parseOctal } from '../utils/tarUtils';
+import { buildChunkedMixXml } from './mixChunker';
 
 /**
  * Escapes any occurrences of "]]>" inside file content as "]]]]><![CDATA[>"
@@ -127,41 +129,6 @@ export function extractHeadOidFromPaxHeader(paxText: string): string | null {
   return null;
 }
 
-/**
- * Helper to concat two Uint8Arrays.
- */
-function concatBuffers(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const result = new Uint8Array(a.length + b.length);
-  result.set(a, 0);
-  result.set(b, a.length);
-  return result;
-}
-
-/**
- * Parses a null-terminated ASCII string from a Uint8Array slice.
- */
-function parseAsciiString(buffer: Uint8Array, start: number, length: number): string {
-  let end = start;
-  const limit = start + length;
-  while (end < limit && buffer[end] !== 0) {
-    end++;
-  }
-  let str = '';
-  for (let i = start; i < end; i++) {
-    str += String.fromCharCode(buffer[i]);
-  }
-  return str.trim();
-}
-
-/**
- * Parses an octal integer from a TAR header field.
- */
-function parseOctal(buffer: Uint8Array, start: number, length: number): number {
-  const raw = parseAsciiString(buffer, start, length);
-  if (!raw) return 0;
-  const parsed = parseInt(raw, 8);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
 
 /**
  * Handles POST /api/mix requests.
@@ -425,29 +392,18 @@ export async function handleMixRequest(
     }
   }
 
-  // Sort file tree alphabetically
-  fileTreeEntries.sort();
-
-  const fileTreeXml = fileTreeEntries.join('\n');
-  const filesXml = files
-    .map((f) => `  <file path="${f.path}"><![CDATA[${escapeCdata(f.content)}]]></file>`)
-    .join('\n');
-
-  const xmlContent = [
-    `<repository repo="${owner}/${repo}" branch="${resolvedBranch}" headOid="${headOid}">`,
-    `<file_tree>`,
-    fileTreeXml,
-    `</file_tree>`,
-    `<files>`,
-    filesXml,
-    `</files>`,
-    `</repository>`
-  ].join('\n');
-
-  const stats = {
-    fileCount: files.length,
-    estimatedTokens: Math.ceil(xmlContent.length / 4)
-  };
+  // Partition files and build structured XML representation(s)
+  const mixResult = buildChunkedMixXml({
+    owner,
+    repo,
+    branch: resolvedBranch,
+    headOid,
+    fileTreeEntries,
+    files,
+    maxChunkBytes: req.maxChunkBytes,
+    maxChunkTokens: req.maxChunkTokens,
+    splitOutput: req.splitOutput,
+  });
 
   let persistedCommitOid: string | undefined;
 
@@ -459,7 +415,7 @@ export async function handleMixRequest(
         branch: resolvedBranch,
         expectedHeadOid: headOid,
         path: '_context/repo-mix.xml',
-        content: xmlContent,
+        content: mixResult.xmlContent,
         commitMessage: 'chore(context): update repo-mix.xml snapshot',
         token: githubToken
       });
@@ -469,8 +425,10 @@ export async function handleMixRequest(
       return {
         status: 'ERROR',
         headOid,
-        xmlContent,
-        stats,
+        xmlContent: mixResult.xmlContent,
+        parts: mixResult.parts,
+        isChunked: mixResult.isChunked,
+        stats: mixResult.stats,
         errorMessage: `Failed to persist repo-mix.xml snapshot to GitHub: ${err.message}`
       };
     }
@@ -479,8 +437,10 @@ export async function handleMixRequest(
   return {
     status: 'OK',
     headOid,
-    xmlContent,
-    stats,
+    xmlContent: mixResult.xmlContent,
+    parts: mixResult.parts,
+    isChunked: mixResult.isChunked,
+    stats: mixResult.stats,
     ...(persistedCommitOid ? { persistedCommitOid } : {})
   };
 }

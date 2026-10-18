@@ -268,3 +268,20 @@
   - `tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
   - `tsc --noEmit -p packages/local-cli/tsconfig.json`: `PASS` (0 Fehler).
   - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`11/11` Probes bestanden, **0/22** TypeScript-Dateien >= 500 Zeilen).
+
+### [2026-10-18T14:20:00+02:00] | Main Agent (#exec) | Stage 6 (RepoMix Atomic Chunking, Multi-Part Ingestion & Scoped Filtering)
+- **Status:** `DONE`
+- **Umgesetzte Komponenten:**
+  - `shared/types.ts`: `MixPart`-Interface hinzugefügt (`partIndex`, `totalParts`, `fileName`, `xmlContent`, `stats`). `MixRequest` um `maxChunkBytes`, `maxChunkTokens`, `splitOutput` erweitert; `MixResponse` um `parts?: MixPart[]` und `isChunked?: boolean` erweitert (100 % abwärtskompatibel).
+  - `packages/edge-worker/src/modules/mixChunker.ts`: Atomare Zerlegung ohne Zerschneiden einzelner Dateien (`buildChunkedMixXml`, Standardbudgets 512 KB / 125k Tokens). Jeder Part erhält vollständigen XML-Root-Kopf inkl. Repometadaten, OID, Part-Nummer und Filetree.
+  - `packages/edge-worker/src/utils/tarUtils.ts`: Extraktion von `concatBuffers`, `parseAsciiString`, `parseOctal` aus `mixer.ts` zur Wahrung des `< 500`-Zeilen-Gesetzes.
+  - `packages/edge-worker/src/modules/mixer.ts`: Verdrahtung von `buildChunkedMixXml` und Bereinigung auf 446 Zeilen (sicher unter Limit).
+  - `packages/userscript-hud/src/dom/injector.ts`: `injectRepoMixParts` implementiert (Multi-File Synthetic Paste via `DataTransfer`), `injectRepoMixFile` darauf delegiert.
+  - `packages/userscript-hud/src/services/workerClient.ts`: `requestRepoMix` leitet `maxChunkBytes`, `maxChunkTokens`, `splitOutput` weiter.
+  - `packages/userscript-hud/src/ui/hudStylesAndDom.ts`: `includePathsInput` im Drawer ergänzt (Scope-Filter für Monorepos).
+  - `packages/userscript-hud/src/ui/shadowHud.ts`: `mixBtn.onclick` unterstützt Multi-Part Injection und zeigt Part-Anzahl an.
+  - Root `gemini-bridge.user.js` und `packages/userscript-hud/dist/gemini-bridge.user.js`: Synchronisiert und neu gebündelt (51.2 KB).
+  - `scripts/patches_and_tests/worker-smoke.mjs`: Erweitert um Probe 12 (`Stage 6 RepoMix Atomic Chunking & Multi-Part Ingestion Contracts`).
+- **Verifikation:**
+  - `tsc --noEmit` über alle 3 Packages (`edge-worker`, `userscript-hud`, `local-cli`): `PASS` (0 Fehler).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`12/12` Probes bestanden, **0/24** TypeScript-Dateien >= 500 Zeilen).

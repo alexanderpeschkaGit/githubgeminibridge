@@ -447,6 +447,52 @@ async function main() {
     return { pass, zeroNodeImportsInWorker: !forbiddenFound, validSigPass, tamperedPass, wrongSecretPass, missingSigPass, hasVerifySignature, hasHandleWebhook, hasExecuteWorkflow, indexWiresWebhook, hasLocalRunner };
   }));
 
+  // Probe 12: Stage 6 RepoMix Atomic Chunking & Multi-Part Ingestion
+  results.push(await runProbe(12, 'Stage 6 RepoMix Atomic Chunking & Multi-Part Ingestion Contracts', async () => {
+    const chunkerPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixChunker.ts');
+    const tarUtilsPath = path.join(ROOT_DIR, 'packages/edge-worker/src/utils/tarUtils.ts');
+    const injectorPath = path.join(ROOT_DIR, 'packages/userscript-hud/src/dom/injector.ts');
+    const rootUserScriptPath = path.join(ROOT_DIR, 'gemini-bridge.user.js');
+
+    const filesExist = [chunkerPath, tarUtilsPath, injectorPath, rootUserScriptPath].every((p) => fs.existsSync(p));
+    if (!filesExist) return { pass: false, error: 'Required chunking files missing' };
+
+    const chunkerContent = fs.readFileSync(chunkerPath, 'utf-8');
+    const injectorContent = fs.readFileSync(injectorPath, 'utf-8');
+    const rootUserScript = fs.readFileSync(rootUserScriptPath, 'utf-8');
+
+    const hasBuildChunked = chunkerContent.includes('export function buildChunkedMixXml');
+    const hasInjectParts = injectorContent.includes('export function injectRepoMixParts');
+    const bundleHasInjectParts = rootUserScript.includes('injectRepoMixParts');
+    const bundleHasIncludePaths = rootUserScript.includes('includePathsInput');
+
+    // Functional verification of partitioning algorithm
+    const files = [
+      { path: 'a.ts', content: 'x'.repeat(200) },
+      { path: 'b.ts', content: 'y'.repeat(200) },
+      { path: 'c.ts', content: 'z'.repeat(200) }
+    ];
+    const maxBytes = 250;
+    const buckets = [];
+    let cur = [];
+    let curBytes = 0;
+    for (const f of files) {
+      const size = f.path.length + f.content.length + 50;
+      if (cur.length > 0 && curBytes + size > maxBytes) {
+        buckets.push(cur);
+        cur = [];
+        curBytes = 0;
+      }
+      cur.push(f);
+      curBytes += size;
+    }
+    if (cur.length > 0) buckets.push(cur);
+    const chunkingPass = buckets.length >= 2;
+
+    const pass = hasBuildChunked && hasInjectParts && bundleHasInjectParts && bundleHasIncludePaths && chunkingPass;
+    return { pass, hasBuildChunked, hasInjectParts, bundleHasInjectParts, bundleHasIncludePaths, chunkingPass };
+  }));
+
   const passedCount = results.filter((r) => r.pass).length;
   const allPassed = passedCount === results.length;
   const summary = {

@@ -4,9 +4,9 @@
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
 
 ## Aktuelle Phase
-- **Aktive Stufe:** **Stufe 5 (Hybrid Routing: Local CLI vs. Cloudflare Worker GitHub Webhook)** erfolgreich abgeschlossen (`11/11 PASS`). **100 % aller 22 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
+- **Aktive Stufe:** **Stufe 6 (RepoMix Atomic Chunking, Multi-Part Ingestion & Scoped Filtering)** erfolgreich abgeschlossen (`12/12 PASS`). **100 % aller 24 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
 - **Modell-Politik:** Vorab-Gesamtplanung & Strukturierung aller Parts auf **Argon High oder Argon Medium (`pro`/`inherit`)**; Ausführung & `/delegate` der Arbeitspakete mit `Complexity < 6` auf **Flash (`Model: 'flash'`)** und ab `Complexity >= 6` auf **Argon Medium (`Model: 'pro'`)**
-- **Letztes Update:** 2026-10-18T14:15:00+02:00 (Stufe 5 abgeschlossen: `shared/hybridTypes.ts`, `packages/local-cli/` mit `localRunner.ts` & `cli.ts`, `packages/edge-worker/src/modules/webhookHandler.ts` mit Web Crypto HMAC & `ctx.waitUntil`, Route `POST /api/webhook/github`, Probe 11 verifiziert, 11/11 Probes bestanden, 22/22 TS-Dateien < 500 Zeilen).
+- **Letztes Update:** 2026-10-18T14:20:00+02:00 (Stufe 6 abgeschlossen: `shared/types.ts` mit `MixPart`, `packages/edge-worker/src/modules/mixChunker.ts`, `packages/edge-worker/src/utils/tarUtils.ts`, `packages/userscript-hud/src/dom/injector.ts` mit `injectRepoMixParts`, `shadowHud.ts` Multi-Part Flow, `hudStylesAndDom.ts` mit `includePathsInput`, Probe 12 verifiziert, 12/12 Probes bestanden, 24/24 TS-Dateien < 500 Zeilen).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**
@@ -46,6 +46,9 @@
 - [x] **Stufe 5 (Subagent / `#delegate #flash`): Hybrides Routing (Local CLI `packages/local-cli/` vs. Edge-Worker GitHub-Webhook `packages/edge-worker/`)**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: `shared/hybridTypes.ts` Verträge (`ExecutionMode`, `HybridTaskInput`, `HybridTaskResult`, `HybridWorkerEnv`), `packages/local-cli/` (Pfad A: Node.js CLI mit `@google/genai` / REST Fallback, in-Memory-Preflight Validierung via `applyPatchesInMemory` + `runPreflightLinter` & Git-Commit), `packages/edge-worker/src/modules/webhookHandler.ts` & Route `POST /api/webhook/github` (Pfad B: Web Crypto HMAC-SHA256 Signatur-Prüfung, sofortiges `202 Accepted` & `ctx.waitUntil` async Workflow), Probe 11 in `worker-smoke.mjs` (`11/11 PASS`), 0 Node.js-Imports im Worker, 22/22 TypeScript-Dateien `< 500` Zeilen.
+- [x] **Stufe 6 (#exec): RepoMix Atomic Chunking, Multi-Part Ingestion & Scoped Path Filtering**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: `MixPart`-Vertrag in `shared/types.ts` (`maxChunkBytes`, `maxChunkTokens`, `splitOutput`, `parts?: MixPart[]`), atomare Zerlegung ohne Code-Zerschneiden in `packages/edge-worker/src/modules/mixChunker.ts`, TAR-Helper-Extraktion in `packages/edge-worker/src/utils/tarUtils.ts` (Schutz der `< 500`-Zeilen-Grenze für `mixer.ts`), Multi-File-Paste im Userscript-HUD via `injectRepoMixParts` (`injector.ts` & `shadowHud.ts`), `includePaths`-UI-Konfiguration im HUD Drawer (`hudStylesAndDom.ts`), Probe 12 verifiziert (`12/12 PASS`), 24/24 TypeScript-Dateien strikt `< 500` Zeilen.
 
 ## Offene Entscheidungen / Blocker
-- *Keine Blocker.* Sämtliche Komponenten (Stufe 0 bis 5) und alle 22 TypeScript-Dateien sind 100 % typgeprüft, modular unter 500 Zeilen dekomponiert und durch alle 11 Smoke-Probes (`worker-smoke.mjs` `11/11 PASS`) verifiziert.
+- *Keine Blocker.* Sämtliche Komponenten (Stufe 0 bis 6) und alle 24 TypeScript-Dateien sind 100 % typgeprüft, modular unter 500 Zeilen dekomponiert und durch alle 12 Smoke-Probes (`worker-smoke.mjs` `12/12 PASS`) verifiziert.

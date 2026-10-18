@@ -31,7 +31,7 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
 | Endpoint | Method | Auth | Ursprung | Modul / Handler | Request / Response Vertrag |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `/` oder `/health` | `GET` | Public | V1 + V2 | `index.ts` | Gibt `{ status: "ok", service: "gemini-git-bridge", version: "2.0.0", hasBridgeSecret: boolean, hasGithubToken: boolean }` zurück ( niemals Klartext-Secrets!). |
-| `/api/mix` | `POST` | Bearer / `x-bridge-secret` | **V2 (Stufe 1)** | `modules/mixer.ts` | Body: `MixRequest` (`repo`, `branch`, `includePaths?`, `persistToGitHub?`). Streamt GitHub-Tarball (1 Subrequest), filtert im RAM und liefert `MixResponse` (`headOid`, `xmlContent`, `stats`). |
+| `/api/mix` | `POST` | Bearer / `x-bridge-secret` | **V2 (Stufe 1 & 6)** | `modules/mixer.ts` + `modules/mixChunker.ts` | Body: `MixRequest` (`repo`, `branch`, `includePaths?`, `persistToGitHub?`, `maxChunkBytes?`, `maxChunkTokens?`, `splitOutput?`). Streamt GitHub-Tarball (1 Subrequest), filtert im RAM und liefert `MixResponse` (`headOid`, `xmlContent`, `parts?`, `isChunked?`, `stats`). |
 | `/api/patch` | `POST` | Bearer / `x-bridge-secret` | **V2 (Stufe 2 & 4)** | `modules/patcher.ts` + `modules/linter.ts` | Body: `WorkerPatchRequest` (`repo`, `branch`, `expectedHeadOid`, `payload: GeminiPatchPayload`). Führt Batch-Read, Search/Replace, Placeholder-Guardrail & `oxc-parser` WASM-Check aus. Liefert `WorkerPatchResponse` (`COMMITTED`, `PREFLIGHT_FAILED`, `GIT_CONFLICT`, `NO_CHANGES_NEEDED`, `ERROR`). |
 | `/push`, `/commit`, `/api/commit`, `/` | `POST` | Bearer / `x-bridge-secret` | **V1 Legacy** | `modules/patcher.ts` (`handleCommitRequest`) | Body: `CommitRequestPayload` (`repo`, `targetBranch`, `commitMessage`, `changes[]`, `deletions[]`, `expectedHeadOid?`). Muss zu 100 % abwärtskompatibel für bestehende V1-Clients bleiben! |
 | `/graphql` | `POST` | Bearer / `x-bridge-secret` | **V1 + V2** | `index.ts` (`handleGraphQLProxy`) | Body: `{ query: string, variables?: Record<string, unknown> }`. Authentifizierter Proxy zur GitHub GraphQL API v4. |
@@ -59,6 +59,10 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
 5. **Strukturierter XML-Output (Repomix-kompatibel):**
    - Erzeuge valides XML im Format `<repository repo="..." branch="..." headOid="..."><file_tree>...</file_tree><files><file path="..."><![CDATA[...]]></file></files></repository>`.
    - Escape vorhandene `]]>`-Sequenzen im Dateiinhalt sicher als `]]]]><![CDATA[>` (`escapeCdata`), damit CDATA-Blöcke niemals aufbrechen.
+6. **RepoMix Atomic Chunking & Multi-Part Partitioning (`mixChunker.ts`):**
+   - Wird `splitOutput: true` übergeben oder überschreitet das Repository das Budget (`maxChunkBytes` Standard 512 KB bzw. `maxChunkTokens` Standard 125.000 Tokens), partitioniert `buildChunkedMixXml` die Dateien **atomar** in nummerierte Chunks (`part 1 von N`).
+   - **Invariante:** Einzelne Dateien werden **niemals** mitten im Quellcode zerschnitten. Jeder Part ist ein in sich geschlossenes, valides XML-Dokument mit vollständigen Header-Metadaten und Filetree.
+   - Low-Level TAR-Header-Parsing (`concatBuffers`, `parseAsciiString`, `parseOctal`) ist in `src/utils/tarUtils.ts` ausgelagert, um das `< 500`-Zeilen-Gesetz für `mixer.ts` strikt einzuhalten.
 
 ### B. Untertool B: `src/modules/patcher.ts` & `src/modules/patchInMemory.ts` & `src/utils/github.ts` (Stufe 2)
 1. **1-Subrequest GraphQL Batch-Read:**

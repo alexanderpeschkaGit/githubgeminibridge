@@ -246,6 +246,7 @@ export interface HudDomElements {
   repoInput: HTMLInputElement;
   branchInput: HTMLInputElement;
   secretInput: HTMLInputElement;
+  includePathsInput: HTMLInputElement;
   oidBadge: HTMLDivElement;
   mixBtn: HTMLButtonElement;
   autoPilotCheck: HTMLInputElement;
@@ -324,6 +325,16 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   branchRow.appendChild(branchInput);
   body.appendChild(branchRow);
 
+  // Include Paths Row (Scope Filter for large repos)
+  const pathsRow = createHudElement('div', 'hud-form-row');
+  const pathsLabel = createHudElement('span', 'hud-label', 'Include Paths (comma-separated, optional)');
+  const includePathsInput = createHudElement('input', 'hud-input');
+  includePathsInput.placeholder = 'e.g. src/, packages/edge-worker/';
+  includePathsInput.value = (config.includePaths || []).join(', ');
+  pathsRow.appendChild(pathsLabel);
+  pathsRow.appendChild(includePathsInput);
+  body.appendChild(pathsRow);
+
   // Worker Secret Row
   const secretRow = createHudElement('div', 'hud-form-row');
   const secretLabel = createHudElement('span', 'hud-label', 'Worker Secret (WORKER_SECRET)');
@@ -394,6 +405,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     repoInput,
     branchInput,
     secretInput,
+    includePathsInput,
     oidBadge,
     mixBtn,
     autoPilotCheck,

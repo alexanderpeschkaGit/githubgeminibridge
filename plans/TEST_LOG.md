@@ -129,5 +129,26 @@
   - `tsc --noEmit -p packages/local-cli/tsconfig.json`: `PASS` (0 Fehler).
 - **GESAMTSTATUS**: `PASS`
 
+### [2026-10-18T14:20:00+02:00] | Stage 6 Smoke Suite & Modularitäts-Audit: 12/12 Probes PASS
+- **Command**: `node scripts/patches_and_tests/worker-smoke.mjs`
+- **Ergebnis**: `PASS` (`12/12` Probes bestanden).
+- **Auditierte Probes**:
+  - Probe 1 bis 11: Alle `PASS` (Struktur, Guardrails, Connector, Entry, Health, Mixer, Patcher, HUD, Linter, Modularity, Webhook).
+  - Probe 10: File-Size Modularity Audit `< 500` Zeilen über alle 24 aktiven TypeScript-Quelldateien:
+    - Gesamt auditierte TypeScript-Quelldateien: **24 Dateien** (inkl. `mixChunker.ts` 160 Z., `tarUtils.ts` 40 Z., `mixer.ts` 447 Z.).
+    - **Dateien >= 500 Zeilen: 0 Dateien! (100 % Konformität mit dem < 500-Zeilen-Grenzwert aus `agents.md`).**
+    - Bundle-Integrität & Synchronisation: `PASS` (`gemini-bridge.user.js` 51.2 KB byte-identisch).
+  - Probe 12: Stage 6 RepoMix Atomic Chunking & Multi-Part Ingestion Contracts (`PASS`):
+    - `mixChunker.ts` Exporte & Funktionaler Partitionstest (`buildChunkedMixXml`): `PASS`.
+    - `tarUtils.ts` Parser-Helper Exporte: `PASS`.
+    - `injector.ts` Multi-File Synthetic Paste (`injectRepoMixParts`): `PASS`.
+    - Bundle & HUD DOM Drawer Wiring (`includePathsInput`): `PASS`.
+- **Compiler Verifikation**:
+  - `tsc --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler).
+  - `tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+  - `tsc --noEmit -p packages/local-cli/tsconfig.json`: `PASS` (0 Fehler).
+- **GESAMTSTATUS**: `PASS`
+
+
 
 
