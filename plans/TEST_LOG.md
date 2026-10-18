@@ -212,6 +212,20 @@
   - **Probe 12 Stage 6.1 Contracts:** `PASS` (funktionale Validierung von 85k Chunking, Baum-Hierarchie und Skip-Marker).
 - **GESAMTSTATUS**: `PASS`
 
+### [2026-10-18T14:59:00+02:00] | Live Cloudflare Worker Deployment & Health Verifikation (Stage 6.1)
+- **Befehl**: `npx wrangler deploy` (packages/edge-worker)
+- **Deployment Details**:
+  - Worker Name: `gemini-git-bridge`
+  - URL: `https://gemini-git-bridge.sikanda.workers.dev`
+  - Version ID: `74f12a91-6660-4439-8404-30899e56cf36`
+  - Upload Size: 68.79 KiB (gzip: 16.02 KiB)
+- **Live Health Check**:
+  - `GET https://gemini-git-bridge.sikanda.workers.dev/health` -> HTTP 200 `{ status: 'ok', service: 'gemini-git-bridge', version: '2.0.0', hasBridgeSecret: true, hasGithubToken: true }`
+- **Smoke-Suite nach Deployment**:
+  - `node scripts/patches_and_tests/worker-smoke.mjs` -> `PASS` (`12/12` Probes bestanden).
+- **GESAMTSTATUS**: `PASS`
+
+
 
 
 

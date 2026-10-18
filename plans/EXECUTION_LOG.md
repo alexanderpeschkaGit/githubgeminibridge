@@ -313,6 +313,17 @@
   4. **500-Zeilen-Gesetz (`P1` Global Invariant 2):** [mixer.ts](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/packages/edge-worker/src/modules/mixer.ts) (447 Z.), [hudStylesAndDom.ts](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/packages/userscript-hud/src/ui/hudStylesAndDom.ts) (418 Z.) und [shadowHud.ts](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/packages/userscript-hud/src/ui/shadowHud.ts) (404 Z.) bleiben durch kompakte Integration sicher `< 460` Zeilen.
 - **Aktion:** Erzeuge Ausführungs-Artefakt `stage_6_1_repomix_85k_char_chunking.md` und starte isolierten Flash-Subagenten (`Role: "Artifact Executor"`, `Model: "flash"`).
 
+### [2026-10-18T14:59:00+02:00] | Main Agent (#exec) | Live Deployment Cloudflare Worker (Stage 6.1: 85k Char Limit & Atomic Chunking)
+- **Status:** `DONE`
+- **Ausgeführte Aktion:** `npx wrangler deploy` in `packages/edge-worker/` nach Nutzereinwilligung ("ja").
+- **Live Worker Status:**
+  - Endpoint: `https://gemini-git-bridge.sikanda.workers.dev`
+  - Version ID: `74f12a91-6660-4439-8404-30899e56cf36`
+  - Upload-Größe: 68.79 KiB (gzip: 16.02 KiB)
+  - `GET /health`: HTTP 200 `{ status: 'ok', service: 'gemini-git-bridge', version: '2.0.0', hasBridgeSecret: true, hasGithubToken: true }`
+  - Smoke Suite: `12/12 PASS`.
+
+
 ### [2026-10-18T14:50:00+02:00] | Flash-Subagent (Complexity 4/10) | Stage 6.1: RepoMix 85k Character Limit & Atomic File Boundaries
 - **Status:** `START`
 - **Aktion:** Starte Implementierung von Stage 6.1 gemäß Artefakt-Plan:
