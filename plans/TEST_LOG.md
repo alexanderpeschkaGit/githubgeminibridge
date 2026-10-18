@@ -82,3 +82,52 @@
     - Alle 18 Dateien sind vollständig im grünen Bereich bzw. in der erlaubten Warnzone (300–499 Zeilen).
     - Bundle-Integrität & Synchronisation: `PASS` (byte-identisch, 48.7 KB, nicht leer).
 - **GESAMTSTATUS**: `PASS`
+
+### [2026-10-18T13:25:00+02:00] | Browser E2E Live-Test: Single-File Commit via Gemini UI & Shadow-DOM HUD
+- **1. Flow**: Gemini Web UI (`gemini.google.com`) -> Tampermonkey Shadow-DOM HUD (`gemini-bridge.user.js` v2.0.0) -> Cloudflare Worker Relay -> GitHub GraphQL API v4 (`createCommitOnBranch`).
+- **2. Getestete Datei**: `test-gemini-bridge.md` mit Pfad-Kommentar `// filepath: test-gemini-bridge.md`.
+- **3. Ergebnis**: `PASS` (User bestätigt Live-Commit erfolgreich im GitHub-Repository sichtbar).
+- **GESAMTSTATUS**: `PASS`
+
+### [2026-10-18T13:35:00+02:00] | Browser E2E Live-Test: Hard Guardrail (validateNoPlaceholders) Rejection
+- **1. Flow**: Gemini Chat -> Code Block mit `// ... existing code ...` -> Klick `Push via Bridge` -> Cloudflare Worker Guardrail Scan.
+- **2. Getesteter Fehler**: Absichtlicher LLM-Platzhalter (`// ... existing code ...`).
+- **3. Ergebnis**: `PASS` (Worker hat den Commit mit `Hard Guardrail Rejection: File "test-gemini-bridge.md" contains forbidden LLM placeholder text...` blockiert; kein Commit auf GitHub, keine Code-Zerstörung).
+- **GESAMTSTATUS**: `PASS`
+
+### [2026-10-18T13:42:20+02:00] | Live-Deployment Cloudflare Worker V2.0.0 (`npx wrangler deploy`)
+- **1. Command**: `npx wrangler deploy` in `packages/edge-worker` (Exit Code 0, Upload 55.2 KiB, Version ID `886b0a35-140a-4d00-8a74-816fc6eeaaa5`).
+- **2. Live Health Verifikation**: `GET https://gemini-git-bridge.sikanda.workers.dev/health` -> `version: "2.0.0"`, `hasBridgeSecret: true`, `hasGithubToken: true`.
+- **3. Neue Endpunkte live**: `POST /api/mix` (1-Subrequest Tarball Mixer), `POST /api/patch` (V2 Preflight Linter & Atomarer Patcher).
+- **GESAMTSTATUS**: `PASS`
+
+### [2026-10-18T14:15:00+02:00] | Stage 5 Smoke Suite & Modularitäts-Audit: 11/11 Probes PASS
+- **Command**: `node scripts/patches_and_tests/worker-smoke.mjs`
+- **Ergebnis**: `PASS` (`11/11` Probes bestanden).
+- **Auditierte Probes**:
+  - Probe 1: Monorepo & V1 Backup Structural Integrity (`PASS`, inkl. Stage 5 Files).
+  - Probe 2: Hard Guardrail (validateNoPlaceholders) Contract (`PASS`).
+  - Probe 3: GitHub Connector V2 Extensions (`PASS`).
+  - Probe 4: Worker Entry V1/V2 Dual Secret & Route Support (`PASS`).
+  - Probe 5: Live Worker GET `/health` (`PASS`).
+  - Probe 6: Stage 1 Mixer Module & Filter/CDATA Contracts (`PASS`).
+  - Probe 7: Stage 2 Patcher V2 Pipeline (`PASS`).
+  - Probe 8: Stage 3 Userscript Shadow-DOM HUD Contracts (`PASS`).
+  - Probe 9: Stage 4 Pre-Flight Linter & Self-Healing Loop Contracts (`PASS`).
+  - Probe 10: File-Size Modularity Audit `< 500` Zeilen über alle 22 aktiven TypeScript-Quelldateien:
+    - Gesamt auditierte TypeScript-Quelldateien: 22 Dateien.
+    - **Dateien >= 500 Zeilen: 0 Dateien! (100 % Konformität mit dem < 500-Zeilen-Grenzwert aus `agents.md`).**
+    - Bundle-Integrität & Synchronisation: `PASS`.
+  - Probe 11: Stage 5 Hybrid Routing & Webhook HMAC Verification (`PASS`):
+    - Zero Node.js imports in `packages/edge-worker/` (`PASS`).
+    - Web Crypto HMAC-SHA256 Signatur-Verifikation (`validSigPass`, `tamperedPass`, `wrongSecretPass`, `missingSigPass`: alle `PASS`).
+    - Webhook-Handler & Routing Verträge (`hasVerifySignature`, `hasHandleWebhook`, `hasExecuteWorkflow`, `indexWiresWebhook`: alle `PASS`).
+    - Local CLI Vertrag (`hasLocalRunner`: `PASS`).
+- **Compiler Verifikation**:
+  - `tsc --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler).
+  - `tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+  - `tsc --noEmit -p packages/local-cli/tsconfig.json`: `PASS` (0 Fehler).
+- **GESAMTSTATUS**: `PASS`
+
+
+

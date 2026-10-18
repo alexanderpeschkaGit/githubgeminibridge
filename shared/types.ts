@@ -116,3 +116,8 @@ export interface GitHubCommitResult {
   url: string;
   messageHeadline: string;
 }
+
+// ==========================================
+// 5. HYBRID ROUTING & WEBHOOK (Stage 5)
+// ==========================================
+export * from './hybridTypes';

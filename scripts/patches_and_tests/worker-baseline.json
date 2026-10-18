@@ -1,14 +1,14 @@
 {
-  "timestamp": "2026-10-17T04:02:11.987Z",
+  "timestamp": "2026-10-18T12:12:14.179Z",
   "overallStatus": "PASS",
-  "passedCount": 10,
-  "totalProbes": 10,
+  "passedCount": 11,
+  "totalProbes": 11,
   "results": [
     {
       "id": 1,
       "name": "Monorepo & V1 Backup Structural Integrity",
       "pass": true,
-      "checkedCount": 16,
+      "checkedCount": 22,
       "missing": []
     },
     {
@@ -40,7 +40,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "1.0.0",
+      "version": "2.0.0",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },
@@ -104,11 +104,11 @@
       "id": 10,
       "name": "File-Size Modularity Audit (<500 lines) & End-to-End Artifact Completeness",
       "pass": true,
-      "totalTsFilesAudited": 18,
-      "warningZoneFilesCount": 7,
+      "totalTsFilesAudited": 22,
+      "warningZoneFilesCount": 8,
       "overLimitFilesCount": 0,
       "bundleByteIdentical": true,
-      "bundleSize": 49842,
+      "bundleSize": 50525,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
@@ -123,12 +123,16 @@
           "lines": 335
         },
         {
+          "file": "packages/edge-worker/src/modules/webhookHandler.ts",
+          "lines": 317
+        },
+        {
           "file": "packages/edge-worker/src/utils/github.ts",
           "lines": 432
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
-          "lines": 370
+          "lines": 380
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
@@ -143,7 +147,7 @@
       "audit": [
         {
           "file": "packages/edge-worker/src/index.ts",
-          "lines": 220
+          "lines": 226
         },
         {
           "file": "packages/edge-worker/src/modules/linter.ts",
@@ -166,6 +170,10 @@
           "lines": 335
         },
         {
+          "file": "packages/edge-worker/src/modules/webhookHandler.ts",
+          "lines": 317
+        },
+        {
           "file": "packages/edge-worker/src/types.ts",
           "lines": 2
         },
@@ -179,7 +187,7 @@
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
-          "lines": 370
+          "lines": 380
         },
         {
           "file": "packages/userscript-hud/src/dom/injector.ts",
@@ -195,7 +203,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/storage.ts",
-          "lines": 132
+          "lines": 141
         },
         {
           "file": "packages/userscript-hud/src/services/workerClient.ts",
@@ -212,8 +220,35 @@
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
           "lines": 382
+        },
+        {
+          "file": "packages/local-cli/src/cli.ts",
+          "lines": 119
+        },
+        {
+          "file": "packages/local-cli/src/index.ts",
+          "lines": 3
+        },
+        {
+          "file": "packages/local-cli/src/localRunner.ts",
+          "lines": 272
         }
       ]
+    },
+    {
+      "id": 11,
+      "name": "Stage 5 Hybrid Routing & Webhook HMAC Verification",
+      "pass": true,
+      "zeroNodeImportsInWorker": true,
+      "validSigPass": true,
+      "tamperedPass": true,
+      "wrongSecretPass": true,
+      "missingSigPass": true,
+      "hasVerifySignature": true,
+      "hasHandleWebhook": true,
+      "hasExecuteWorkflow": true,
+      "indexWiresWebhook": true,
+      "hasLocalRunner": true
     }
   ]
 }

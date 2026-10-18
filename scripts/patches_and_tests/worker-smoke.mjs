@@ -35,6 +35,12 @@ async function main() {
       'packages/edge-worker/src/utils/encoding.ts',
       'packages/edge-worker/src/utils/github.ts',
       'packages/edge-worker/src/modules/patcher.ts',
+      'packages/edge-worker/src/modules/webhookHandler.ts',
+      'shared/hybridTypes.ts',
+      'packages/local-cli/package.json',
+      'packages/local-cli/tsconfig.json',
+      'packages/local-cli/src/localRunner.ts',
+      'packages/local-cli/src/cli.ts',
       '_v1_backup/gemini-bridge.user.js',
       '_v1_backup/cf-gemini-git-bridge/src/patch.ts'
     ];
@@ -226,16 +232,8 @@ async function main() {
                  hasTrustedTypes;
 
     return {
-      pass,
-      missingHudFiles: missing,
-      rootUserScriptExists,
-      testPatBlocked,
-      testGithubPatBlocked,
-      testSecretAllowed,
-      hasDualMatch,
-      hasGmXml,
-      hasShadowDom,
-      hasTrustedTypes
+      pass, missingHudFiles: missing, rootUserScriptExists, testPatBlocked,
+      testGithubPatBlocked, testSecretAllowed, hasDualMatch, hasGmXml, hasShadowDom, hasTrustedTypes
     };
   }));
 
@@ -306,37 +304,16 @@ async function main() {
     const case3 = testTriggerEval('COMMITTED', true, 2);
     const case3Pass = case3.trigger === false && case3.nextRetryCount === 0;
 
-    const pass = hasValidateSyntax &&
-                 hasRunCustomRules &&
-                 hasRunPreflightLinter &&
-                 patcherImportsLinter &&
-                 patcherWiresDefaultHook &&
-                 hasMaxRetries &&
-                 hasBuildPrompt &&
-                 hasShouldTrigger &&
-                 hasExecuteTurn &&
-                 bundleHasPrompt &&
-                 bundleHasTrigger &&
-                 bundleHasMaxRetries &&
-                 case1Pass &&
-                 case2Pass &&
-                 case3Pass;
+    const pass = hasValidateSyntax && hasRunCustomRules && hasRunPreflightLinter &&
+                 patcherImportsLinter && patcherWiresDefaultHook && hasMaxRetries &&
+                 hasBuildPrompt && hasShouldTrigger && hasExecuteTurn && bundleHasPrompt &&
+                 bundleHasTrigger && bundleHasMaxRetries && case1Pass && case2Pass && case3Pass;
 
     return {
-      pass,
-      hasValidateSyntax,
-      hasRunCustomRules,
-      hasRunPreflightLinter,
-      patcherImportsLinter,
-      patcherWiresDefaultHook,
-      hasMaxRetries,
-      hasBuildPrompt,
-      hasShouldTrigger,
-      hasExecuteTurn,
-      bundleHasPrompt,
-      bundleHasTrigger,
-      bundleHasMaxRetries,
-      functionalLogicPass: case1Pass && case2Pass && case3Pass
+      pass, hasValidateSyntax, hasRunCustomRules, hasRunPreflightLinter,
+      patcherImportsLinter, patcherWiresDefaultHook, hasMaxRetries, hasBuildPrompt,
+      hasShouldTrigger, hasExecuteTurn, bundleHasPrompt, bundleHasTrigger,
+      bundleHasMaxRetries, functionalLogicPass: case1Pass && case2Pass && case3Pass
     };
   }));
 
@@ -359,7 +336,8 @@ async function main() {
 
     const workerSrcDir = path.join(ROOT_DIR, 'packages/edge-worker/src');
     const hudSrcDir = path.join(ROOT_DIR, 'packages/userscript-hud/src');
-    const allTsFiles = [...findTsFiles(workerSrcDir), ...findTsFiles(hudSrcDir)];
+    const localSrcDir = path.join(ROOT_DIR, 'packages/local-cli/src');
+    const allTsFiles = [...findTsFiles(workerSrcDir), ...findTsFiles(hudSrcDir), ...findTsFiles(localSrcDir)];
 
     const audit = [];
     const warningZone = []; // 300 - 499 lines
@@ -405,6 +383,68 @@ async function main() {
       overLimitZone,
       audit
     };
+  }));
+
+  // Probe 11: Stage 5 Hybrid Routing & Webhook HMAC Verification
+  results.push(await runProbe(11, 'Stage 5 Hybrid Routing & Webhook HMAC Verification', async () => {
+    const webhookPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/webhookHandler.ts');
+    const hybridTypesPath = path.join(ROOT_DIR, 'shared/hybridTypes.ts');
+    const localRunnerPath = path.join(ROOT_DIR, 'packages/local-cli/src/localRunner.ts');
+    const localCliPath = path.join(ROOT_DIR, 'packages/local-cli/src/cli.ts');
+    const indexPath = path.join(ROOT_DIR, 'packages/edge-worker/src/index.ts');
+
+    const filesExist = [webhookPath, hybridTypesPath, localRunnerPath, localCliPath].every((p) => fs.existsSync(p));
+    if (!filesExist) return { pass: false, error: 'Required Stage 5 files missing' };
+
+    const webhookContent = fs.readFileSync(webhookPath, 'utf-8');
+    const indexContent = fs.readFileSync(indexPath, 'utf-8');
+    const localRunnerContent = fs.readFileSync(localRunnerPath, 'utf-8');
+
+    // 1. Invariant: edge-worker must NOT import Node.js builtins (fs, child_process, simple-git, path)
+    const importRx = /(?:import|require)\s*(?:\(?\s*['"](?:node:)?(?:fs|child_process|simple-git|path)['"]|from\s*['"](?:node:)?(?:fs|child_process|simple-git|path)['"])/;
+    let forbiddenFound = false;
+    const checkDir = (dir) => {
+      if (!fs.existsSync(dir)) return;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) checkDir(full);
+        else if (e.name.endsWith('.ts') && importRx.test(fs.readFileSync(full, 'utf-8'))) forbiddenFound = true;
+      }
+    };
+    checkDir(path.join(ROOT_DIR, 'packages/edge-worker/src'));
+
+    // 2. Functional HMAC-SHA256 signature verification test via Web Crypto API (SubtleCrypto)
+    const secret = 'test-webhook-secret-key-12345';
+    const body = JSON.stringify({ action: 'created', comment: { body: '@gemini please patch this' } });
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(body));
+    const hexSig = 'sha256=' + Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+    const verifyFn = async (b, sHeader, sec) => {
+      if (!sHeader || !sHeader.startsWith('sha256=') || !sec || sHeader.length !== 71) return false;
+      const bSig = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) bSig[i] = parseInt(sHeader.slice(7).substring(i * 2, i * 2 + 2), 16);
+      const k = await crypto.subtle.importKey('raw', enc.encode(sec), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+      return await crypto.subtle.verify('HMAC', k, bSig, enc.encode(b));
+    };
+
+    const validSigPass = await verifyFn(body, hexSig, secret);
+    const tamperedPass = !(await verifyFn(body + 'tampered', hexSig, secret));
+    const wrongSecretPass = !(await verifyFn(body, hexSig, 'wrong-secret'));
+    const missingSigPass = !(await verifyFn(body, null, secret));
+
+    // 3. Webhook handler and route contracts
+    const hasVerifySignature = webhookContent.includes('export async function verifyGithubWebhookSignature');
+    const hasHandleWebhook = webhookContent.includes('export async function handleGithubWebhookRequest');
+    const hasExecuteWorkflow = webhookContent.includes('export async function executeWorkerWorkflow');
+    const indexWiresWebhook = indexContent.includes("path === '/api/webhook/github'") && indexContent.includes('handleGithubWebhookRequest');
+    const hasLocalRunner = localRunnerContent.includes('export async function runLocalHybridTask');
+
+    const pass = !forbiddenFound && validSigPass && tamperedPass && wrongSecretPass && missingSigPass &&
+      hasVerifySignature && hasHandleWebhook && hasExecuteWorkflow && indexWiresWebhook && hasLocalRunner;
+
+    return { pass, zeroNodeImportsInWorker: !forbiddenFound, validSigPass, tamperedPass, wrongSecretPass, missingSigPass, hasVerifySignature, hasHandleWebhook, hasExecuteWorkflow, indexWiresWebhook, hasLocalRunner };
   }));
 
   const passedCount = results.filter((r) => r.pass).length;

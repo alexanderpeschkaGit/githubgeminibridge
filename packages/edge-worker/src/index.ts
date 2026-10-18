@@ -1,7 +1,8 @@
-import type { WorkerEnv, CommitRequest, MixRequest, WorkerPatchRequest } from './types';
+import type { WorkerEnv, HybridWorkerEnv, CommitRequest, MixRequest, WorkerPatchRequest } from './types';
 import { utf8ToBase64 } from './utils/encoding';
 import { resolveFileContent, handlePatchRequest } from './modules/patcher';
 import { handleMixRequest } from './modules/mixer';
+import { handleGithubWebhookRequest } from './modules/webhookHandler';
 import { getBranchHeadOid, fetchFileContent, createCommitOnBranch, executeGraphQL, parseRepoOwner } from './utils/github';
 
 const CORS_HEADERS: Record<string, string> = {
@@ -60,7 +61,7 @@ export function verifyAuth(request: Request, env: WorkerEnv): boolean {
 }
 
 export default {
-  async fetch(request: Request, env: WorkerEnv): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv, ctx?: any): Promise<Response> {
     // 1. Handle CORS Preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, {
@@ -82,6 +83,11 @@ export default {
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))
       });
+    }
+
+    // 2b. GitHub Webhook endpoint (authenticated via HMAC-SHA256 signature, not Bearer token)
+    if (request.method === 'POST' && path === '/api/webhook/github') {
+      return handleGithubWebhookRequest(request, env as HybridWorkerEnv, ctx);
     }
 
     // 3. Authenticate all protected endpoints

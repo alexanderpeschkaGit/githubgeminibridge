@@ -1,0 +1,18 @@
+{
+  "name": "gemini-bridge-local-cli",
+  "version": "1.0.0",
+  "description": "Local CLI runner for Gemini Git Bridge with in-memory preflight validation",
+  "type": "module",
+  "main": "src/localRunner.ts",
+  "bin": {
+    "gemini-local": "./src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "node src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.5.0"
+  }
+}

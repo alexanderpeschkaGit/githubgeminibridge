@@ -35,6 +35,7 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
 | `/api/patch` | `POST` | Bearer / `x-bridge-secret` | **V2 (Stufe 2 & 4)** | `modules/patcher.ts` + `modules/linter.ts` | Body: `WorkerPatchRequest` (`repo`, `branch`, `expectedHeadOid`, `payload: GeminiPatchPayload`). Führt Batch-Read, Search/Replace, Placeholder-Guardrail & `oxc-parser` WASM-Check aus. Liefert `WorkerPatchResponse` (`COMMITTED`, `PREFLIGHT_FAILED`, `GIT_CONFLICT`, `NO_CHANGES_NEEDED`, `ERROR`). |
 | `/push`, `/commit`, `/api/commit`, `/` | `POST` | Bearer / `x-bridge-secret` | **V1 Legacy** | `modules/patcher.ts` (`handleCommitRequest`) | Body: `CommitRequestPayload` (`repo`, `targetBranch`, `commitMessage`, `changes[]`, `deletions[]`, `expectedHeadOid?`). Muss zu 100 % abwärtskompatibel für bestehende V1-Clients bleiben! |
 | `/graphql` | `POST` | Bearer / `x-bridge-secret` | **V1 + V2** | `index.ts` (`handleGraphQLProxy`) | Body: `{ query: string, variables?: Record<string, unknown> }`. Authentifizierter Proxy zur GitHub GraphQL API v4. |
+| `/api/webhook/github` | `POST` | HMAC-SHA256 (`x-hub-signature-256`) | **V2 (Stufe 5)** | `modules/webhookHandler.ts` | Body: GitHub Webhook JSON. Validiert HMAC per Web Crypto API, filtert `@gemini`-Trigger, liefert sofort `202 Accepted` und führt `executeWorkerWorkflow` (Mixer + Gemini REST + Patcher + PR/Issue Comment) asynchron via `ctx.waitUntil` aus. |
 
 ---
 
@@ -84,6 +85,14 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Unterstützt optionalen pluggbaren `registerOxcWasmParser` Hook.
 3. **Automatischer Hook (`runPreflightLinter`):**
    - Fungiert als Standard-`preflightHook` in `applyPatchesInMemory` und `handlePatchRequest`, aggregiert Syntax- und Custom-Rules (`validateNoPlaceholders`, `forbidPatterns`, `requireExports`) und dedupliziert identische Fehler-Einträge.
-4. **Validierung vor Abschluss:**
-   - Jede Änderung an `packages/edge-worker/` erfordert zwingend `npx tsc --noEmit` (im Arbeitsverzeichnis `packages/edge-worker`) sowie einen Lauf von `node scripts/patches_and_tests/worker-smoke.mjs` (inkl. aller 10 Probes mit harter `< 500`-Zeilen-Bedingung).
+### D. Untertool D: `src/modules/webhookHandler.ts` (Stufe 5 Hybrid Routing & Webhook)
+1. **Zero Node.js Imports:**
+   - Strikt reine Web-Standard-APIs (`crypto.subtle`, `fetch`, `Request`, `Response`, `TextEncoder`). Absolutes Verbot von Node.js-Modulen (`fs`, `child_process`, `simple-git`, `path`) im Worker-Kontext.
+2. **Pure Web Crypto HMAC-SHA256 Signatur-Verifikation:**
+   - Validiert den GitHub-Header `x-hub-signature-256` über `crypto.subtle.importKey` und `crypto.subtle.verify` (Timing-Attack-sicher).
+3. **Sofortiges 202 Accepted & Hintergrund-Verarbeitung (`ctx.waitUntil`):**
+   - Um den strikten 10-Sekunden-Timeout von GitHub-Webhooks einzuhalten, antwortet der Worker sofort mit `202 Accepted` und delegiert `executeWorkerWorkflow` (Mixer -> Gemini REST -> Patcher -> PR/Issue-Feedback-Kommentar) an `ctx.waitUntil`.
+
+### E. Validierung vor Abschluss:
+- Jede Änderung an `packages/edge-worker/` erfordert zwingend `npx tsc --noEmit` (im Arbeitsverzeichnis `packages/edge-worker`) sowie einen erfolgreichen Lauf von `node scripts/patches_and_tests/worker-smoke.mjs` (inkl. aller 11 Probes mit harter `< 500`-Zeilen-Bedingung über alle aktiven TypeScript-Quelldateien).
 

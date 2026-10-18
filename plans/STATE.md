@@ -4,9 +4,9 @@
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
 
 ## Aktuelle Phase
-- **Aktive Stufe:** **Welle 5 (Pflicht-Dekomposition aller Dateien >= 500 Zeilen, Probe 10 Enforcement & Lokaler Git-Checkpoint)** erfolgreich abgeschlossen (`10/10 PASS`). **100 % aller 18 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
+- **Aktive Stufe:** **Stufe 5 (Hybrid Routing: Local CLI vs. Cloudflare Worker GitHub Webhook)** erfolgreich abgeschlossen (`11/11 PASS`). **100 % aller 22 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
 - **Modell-Politik:** Vorab-Gesamtplanung & Strukturierung aller Parts auf **Argon High oder Argon Medium (`pro`/`inherit`)**; Ausführung & `/delegate` der Arbeitspakete mit `Complexity < 6` auf **Flash (`Model: 'flash'`)** und ab `Complexity >= 6` auf **Argon Medium (`Model: 'pro'`)**
-- **Letztes Update:** 2026-10-17T06:03:30+02:00 (Welle 5 abgeschlossen: `linter.ts`, `patcher.ts` und `shadowHud.ts` modular dekomponiert in `syntaxScanner.ts`, `patchInMemory.ts` und `hudStylesAndDom.ts`, Probe 10 auf `overLimitZone.length === 0` verschärft, 10/10 Probes bestanden, Userscript neu gebaut & synchronisiert).
+- **Letztes Update:** 2026-10-18T14:15:00+02:00 (Stufe 5 abgeschlossen: `shared/hybridTypes.ts`, `packages/local-cli/` mit `localRunner.ts` & `cli.ts`, `packages/edge-worker/src/modules/webhookHandler.ts` mit Web Crypto HMAC & `ctx.waitUntil`, Route `POST /api/webhook/github`, Probe 11 verifiziert, 11/11 Probes bestanden, 22/22 TS-Dateien < 500 Zeilen).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**
@@ -40,6 +40,12 @@
 - [x] **Welle 5 (Sub-Chat / `#delegate #flash`): Pflicht-Dekomposition unter 500 Zeilen & Probe 10 Modularity-Enforcement**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: Zerlegung von `linter.ts` (90 Z.) + `syntaxScanner.ts` (335 Z.), `patcher.ts` (366 Z.) + `patchInMemory.ts` (290 Z.) und `shadowHud.ts` (382 Z.) + `hudStylesAndDom.ts` (406 Z.) bei 100 % Export- und Verhaltensparität. Verschärfung von Probe 10 auf `overLimitZone.length === 0` (`10/10 PASS`). Alle 18 aktiven TypeScript-Quelldateien liegen ausnahmslos unter dem 500-Zeilen-Grenzwert!
+- [x] **Kontext-Handoff, Komponenten-Zusammenspiel & Live-Deployment-Plan (`plans/00_*`, `01_*`, `02_*`)**
+  - Status: *ABGESCHLOSSEN (`PLAN_DONE`)*.
+  - Ziel: `agents.md` mit Progressive Disclosure + End-to-End Datenflüssen aktualisiert; `plans/00_STARTCHAT_ORCHESTRATOR.md` (Prompt A: Neuer Master-Orchestrator-Chat + Prompt B: 3-Punkte `#review`), `plans/01_PROJECT_REVIEW_AND_HANDOFF.md` (Mermaid-Sequenzdiagramm & 18-Modul-Interplay-Matrix) und `plans/02_LIVE_DEPLOYMENT_AND_E2E_PLAN.md` (5-Schritte Live-Deployment & Browser-E2E-Plan) erstellt.
+- [x] **Stufe 5 (Subagent / `#delegate #flash`): Hybrides Routing (Local CLI `packages/local-cli/` vs. Edge-Worker GitHub-Webhook `packages/edge-worker/`)**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: `shared/hybridTypes.ts` Verträge (`ExecutionMode`, `HybridTaskInput`, `HybridTaskResult`, `HybridWorkerEnv`), `packages/local-cli/` (Pfad A: Node.js CLI mit `@google/genai` / REST Fallback, in-Memory-Preflight Validierung via `applyPatchesInMemory` + `runPreflightLinter` & Git-Commit), `packages/edge-worker/src/modules/webhookHandler.ts` & Route `POST /api/webhook/github` (Pfad B: Web Crypto HMAC-SHA256 Signatur-Prüfung, sofortiges `202 Accepted` & `ctx.waitUntil` async Workflow), Probe 11 in `worker-smoke.mjs` (`11/11 PASS`), 0 Node.js-Imports im Worker, 22/22 TypeScript-Dateien `< 500` Zeilen.
 
 ## Offene Entscheidungen / Blocker
-- *Keine Blocker.* Sämtliche Komponenten (Stufe 0 bis 4) und alle 18 TypeScript-Dateien sind 100 % typgeprüft, modular unter 500 Zeilen dekomponiert und durch alle 10 Smoke-Probes verifiziert.
+- *Keine Blocker.* Sämtliche Komponenten (Stufe 0 bis 5) und alle 22 TypeScript-Dateien sind 100 % typgeprüft, modular unter 500 Zeilen dekomponiert und durch alle 11 Smoke-Probes (`worker-smoke.mjs` `11/11 PASS`) verifiziert.

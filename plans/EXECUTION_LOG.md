@@ -236,4 +236,35 @@
   - `tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler, Exit Code 0).
   - `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS` (48.7 KB, byte-identisch mit Root `gemini-bridge.user.js`).
   - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`10/10` Probes bestanden, **0/18** TypeScript-Dateien >= 500 Zeilen).
-- **Nächster Schritt:** Git Checkpoint Commit für Welle 5.
+- **Nächster Schritt:** Git Checkpoint Commit für Welle 5 (`3ec1225`).
+
+### [2026-10-17T06:16:00+02:00] | Orchestrator (Argon Medium) | `#grill-me` Kontext-Handoff, Vollständiges Komponenten-Zusammenspiel & Live-Deployment-Plan
+- **Status:** `PLAN_DONE`
+- **Aktualisierte & erstellte Dateien:**
+  - `agents.md`: Kompakte Root-Verfassung mit vollständigem End-to-End-Zusammenspiel (Flow 1: Repo-Mix, Flow 2: In-Memory Patch & AST-Lint, Flow 3: Self-Healing Loop), `P1`-Matrix aller Komponenten (`0–5`), globalen Invarianten und Progressive-Disclosure-Verweisen auf `.agents/rules/*.md`.
+  - `plans/00_STARTCHAT_ORCHESTRATOR.md`: Enthält **PROMPT A** (universeller Master-Orchestrator-Startprompt für ein frisches Chatfenster) und **PROMPT B** (direkter `#review`-Prompt für den 3-Punkte-Audit im neuen Chat).
+  - `plans/01_PROJECT_REVIEW_AND_HANDOFF.md`: Vollständiges Mermaid-Sequenzdiagramm aller 3 Schichten, 18-Modul-Abhängigkeits-Matrix (`< 500` Zeilen) mit exakten Funktions-Aufrufketten und 3-Punkte-Review-Checkliste (`#review`).
+  - `plans/02_LIVE_DEPLOYMENT_AND_E2E_PLAN.md`: Ausführlicher 5-Schritte-`/plan` (inkl. Mandatory Execution Metadata Header) für Option 3 (Cloudflare Worker Live-Deployment `npx wrangler deploy` & Browser E2E-Abnahme).
+
+### [2026-10-18T14:15:00+02:00] | Subagent (Complexity 5/10) | Stage 5 (Hybrid Routing: Local CLI vs. Cloudflare Worker GitHub Webhook)
+- **Status:** `DONE`
+- **Umgesetzte Komponenten:**
+  - `shared/hybridTypes.ts`: Schnittstellen-Verträge für hybride Ausführung (`ExecutionMode`, `HybridTaskInput`, `HybridTaskResult`, `HybridWorkerEnv` und GitHub Webhook Event Typen) definiert und in `shared/types.ts` re-exportiert.
+  - `packages/local-cli/`:
+    - `package.json` und `tsconfig.json` mit `@types/node` ES2022/Bundler Konfiguration.
+    - `src/localRunner.ts`: `runLocalHybridTask` mit `.env`-Loader, Kontext-Sammler, Gemini REST/SDK Caller, In-Memory-Preflight Validierung via `applyPatchesInMemory` + `runPreflightLinter` (Stage 2 & 4 Hooks), Disk-Writer und lokalem Git-Commit via `execSync`.
+    - `src/cli.ts`: CLI-Wrapper mit Argument-Parser (`--prompt`, `--repo`, `--branch`, `--path`, `--model`, `--skip-commit`, `--help`) und Exit-Codes.
+    - `src/index.ts`: Export-Barrel.
+  - `packages/edge-worker/src/modules/webhookHandler.ts`:
+    - Pure Web Crypto HMAC-SHA256 Signatur-Verifikation (`verifyGithubWebhookSignature` / `computeGithubWebhookSignature`) gegen den Header `x-hub-signature-256`.
+    - `handleGithubWebhookRequest`: Liefert sofort `202 Accepted` an GitHub (Schutz vor 10s-Timeout) und scheduled Hintergrund-Task via `ctx.waitUntil`.
+    - `executeWorkerWorkflow`: Assemblierung des Kontexts via `handleMixRequest`, Abfrage der Gemini REST API, Patch-Ausführung via `handlePatchRequest` und Feedback-Kommentar zurück an das GitHub Issue / den PR.
+    - Zero Node.js imports (`fs`, `child_process`, `simple-git`, `path` verboten im Worker).
+  - `packages/edge-worker/src/index.ts`: Route `POST /api/webhook/github` verdrahtet **vor** `verifyAuth` (da Webhooks über HMAC signiert sind).
+  - `.agents/rules/edge-worker-architecture.md` & `agents.md`: Dokumentation der neuen Route, Untertool D und P1-Komponente 6 synchronisiert.
+  - `scripts/patches_and_tests/worker-smoke.mjs`: Erweitert um Probe 11 (`Stage 5 Hybrid Routing & Webhook HMAC Verification`) und Probe 10 auf alle 22 TypeScript-Quelldateien erweitert.
+- **Verifikation:**
+  - `tsc --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler).
+  - `tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+  - `tsc --noEmit -p packages/local-cli/tsconfig.json`: `PASS` (0 Fehler).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`11/11` Probes bestanden, **0/22** TypeScript-Dateien >= 500 Zeilen).
