@@ -72,6 +72,14 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
     return defaultValue;
   }
+  function sanitizeRepo(repoStr) {
+    let cleaned = (repoStr || "").trim();
+    cleaned = cleaned.replace(/^https?:\/\/github\.com\//i, "");
+    cleaned = cleaned.replace(/^git@github\.com:/i, "");
+    cleaned = cleaned.replace(/https?:?$/i, "");
+    cleaned = cleaned.replace(/\/+$/, "");
+    return cleaned.trim();
+  }
   function setStoredValue(key, value) {
     const safeVal = sanitizeNoGithubPat(value, key);
     try {
@@ -101,7 +109,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   function loadHudConfig() {
     const workerUrl = getStoredValue("worker_url", DEFAULT_HUD_CONFIG.workerUrl);
     const workerSecret = getStoredValue("worker_secret", DEFAULT_HUD_CONFIG.workerSecret);
-    const repo = getStoredValue("owner_repo", DEFAULT_HUD_CONFIG.repo);
+    const repo = sanitizeRepo(getStoredValue("owner_repo", DEFAULT_HUD_CONFIG.repo));
     const branch = getStoredValue("branch", DEFAULT_HUD_CONFIG.branch);
     const autoPilotStr = getStoredValue("auto_pilot", "false");
     const persistStr = getStoredValue("persist_to_github", "false");
@@ -135,7 +143,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       setStoredValue("worker_secret", sanitizeNoGithubPat(updated.workerSecret, "workerSecret"));
     }
     if (cfg.repo !== void 0) {
-      setStoredValue("owner_repo", sanitizeNoGithubPat(updated.repo, "repo"));
+      setStoredValue("owner_repo", sanitizeRepo(sanitizeNoGithubPat(updated.repo, "repo")));
     }
     if (cfg.branch !== void 0) {
       setStoredValue("branch", sanitizeNoGithubPat(updated.branch, "branch"));
@@ -1277,10 +1285,14 @@ Fix Instructions:
         e.stopPropagation();
         onInlineApply(currentPatch);
       };
-      const codeHeader = pre.parentElement?.querySelector('.code-block-decoration, .code-header, [class*="header"]');
+      const codeHeader = pre.parentElement?.querySelector(
+        '.code-block-decoration, .code-header, [class*="header"]'
+      );
       if (codeHeader) {
+        if (codeHeader.querySelector(".ggb-inline-btn")) return;
         codeHeader.appendChild(btn);
       } else {
+        if (pre.querySelector(".ggb-inline-btn")) return;
         pre.style.position = "relative";
         btn.style.position = "absolute";
         btn.style.top = "8px";
@@ -1352,9 +1364,15 @@ Fix Instructions:
     }
     function scanDOM() {
       const blocks = document.querySelectorAll(
-        "pre:not([data-ggh-processed]), code-block:not([data-ggh-processed])"
+        "code-block:not([data-ggh-processed]), pre:not([data-ggh-processed])"
       );
-      blocks.forEach(processCodeBlock);
+      blocks.forEach((el) => {
+        if (el.tagName.toLowerCase() === "pre" && el.closest("code-block")) {
+          el.setAttribute("data-ggh-processed", "true");
+          return;
+        }
+        processCodeBlock(el);
+      });
       processCanvasCards();
     }
     const observer = new MutationObserver(() => {

@@ -42,6 +42,15 @@ export function getStoredValue(key: string, defaultValue = ''): string {
   return defaultValue;
 }
 
+export function sanitizeRepo(repoStr: string): string {
+  let cleaned = (repoStr || '').trim();
+  cleaned = cleaned.replace(/^https?:\/\/github\.com\//i, '');
+  cleaned = cleaned.replace(/^git@github\.com:/i, '');
+  cleaned = cleaned.replace(/https?:?$/i, '');
+  cleaned = cleaned.replace(/\/+$/, '');
+  return cleaned.trim();
+}
+
 export function setStoredValue(key: string, value: string): void {
   const safeVal = sanitizeNoGithubPat(value, key);
   try {
@@ -74,7 +83,7 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
 export function loadHudConfig(): HudConfig {
   const workerUrl = getStoredValue('worker_url', DEFAULT_HUD_CONFIG.workerUrl);
   const workerSecret = getStoredValue('worker_secret', DEFAULT_HUD_CONFIG.workerSecret);
-  const repo = getStoredValue('owner_repo', DEFAULT_HUD_CONFIG.repo);
+  const repo = sanitizeRepo(getStoredValue('owner_repo', DEFAULT_HUD_CONFIG.repo));
   const branch = getStoredValue('branch', DEFAULT_HUD_CONFIG.branch);
   const autoPilotStr = getStoredValue('auto_pilot', 'false');
   const persistStr = getStoredValue('persist_to_github', 'false');
@@ -112,7 +121,7 @@ export function saveHudConfig(cfg: Partial<HudConfig>): HudConfig {
     setStoredValue('worker_secret', sanitizeNoGithubPat(updated.workerSecret, 'workerSecret'));
   }
   if (cfg.repo !== undefined) {
-    setStoredValue('owner_repo', sanitizeNoGithubPat(updated.repo, 'repo'));
+    setStoredValue('owner_repo', sanitizeRepo(sanitizeNoGithubPat(updated.repo, 'repo')));
   }
   if (cfg.branch !== undefined) {
     setStoredValue('branch', sanitizeNoGithubPat(updated.branch, 'branch'));

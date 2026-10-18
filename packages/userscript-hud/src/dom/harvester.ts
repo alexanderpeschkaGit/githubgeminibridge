@@ -255,10 +255,14 @@ export function startDomHarvester(
       onInlineApply(currentPatch);
     };
 
-    const codeHeader = pre.parentElement?.querySelector('.code-block-decoration, .code-header, [class*="header"]');
+    const codeHeader = pre.parentElement?.querySelector(
+      '.code-block-decoration, .code-header, [class*="header"]'
+    );
     if (codeHeader) {
+      if (codeHeader.querySelector('.ggb-inline-btn')) return;
       codeHeader.appendChild(btn);
     } else {
+      if (pre.querySelector('.ggb-inline-btn')) return;
       pre.style.position = 'relative';
       btn.style.position = 'absolute';
       btn.style.top = '8px';
@@ -342,9 +346,15 @@ export function startDomHarvester(
 
   function scanDOM() {
     const blocks = document.querySelectorAll<HTMLElement>(
-      'pre:not([data-ggh-processed]), code-block:not([data-ggh-processed])'
+      'code-block:not([data-ggh-processed]), pre:not([data-ggh-processed])'
     );
-    blocks.forEach(processCodeBlock);
+    blocks.forEach((el) => {
+      if (el.tagName.toLowerCase() === 'pre' && el.closest('code-block')) {
+        el.setAttribute('data-ggh-processed', 'true');
+        return;
+      }
+      processCodeBlock(el);
+    });
     processCanvasCards();
   }
 
