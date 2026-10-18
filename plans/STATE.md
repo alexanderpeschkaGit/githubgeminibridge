@@ -4,9 +4,9 @@
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
 
 ## Aktuelle Phase
-- **Aktive Stufe:** **Stufe 6.1 (RepoMix 85k Character Limit & Atomic File Partitioning)** erfolgreich abgeschlossen (`12/12 PASS`). **100 % aller 24 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
+- **Aktive Stufe:** **Stufe 6.1 & Hybrid Routing Review** erfolgreich abgeschlossen (`12/12 PASS`, 22/22 Local-CLI PASS, 18/18 Webhook PASS). In `main` gemerged. **100 % aller 24 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
 - **Modell-Politik:** Vorab-Gesamtplanung & Strukturierung aller Parts auf **Argon High oder Argon Medium (`pro`/`inherit`)**; Ausführung & `/delegate` der Arbeitspakete mit `Complexity < 6` auf **Flash (`Model: 'flash'`)** und ab `Complexity >= 6` auf **Argon Medium (`Model: 'pro'`)**
-- **Letztes Update:** 2026-10-18T14:56:00+02:00 (Stufe 6.1 abgeschlossen: `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, atomare Dateigrenzen ohne Filesplits, hierarchischer Filetree, Übergrößen-Ausschluss > 100k Chars, HUD `maxChunkCharsInput`, Probe 12 verifiziert, 12/12 Probes bestanden, 24/24 TS-Dateien < 500 Zeilen).
+- **Letztes Update:** 2026-10-18T15:08:00+02:00 (Commit `2f00d08` & Fast-Forward-Merge in `master` und `main`: Hybrid-Routing Tests & Build-Artefakte, Webhook-CORS-Fix, Monorepo-Dateien synchronisiert, 12/12 Probes bestanden, 24/24 TS-Dateien < 500 Zeilen).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**

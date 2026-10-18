@@ -351,6 +351,24 @@
   - TypeScript Typecheck über alle 3 Packages (`edge-worker`, `userscript-hud`, `local-cli`): `PASS` (0 Fehler).
   - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`12/12` Probes bestanden, **0/24** TypeScript-Dateien >= 500 Zeilen).
 
+### [2026-10-18T15:08:00+02:00] | Main Agent | Commit & Merge into Main
+- **Status:** `DONE`
+- **Aktion:**
+  - Alle Änderungen auf `test/hybrid-routing-review` bereitgestellt und committet (`2f00d08`):
+    - Hybrid-Routing Build- und Laufzeit-Artefakte (`packages/local-cli/dist/cli.mjs`, `packages/edge-worker/dist/worker.mjs`, Build-Skripte).
+    - Automatisierte Test-Suites (`scripts/patches_and_tests/test-local-cli.mjs` mit 22/22 Assertions PASS, `scripts/patches_and_tests/test-webhook-worker.mjs` mit 18/18 Assertions PASS).
+    - Webhook Routing-Erweiterung in `packages/edge-worker/src/index.ts` (CORS OPTIONS 204 & Method Guardrails).
+    - Vollständige Monorepo-Dateistruktur synchronisiert (`README.md`, `Gemini-to-GitHub-Bridge.info`, `gemini_prompt_instructions.txt`, `cf-gemini-git-bridge/`).
+  - Fast-Forward-Merge in `master` durchgeführt.
+  - Branch `main` synchronisiert und ausgecheckt (`2f00d08`).
+- **Verifikation:**
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (12/12 Probes).
+  - `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (22/22 Assertions).
+  - `node scripts/patches_and_tests/test-webhook-worker.mjs`: `PASS` (18/18 Assertions).
+  - TypeScript Typecheck über alle 3 Packages: `PASS` (0 Fehler).
+  - Working tree: clean.
+
+
 
 
 
