@@ -1,5 +1,5 @@
-#!/usr/bin/env node
-import { runLocalHybridTask } from './localRunner';
+import { runLocalHybridTask, applyPatchesInMemory, extractJsonFromResponse } from './localRunner';
+export { runLocalHybridTask, applyPatchesInMemory, extractJsonFromResponse };
 import type { HybridTaskInput } from '../../../shared/types';
 
 export function parseCliArgs(argv: string[]): {
@@ -110,9 +110,20 @@ export async function runCli(argv = process.argv): Promise<number> {
   }
 }
 
-// Only auto-run if directly executed
-if (process.argv[1] && process.argv[1].endsWith('cli.ts')) {
-  runCli().then((code) => {
-    if (code !== 0) process.exit(code);
-  });
+import { fileURLToPath } from 'node:url';
+import * as path from 'node:path';
+
+// Auto-run only if directly executed as entry script
+try {
+  const currentFilePath = fileURLToPath(import.meta.url);
+  const entryArg = process.argv[1] ? path.resolve(process.argv[1]) : '';
+  const isDirectRun = entryArg === currentFilePath || (entryArg && entryArg.endsWith('gemini-local'));
+  if (isDirectRun) {
+    runCli().then((code) => {
+      if (code !== 0) process.exit(code);
+    });
+  }
+} catch {
+  // If URL resolution fails, do not auto-run
 }
+

@@ -8,6 +8,7 @@ import type {
   FilePatchOperation
 } from '../../../shared/types';
 import { applyPatchesInMemory } from '../../edge-worker/src/modules/patchInMemory';
+export { applyPatchesInMemory };
 
 export interface LocalRunnerOptions {
   apiKey?: string;

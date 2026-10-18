@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "description": "Local CLI runner for Gemini Git Bridge with in-memory preflight validation",
   "type": "module",
-  "main": "src/localRunner.ts",
+  "main": "dist/cli.mjs",
   "bin": {
-    "gemini-local": "./src/cli.ts"
+    "gemini-local": "./dist/cli.mjs"
   },
   "scripts": {
+    "build": "node scripts/build-cli.mjs",
     "typecheck": "tsc --noEmit",
-    "start": "node src/cli.ts"
+    "start": "node dist/cli.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

@@ -86,7 +86,7 @@ export default {
     }
 
     // 2b. GitHub Webhook endpoint (authenticated via HMAC-SHA256 signature, not Bearer token)
-    if (request.method === 'POST' && path === '/api/webhook/github') {
+    if (path === '/api/webhook/github') {
       return handleGithubWebhookRequest(request, env as HybridWorkerEnv, ctx);
     }
 

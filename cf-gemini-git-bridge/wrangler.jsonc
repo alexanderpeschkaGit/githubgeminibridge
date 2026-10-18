@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gemini-git-bridge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-04",
+  "account_id": "9b109aa9587252172ccb60f664f603f0",
+  "observability": {
+    "enabled": true
+  }
+}

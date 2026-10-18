@@ -1,0 +1,17 @@
+{
+  "name": "gemini-git-bridge",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker relay for GitHub GraphQL createCommitOnBranch with search/replace resolution",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261006.1",
+    "typescript": "^5.5.0",
+    "wrangler": "^4.92.0"
+  }
+}
