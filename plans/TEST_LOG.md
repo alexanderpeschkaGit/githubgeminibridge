@@ -147,7 +147,38 @@
   - `tsc --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler).
   - `tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
   - `tsc --noEmit -p packages/local-cli/tsconfig.json`: `PASS` (0 Fehler).
+### [2026-10-18T14:24:00+02:00] | Stufe II: Funktionaler Test des Local CLI (packages/local-cli)
+- **Command**: `node packages/local-cli/scripts/build-cli.mjs` & `node scripts/patches_and_tests/test-local-cli.mjs`
+- **Ergebnis**: `PASS` (`22/22` Assertions bestanden).
+- **Geprüfte Features**:
+  - `dist/cli.mjs` Build & Shebang-Integrität via `esbuild`.
+  - CLI Argument-Parser (`parseCliArgs` mit `--prompt`, `--path`, `--repo`, `--branch`, `--model`, `--skip-commit`, `--help`).
+  - Help-Output (`--help`) und Error-Exit bei fehlenden Argumenten.
+  - Fehlendes `GEMINI_API_KEY` Error Handling (Exit 1 mit klarer Fehlermeldung).
+  - LLM Markdown Fence Stripping (`extractJsonFromResponse`).
+  - In-Memory Preflight Linter Guardrails (`applyPatchesInMemory`):
+    - Abweisung von LLM-Platzhaltern (`// ... existing code ...` -> `PREFLIGHT_FAILED`).
+    - Abweisung von Syntax-Fehlern (unbalancierte Klammern -> `OXC_SYNTAX`).
+    - Erfolgreiches fehlerfreies Patchen (`0` Fehler, korrekter Inhalt).
+- **Compiler Verifikation**:
+  - `tsc --noEmit -p packages/local-cli/tsconfig.json`: `PASS` (0 Fehler).
+  - `worker-smoke.mjs`: `PASS` (`12/12` Probes).
 - **GESAMTSTATUS**: `PASS`
+
+### [2026-10-18T14:28:00+02:00] | Live Cloudflare Worker Deployment & Health Verifikation
+- **Befehl**: `npx wrangler deploy` (packages/edge-worker)
+- **Deployment Details**:
+  - Worker Name: `gemini-git-bridge`
+  - URL: `https://gemini-git-bridge.sikanda.workers.dev`
+  - Version ID: `f79b15b5-182e-47c8-af14-a44e5ef17b83`
+  - Upload Size: 66.60 KiB (gzip: 15.40 KiB)
+- **Live Health Check**:
+  - `GET https://gemini-git-bridge.sikanda.workers.dev/health` -> HTTP 200 `{ status: 'ok', service: 'gemini-git-bridge', version: '2.0.0', hasBridgeSecret: true, hasGithubToken: true }`
+- **Smoke-Suite nach Deployment**:
+  - `node scripts/patches_and_tests/worker-smoke.mjs` -> `PASS` (`12/12` Probes bestanden).
+- **GESAMTSTATUS**: `PASS`
+
+
 
 
 

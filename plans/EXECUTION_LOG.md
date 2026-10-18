@@ -285,3 +285,14 @@
 - **Verifikation:**
   - `tsc --noEmit` über alle 3 Packages (`edge-worker`, `userscript-hud`, `local-cli`): `PASS` (0 Fehler).
   - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`12/12` Probes bestanden, **0/24** TypeScript-Dateien >= 500 Zeilen).
+
+### [2026-10-18T14:28:00+02:00] | Main Agent (#exec) | Live Deployment Cloudflare Worker
+- **Status:** `DONE`
+- **Ausgeführte Aktion:** `npx wrangler deploy` in `packages/edge-worker/` nach Nutzereinwilligung ("ja").
+- **Live Worker Status:**
+  - Endpoint: `https://gemini-git-bridge.sikanda.workers.dev`
+  - Version ID: `f79b15b5-182e-47c8-af14-a44e5ef17b83`
+  - Upload-Größe: 66.60 KiB (gzip: 15.40 KiB)
+  - `GET /health`: HTTP 200 `{ status: 'ok', service: 'gemini-git-bridge', version: '2.0.0', hasBridgeSecret: true, hasGithubToken: true }`
+  - Smoke Suite: `12/12 PASS`.
+
