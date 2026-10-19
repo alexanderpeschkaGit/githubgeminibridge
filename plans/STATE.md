@@ -4,9 +4,9 @@
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
 
 ## Aktuelle Phase
-- **Aktive Stufe:** **Stufe 6.2 (Gemini Web .txt Migration, 10-Parts Guardrail & .repomixignore.cf Support)** erfolgreich abgeschlossen (`12/12 PASS`, 22/22 Local-CLI PASS, 18/18 Webhook PASS). **100 % aller 24 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
+- **Aktive Stufe:** **Stufe 6.3 (Userscript HUD "Apply All" & "Clear Queue" Sequential Fail-Fast)** erfolgreich abgeschlossen.
 - **Modell-Politik:** Vorab-Gesamtplanung & Strukturierung aller Parts auf **Argon High oder Argon Medium (`pro`/`inherit`)**; Ausführung & `/delegate` der Arbeitspakete mit `Complexity < 6` auf **Flash (`Model: 'flash'`)** und ab `Complexity >= 6` auf **Argon Medium (`Model: 'pro'`)**
-- **Letztes Update:** 2026-10-19T14:12:00+02:00 (Stufe 6.2 abgeschlossen: `.txt` & MIME `text/plain` Dateilieferung, `MAX_GEMINI_PARTS = 10` Auto-Upscaling Guardrail, Python-Umgebungsfilter `.venv`/`venv`/`__pycache__`, dynamische `.repomixignore.cf` & `.repomixignore` Unterstützung im TAR-Stream, Userscript HUD Rebuild, Smoke Suite 12/12 PASS, 24/24 TS-Dateien < 500 Zeilen).
+- **Letztes Update:** 2026-10-19T15:28:30+02:00 (Stufe 6.3 Abschluss: Userscript HUD "Apply All" & "Clear Queue" Buttons, FIFO-Reihenfolge, Fail-Fast & Concurrency-Schutz erfolgreich verifiziert).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**
@@ -55,8 +55,11 @@
 - [x] **Stufe 6.2 (Flash-Subagent / `#flash #solve`): Gemini Web .txt Migration, 10-Parts Guardrail & .repomixignore.cf Support**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: Umstellung auf `.txt` und MIME `text/plain` (`mixChunker.ts`, `injector.ts`), `MAX_GEMINI_PARTS = 10` Guardrail, Python-Umgebungs-Ignorierlisten (`.venv`, `venv`, `__pycache__`) und dynamische Auswertung von `.repomixignore.cf` / `.repomixignore` in `mixer.ts` via `tarUtils.ts`. Rebuild von `gemini-bridge.user.js` und Smoke-Suite 12/12.
+- [x] **Stufe 6.3 (Flash-Subagent / `#flash #solve`): Userscript HUD "Apply All" & "Clear Queue" (Sequential Fail-Fast)**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: Queue-Header mit "⚡ Apply All" und "🗑️ Clear" in `hudStylesAndDom.ts`, FIFO-Umkehrung `[...state.harvestedPatches].reverse()`, sequenzielle Ausführung mit Fail-Fast und Head-OID-Fortschreibung in `shadowHud.ts`, Auto-Pruning erfolgreicher Patches, Rebuild `gemini-bridge.user.js` und Einhaltung `< 500` Zeilen.
 
 ## Offene Entscheidungen / Blocker
-- Keine Blocker. Stage 6.2 erfolgreich umgesetzt und verifiziert (12/12 Probes PASS, 22/22 Local-CLI PASS, 18/18 Webhook PASS, 24/24 TS-Dateien < 500 Zeilen). Bereit für Live-Deployment (`npx wrangler deploy`).
+- Keine Blocker. Stage 6.3 erfolgreich abgeschlossen und verifiziert.
 
 

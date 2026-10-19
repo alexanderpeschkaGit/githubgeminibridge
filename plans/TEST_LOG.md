@@ -232,6 +232,26 @@
   - **Userscript Bundle-Integrität:** `dist/gemini-bridge.user.js` und Root `gemini-bridge.user.js` byte-identisch neu gebaut und synchronisiert.
 - **GESAMTSTATUS**: `PASS`
 
+### [2026-10-19T15:28:30+02:00] | Stage 6.3: Userscript HUD "Apply All" & "Clear Queue" (Sequential Fail-Fast)
+- **Command**:
+  - `node packages/userscript-hud/scripts/build-userscript.mjs`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/edge-worker/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/local-cli/tsconfig.json`
+  - `node scripts/patches_and_tests/worker-smoke.mjs`
+  - `node scripts/patches_and_tests/test-local-cli.mjs`
+  - `node scripts/patches_and_tests/test-webhook-worker.mjs`
+- **Ergebnis**: `PASS` (`12/12` Probes bestanden, `22/22` CLI Assertions, `18/18` Webhook Assertions).
+- **Geprüfte Features & Invarianten**:
+  - **Apply All & Clear Queue Buttons (`hudStylesAndDom.ts`):** `applyAllBtn` und `clearQueueBtn` in `HudDomElements` und `buildHudDomTree` als Flex-Header über der Patch-Queue eingefügt.
+  - **FIFO Sequential Fail-Fast Execution (`shadowHud.ts`):** `dom.applyAllBtn.onclick` kehrt die Queue um (`[...state.harvestedPatches].reverse()`), um die chronologisch ältesten Patches zuerst anzuwenden. Zeigt Fortschritt an und bricht bei Fehlern (`PREFLIGHT_FAILED`, `GIT_CONFLICT`, `ERROR`) sofort ab (Fail-Fast).
+  - **Pruning & `Promise<boolean>`:** `handleApplyPatch` liefert `true` bei `COMMITTED` und `NO_CHANGES_NEEDED`, entfernt die verarbeiteten Patches aus `state.harvestedPatches` und aktualisiert das UI.
+  - **Clear Queue:** `dom.clearQueueBtn.onclick` setzt `state.harvestedPatches = []` zurück.
+  - **Modularitäts-Audit (`Probe 10`):** `hudStylesAndDom.ts` (452 Zeilen) und `shadowHud.ts` (467 Zeilen) bleiben strikt `< 500` Zeilen (`overLimitZone.length === 0`).
+  - **Userscript Bundle-Integrität:** `dist/gemini-bridge.user.js` und Root `gemini-bridge.user.js` sind byte-identisch neu gebaut und synchronisiert (55.4 KB).
+- **GESAMTSTATUS**: `PASS`
+
+
 
 
 

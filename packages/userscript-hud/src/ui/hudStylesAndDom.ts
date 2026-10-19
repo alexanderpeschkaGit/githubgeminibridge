@@ -252,6 +252,8 @@ export interface HudDomElements {
   mixBtn: HTMLButtonElement;
   autoPilotCheck: HTMLInputElement;
   retryIndicator: HTMLSpanElement;
+  applyAllBtn: HTMLButtonElement;
+  clearQueueBtn: HTMLButtonElement;
   patchQueueEl: HTMLDivElement;
   emptyQueueMsg: HTMLDivElement;
   statusBox: HTMLDivElement;
@@ -391,9 +393,25 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   optRow.appendChild(retryIndicator);
   body.appendChild(optRow);
 
-  // Patch Queue Container
+  // Patch Queue Header Row
+  const queueHeaderRow = createHudElement('div');
+  queueHeaderRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-top: 4px;';
   const queueLabel = createHudElement('span', 'hud-label', 'Harvested Patches');
-  body.appendChild(queueLabel);
+
+  const queueActions = createHudElement('div');
+  queueActions.style.cssText = 'display: flex; gap: 6px;';
+
+  const applyAllBtn = createHudElement('button', 'hud-btn hud-btn-primary', '⚡ Apply All');
+  applyAllBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
+
+  const clearQueueBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🗑️ Clear');
+  clearQueueBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
+
+  queueActions.appendChild(applyAllBtn);
+  queueActions.appendChild(clearQueueBtn);
+  queueHeaderRow.appendChild(queueLabel);
+  queueHeaderRow.appendChild(queueActions);
+  body.appendChild(queueHeaderRow);
 
   const patchQueueEl = createHudElement('div', 'hud-patch-queue');
   const emptyQueueMsg = createHudElement('div', undefined, 'No patches harvested from chat yet.');
@@ -424,6 +442,8 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     mixBtn,
     autoPilotCheck,
     retryIndicator,
+    applyAllBtn,
+    clearQueueBtn,
     patchQueueEl,
     emptyQueueMsg,
     statusBox

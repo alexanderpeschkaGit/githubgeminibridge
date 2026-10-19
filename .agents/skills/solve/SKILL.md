@@ -1,28 +1,35 @@
 ---
 name: solve
-description: Plans a multi-file solution on Argon High using the 4-phase impact analysis, logs the planning checkpoint, and delegates execution to a complexity-gated subagent (Flash High for <= 6, Argon High for > 6). Triggered by #solve or /solve.
+description: >-
+  Investigates an issue, drafts an execution plan, and immediately delegates execution via the #delegate skill.
+  Triggered by #solve or /solve.
 ---
 
-# Solve Workflow (Argon High 4-Phase Plan & Complexity-Gated Delegate)
+# Solve Workflow (Investigate, Plan & Delegate)
 
-- **Purpose:** Investigate a multi-file task or stage requirement on **Argon High**, verify `P1` component invariants and type/rule boundaries (`shared/types.ts` and `.agents/rules/*.md`), log the planning step in `plans/EXECUTION_LOG.md`, write a concrete execution artifact, and spawn an isolated subagent to execute it.
+- **Purpose:** Automatically investigate an issue, formulate a verified execution plan, and immediately delegate the entire execution pipeline to the `#delegate` skill (`delegate/SKILL.md`).
 
-- **Step 1: 4-Phase Impact Mapping & Complexity Check (Always on Argon High)**
-  1. **Impact Mapping:** Identify all affected files across `shared/`, `packages/edge-worker/`, or `packages/userscript-hud/`.
-  2. **Execution Sequence & Complexity Score:** Define the exact modification order and rate complexity (`1–10`) for each task and combined execution.
-  3. **Rule, `P1` & Guardrail Check:** Verify compliance with root `agents.md` (`P1` of all components, `validateNoPlaceholders`, 1-subrequest limits, and V1/V2 route compatibility).
-  4. **Ambiguity Gate:** If any architectural choice is unresolved, trigger `#grillme` before delegating.
+- **Step 1: Investigate and Plan**
+  - Inspect the relevant repository context, diffs, and files to understand the problem.
+  - Follow the global preflight, scope, and decision-gate contract in `AGENTS.md`; if material ambiguity exists, resolve it first using `#grillme`.
+  - Formulate the concrete step-by-step implementation plan and affected file inventory.
+  - Assess the **Task Complexity (1–10)**:
+    - `<= 6`: Localized edits, unit tests, single component refactors, smoke checks.
+    - `> 6`: Cross-package architecture, complex state flows, high blast-radius changes.
 
-- **Step 2: Log Planning & Create Context Artifact**
-  - Append a `PLAN_DONE` entry to `plans/EXECUTION_LOG.md` (documenting the structured design, Complexity Score `X/10`, and target execution model) and update `plans/STATE.md` (and `agents.md` if architecture rules evolved).
-  - Write the step-by-step implementation instructions into a Markdown Artifact using `write_to_file` (`RequestFeedback: false`).
+- **Step 2: Delegate via `#delegate` Workflow**
+  - Hand over execution directly to the `#delegate` skill (`delegate/SKILL.md` or `.agents/skills/delegate.md`).
+  - Follow all protocols defined in `delegate`:
+    1. **Context Artifact:** Create the execution plan artifact via `write_to_file` (`RequestFeedback: false`, `ArtifactMetadata`).
+    2. **Model Selection (3-Tier Intelligent Routing):**
+       - Strict adherence to the `delegate` routing:
+         - Explicit prompt overrides (`flash` or `pro`).
+         - Complexity `<= 6` $\rightarrow$ `flash` model with Single-Action Protocol.
+         - Complexity `> 6` $\rightarrow$ `pro` / `inherit`.
+         - Fallback $\rightarrow$ `inherit`.
+    3. **Subagent Invocation & Prompts:** Spawn `Artifact Executor` with the centralized prompt template including `.agents/rules/` synchronization.
+    4. **Handoff & Monitoring:** Inform the user with both the plan link and the subagent session link (`[View Subagent Stream](conversation://<subagent-conversation-id>)`). Remind the user that the subagent progress can also be tracked live via the IDE's Subagent panel / background task indicator.
+    5. Stop calling tools and wait for the subagent to report back.
 
-- **Step 3: Spawn the Subagent (Complexity-Gated `/delegate`)**
-  - Use `invoke_subagent` with model selection governed strictly by the Complexity Score:
-    - **If Complexity `<= 6` (Low/Medium complexity, clear blueprint):** Set `Model: 'flash'` (Flash High) and enforce the `/flash` Single-Action Protocol.
-    - **If Complexity `> 6` (High complexity, intricate cross-module refactor):** Set `Model: 'pro'` / `'inherit'` (Argon High).
-  - **Role:** `Stage Solve Executor`
-  - **Prompt:** *"Read the execution plan at `[Absolute Path to Artifact]` and `agents.md`. Follow the `/flash` Single-Action Protocol (no `&&` or `;`). Log START/DONE in `plans/EXECUTION_LOG.md`, run verification (`npx tsc --noEmit` and `node scripts/patches_and_tests/worker-smoke.mjs`), update `plans/TEST_LOG.md` and `plans/STATE.md`, and verify whether `agents.md` or `.agents/rules/` needs synchronization."*
-
-- **Step 4: Handoff**
-  - Provide a clickable link to the subagent session: `[View Subagent Stream](conversation://<subagent-conversation-id>)` and wait for completion.
+> [!IMPORTANT]
+> **Single Source of Truth:** Do NOT duplicate subagent invocation, prompt formatting, or model selection logic inside `solve`. Always follow and inherit the active `#delegate` skill specifications so future updates to `delegate` automatically take effect for `solve`.

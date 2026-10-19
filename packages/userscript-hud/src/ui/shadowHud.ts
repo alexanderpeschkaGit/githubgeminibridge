@@ -43,11 +43,11 @@ export interface ShadowHudController {
   updateState: (partial: Partial<HudState>) => void;
   openPanel: () => void;
   closePanel: () => void;
-  handleApplyPatch: (patch: HarvestedPatch) => Promise<void>;
+  handleApplyPatch: (patch: HarvestedPatch) => Promise<boolean>;
   addHarvestedPatch: (patch: HarvestedPatch) => void;
 }
 
-export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => Promise<void>): ShadowHudController {
+export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => Promise<boolean>): ShadowHudController {
   if (typeof document === 'undefined') {
     throw new Error('mountShadowHud requires a DOM environment');
   }
@@ -125,6 +125,13 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       dom.statusBox.appendChild(healBtn);
     }
 
+    // Update Apply All and Clear buttons
+    const patchCount = state.harvestedPatches.length;
+    const isBusy = state.status === 'PATCHING' || state.status === 'MIXING';
+    dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
+    dom.applyAllBtn.textContent = patchCount > 0 ? `⚡ Apply All (${patchCount})` : '⚡ Apply All';
+    dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
+
     // Render Patch Queue
     dom.patchQueueEl.textContent = '';
     if (state.harvestedPatches.length === 0) {
@@ -141,6 +148,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
         const applyBtn = createHudElement('button', 'hud-btn hud-btn-primary', 'Apply');
         applyBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
+        applyBtn.disabled = isBusy;
         applyBtn.onclick = () => {
           controller.handleApplyPatch(patch);
         };
@@ -287,7 +295,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   };
 
   // Apply Patch Action
-  const handleApplyPatch = async (patch: HarvestedPatch): Promise<void> => {
+  const handleApplyPatch = async (patch: HarvestedPatch): Promise<boolean> => {
     if (onApplyPatchCustom) {
       return onApplyPatchCustom(patch);
     }
@@ -309,6 +317,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
         const res = await requestWorkerPatch(config, patchReq);
         if (res.status === 'COMMITTED') {
+          state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
           if (res.newHeadOid) {
             state.headOid = res.newHeadOid;
             setStoredValue('head_oid', res.newHeadOid);
@@ -319,7 +328,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
             retryCount: 0,
             lastErrors: [],
           });
-          return;
+          return true;
         }
 
         if (res.status === 'PREFLIGHT_FAILED') {
@@ -343,7 +352,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
               lastErrors: res.errors || [],
             });
           }
-          return;
+          return false;
         }
 
         if (res.status === 'GIT_CONFLICT' || res.status === 'ERROR') {
@@ -352,15 +361,16 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
             statusMessage: `❌ ${res.status}: ${res.errorMessage || 'Preflight / Concurrency check failed'}`,
             lastErrors: res.errors || [],
           });
-          return;
+          return false;
         }
 
         if (res.status === 'NO_CHANGES_NEEDED') {
+          state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
           controller.updateState({
             status: 'IDLE',
             statusMessage: `ℹ️ No changes needed (idempotent patch).`,
           });
-          return;
+          return true;
         }
       }
 
@@ -377,13 +387,14 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
           branch: config.branch,
         };
         const res = await requestLegacyCommit(config, legacyReq);
+        state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
         controller.updateState({
           status: 'COMMITTED',
           statusMessage: `✅ Committed via legacy bridge: ${res?.commit?.oid ? res.commit.oid.slice(0, 7) : 'OK'}`,
           retryCount: 0,
           lastErrors: [],
         });
-        return;
+        return true;
       }
 
       throw new Error('No headOid set and no legacy payload available. Please click "Load Repo Mix" first.');
@@ -392,7 +403,42 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
         status: 'ERROR',
         statusMessage: `❌ Patch error: ${err.message || String(err)}`,
       });
+      return false;
     }
+  };
+
+  dom.clearQueueBtn.onclick = () => {
+    state.harvestedPatches = [];
+    renderState();
+  };
+
+  dom.applyAllBtn.onclick = async () => {
+    if (state.harvestedPatches.length === 0 || state.status === 'PATCHING' || state.status === 'MIXING') return;
+
+    // FIFO: Reverse queue so oldest (chronologically first) is applied first!
+    const queue = [...state.harvestedPatches].reverse();
+    const total = queue.length;
+    let successCount = 0;
+
+    for (let i = 0; i < total; i++) {
+      const patch = queue[i];
+      controller.updateState({
+        status: 'PATCHING',
+        statusMessage: `⏳ [${i + 1}/${total}] Applying patch: "${patch.commitMessage}"...`,
+      });
+
+      const success = await handleApplyPatch(patch);
+      if (!success) {
+        // Fail-Fast: Hard stop on first error!
+        return;
+      }
+      successCount++;
+    }
+
+    controller.updateState({
+      status: 'COMMITTED',
+      statusMessage: `🎉 All ${successCount} patches successfully applied and committed!`,
+    });
   };
 
   const controller: ShadowHudController = {

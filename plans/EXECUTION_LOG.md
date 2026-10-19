@@ -416,11 +416,39 @@
   - `GET /health`: HTTP 200 `{ status: 'ok', service: 'gemini-git-bridge', version: '2.0.0', hasBridgeSecret: true, hasGithubToken: true }`
   - Smoke Suite: `12/12 PASS`.
 
+### [2026-10-19T15:21:00+02:00] | Orchestrator (Argon High) | Stage 6.3 #plan & #solve: Userscript HUD "Apply All" & "Clear Queue" (Sequential Fail-Fast)
+- **Status:** `PLAN_DONE` / `DELEGATE_LAUNCH`
+- **Architektur & 4-Phasen-Impact (Argon High):**
+  1. *Impact-Mapping:* `packages/userscript-hud/src/ui/hudStylesAndDom.ts`, `packages/userscript-hud/src/ui/shadowHud.ts`, Rebuild `gemini-bridge.user.js` via `build-userscript.mjs`, Smoke-Suite `worker-smoke.mjs`.
+  2. *Design & Concurrency:* Chronologische Umkehrung (`[...state.harvestedPatches].reverse()`), da `unshift` den neuesten Patch an Index 0 ablegt; sequenzielle Abarbeitung mit `expectedHeadOid`-Fortschreibung nach jedem Commit; strikter Fail-Fast-Abbruch bei `PREFLIGHT_FAILED`, `GIT_CONFLICT` oder `ERROR`; automatisches Entfernen erfolgreich committeter Patches aus der Queue; `🗑️ Clear Queue`-Button.
+  3. *500-Zeilen-Gesetz:* `hudStylesAndDom.ts` (432 Z.) und `shadowHud.ts` (421 Z.) bleiben sicher unter der 500-Zeilen-Grenze (< 460 Zeilen).
+  4. *Complexity-Score:* `3/10 <= 6` -> Delegation an **Flash-Subagent (`Model: 'flash'`)** via `/flash` Single-Action Protocol.
+- **Aktion:** Execution Artifact `stage_userscript_apply_all_patches.md` erstellt. Starte Subagent.
 
+### [2026-10-19T15:25:00+02:00] | Flash-Subagent (Complexity 3/10) | Stage 6.3: Userscript HUD "Apply All" & "Clear Queue" (Sequential Fail-Fast)
+- **Status:** `START`
+- **Aktion:** Starte Umsetzung von Stage 6.3 gemäß Artefakt-Plan (`stage_userscript_apply_all_patches.md`):
+  1. `packages/userscript-hud/src/ui/hudStylesAndDom.ts`: Erweiterung von `HudDomElements` um `applyAllBtn` und `clearQueueBtn`; Integration der flexiblen Queue-Header-Zeile in `buildHudDomTree` mit Einhaltung des `< 500`-Zeilen-Gesetzes.
+  2. `packages/userscript-hud/src/ui/shadowHud.ts`: Umstellung von `handleApplyPatch` auf `Promise<boolean>`, automatische Bereinigung erfolgreich committeter Patches aus `state.harvestedPatches`, Event-Handler für `clearQueueBtn` und sequenzielle FIFO-Abarbeitung (`[...state.harvestedPatches].reverse()`) mit Fail-Fast in `handleApplyAllPatches` (`applyAllBtn.onclick`).
+  3. Neu-Kompilierung und Synchronisation des Userscript-Bundles via `build-userscript.mjs`.
+  4. Single-Action-Verifikation via TypeScript-Checks (`userscript-hud`, `edge-worker`, `local-cli`) und Smoke-Suite `worker-smoke.mjs` (`12/12 PASS`, 0 Dateien >= 500 Zeilen).
 
-
-
-
-
-
+### [2026-10-19T15:28:30+02:00] | Flash-Subagent (Complexity 3/10) | Stage 6.3: Userscript HUD "Apply All" & "Clear Queue" (Sequential Fail-Fast)
+- **Status:** `DONE`
+- **Umgesetzte Komponenten:**
+  - `packages/userscript-hud/src/ui/hudStylesAndDom.ts` (452 Zeilen, `< 500`):
+    - `HudDomElements` um `applyAllBtn: HTMLButtonElement;` und `clearQueueBtn: HTMLButtonElement;` erweitert.
+    - `buildHudDomTree` erzeugt nun einen Flex-Header über der Patch-Queue (`queueHeaderRow`) mit Label `Harvested Patches` und den beiden Aktions-Buttons `⚡ Apply All` (`hud-btn-primary`) und `🗑️ Clear` (`hud-btn-secondary`).
+  - `packages/userscript-hud/src/ui/shadowHud.ts` (467 Zeilen, `< 500`):
+    - `ShadowHudController.handleApplyPatch` und `mountShadowHud` auf `Promise<boolean>` typisiert.
+    - `renderState()` aktualisiert dynamisch die Button-Labels und Deaktivierungs-Zustände (`patchCount === 0 || isBusy`), inklusive dynamischer Zähleranzeige `⚡ Apply All (${patchCount})`.
+    - `handleApplyPatch` entfernt erfolgreich verarbeitete Patches (`COMMITTED`, `NO_CHANGES_NEEDED` sowie Legacy-Commits) atomar aus `state.harvestedPatches` und gibt `true` zurück. Bei Fehlern (`PREFLIGHT_FAILED`, `GIT_CONFLICT`, `ERROR`) verbleibt der fehlerhafte Patch in der Queue und es wird `false` zurückgegeben.
+    - `dom.clearQueueBtn.onclick` leert die Queue (`state.harvestedPatches = []`) und aktualisiert das UI.
+    - `dom.applyAllBtn.onclick` implementiert sequenzielle FIFO-Abarbeitung: Kehrt das Array um (`[...state.harvestedPatches].reverse()`), um die chronologisch ältesten Patches zuerst anzuwenden. Iteriert mit Fortschrittsanzeige (`⏳ [${i + 1}/${total}] Applying patch: ...`) und stoppt bei Fehlschlag eines Patches sofort (Fail-Fast).
+  - Userscript-Bundle via `build-userscript.mjs` erfolgreich neu gebaut (55.4 KB) und synchronisiert nach `gemini-bridge.user.js` im Root.
+- **Verifikation:**
+  - `tsc --noEmit` über alle 3 Packages (`userscript-hud`, `edge-worker`, `local-cli`): `PASS` (0 Fehler).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`12/12` Probes bestanden, **0/24** TypeScript-Dateien >= 500 Zeilen).
+  - `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (`22/22` Assertions).
+  - `node scripts/patches_and_tests/test-webhook-worker.mjs`: `PASS` (`18/18` Assertions).
 

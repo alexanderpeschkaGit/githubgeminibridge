@@ -829,8 +829,20 @@ Fix Instructions:
     optRow.appendChild(autoPilotLabel);
     optRow.appendChild(retryIndicator);
     body.appendChild(optRow);
+    const queueHeaderRow = createHudElement("div");
+    queueHeaderRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-top: 4px;";
     const queueLabel = createHudElement("span", "hud-label", "Harvested Patches");
-    body.appendChild(queueLabel);
+    const queueActions = createHudElement("div");
+    queueActions.style.cssText = "display: flex; gap: 6px;";
+    const applyAllBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u26A1 Apply All");
+    applyAllBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
+    const clearQueueBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F5D1}\uFE0F Clear");
+    clearQueueBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
+    queueActions.appendChild(applyAllBtn);
+    queueActions.appendChild(clearQueueBtn);
+    queueHeaderRow.appendChild(queueLabel);
+    queueHeaderRow.appendChild(queueActions);
+    body.appendChild(queueHeaderRow);
     const patchQueueEl = createHudElement("div", "hud-patch-queue");
     const emptyQueueMsg = createHudElement("div", void 0, "No patches harvested from chat yet.");
     emptyQueueMsg.style.cssText = "color: #64748b; font-size: 11px; text-align: center; padding: 6px;";
@@ -856,6 +868,8 @@ Fix Instructions:
       mixBtn,
       autoPilotCheck,
       retryIndicator,
+      applyAllBtn,
+      clearQueueBtn,
       patchQueueEl,
       emptyQueueMsg,
       statusBox
@@ -920,6 +934,11 @@ Fix Instructions:
         };
         dom.statusBox.appendChild(healBtn);
       }
+      const patchCount = state.harvestedPatches.length;
+      const isBusy = state.status === "PATCHING" || state.status === "MIXING";
+      dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
+      dom.applyAllBtn.textContent = patchCount > 0 ? `\u26A1 Apply All (${patchCount})` : "\u26A1 Apply All";
+      dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
       dom.patchQueueEl.textContent = "";
       if (state.harvestedPatches.length === 0) {
         dom.patchQueueEl.appendChild(dom.emptyQueueMsg);
@@ -934,6 +953,7 @@ Fix Instructions:
           itemTitle.title = patch.commitMessage;
           const applyBtn = createHudElement("button", "hud-btn hud-btn-primary", "Apply");
           applyBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
+          applyBtn.disabled = isBusy;
           applyBtn.onclick = () => {
             controller.handleApplyPatch(patch);
           };
@@ -1080,6 +1100,7 @@ Fix Instructions:
           };
           const res = await requestWorkerPatch(config, patchReq);
           if (res.status === "COMMITTED") {
+            state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
             if (res.newHeadOid) {
               state.headOid = res.newHeadOid;
               setStoredValue("head_oid", res.newHeadOid);
@@ -1090,7 +1111,7 @@ Fix Instructions:
               retryCount: 0,
               lastErrors: []
             });
-            return;
+            return true;
           }
           if (res.status === "PREFLIGHT_FAILED") {
             const selfHealingResult = executeSelfHealingTurn(res, config, state, true);
@@ -1110,7 +1131,7 @@ Fix Instructions:
                 lastErrors: res.errors || []
               });
             }
-            return;
+            return false;
           }
           if (res.status === "GIT_CONFLICT" || res.status === "ERROR") {
             controller.updateState({
@@ -1118,14 +1139,15 @@ Fix Instructions:
               statusMessage: `\u274C ${res.status}: ${res.errorMessage || "Preflight / Concurrency check failed"}`,
               lastErrors: res.errors || []
             });
-            return;
+            return false;
           }
           if (res.status === "NO_CHANGES_NEEDED") {
+            state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
             controller.updateState({
               status: "IDLE",
               statusMessage: `\u2139\uFE0F No changes needed (idempotent patch).`
             });
-            return;
+            return true;
           }
         }
         if (patch.legacyPayload) {
@@ -1141,13 +1163,14 @@ Fix Instructions:
             branch: config.branch
           };
           const res = await requestLegacyCommit(config, legacyReq);
+          state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
           controller.updateState({
             status: "COMMITTED",
             statusMessage: `\u2705 Committed via legacy bridge: ${res?.commit?.oid ? res.commit.oid.slice(0, 7) : "OK"}`,
             retryCount: 0,
             lastErrors: []
           });
-          return;
+          return true;
         }
         throw new Error('No headOid set and no legacy payload available. Please click "Load Repo Mix" first.');
       } catch (err) {
@@ -1155,7 +1178,34 @@ Fix Instructions:
           status: "ERROR",
           statusMessage: `\u274C Patch error: ${err.message || String(err)}`
         });
+        return false;
       }
+    };
+    dom.clearQueueBtn.onclick = () => {
+      state.harvestedPatches = [];
+      renderState();
+    };
+    dom.applyAllBtn.onclick = async () => {
+      if (state.harvestedPatches.length === 0 || state.status === "PATCHING" || state.status === "MIXING") return;
+      const queue = [...state.harvestedPatches].reverse();
+      const total = queue.length;
+      let successCount = 0;
+      for (let i = 0; i < total; i++) {
+        const patch = queue[i];
+        controller.updateState({
+          status: "PATCHING",
+          statusMessage: `\u23F3 [${i + 1}/${total}] Applying patch: "${patch.commitMessage}"...`
+        });
+        const success = await handleApplyPatch(patch);
+        if (!success) {
+          return;
+        }
+        successCount++;
+      }
+      controller.updateState({
+        status: "COMMITTED",
+        statusMessage: `\u{1F389} All ${successCount} patches successfully applied and committed!`
+      });
     };
     const controller = {
       getState: () => ({ ...state }),
