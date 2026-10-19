@@ -368,6 +368,47 @@
   - TypeScript Typecheck über alle 3 Packages: `PASS` (0 Fehler).
   - Working tree: clean.
 
+### [2026-10-19T14:00:00+02:00] | Orchestrator (Argon Medium) | #plan & #solve: Stage 6.2 Gemini Web .txt Migration, 10-Parts Guardrail & .repomixignore.cf Support
+- **Status:** `PLAN_DONE` / `DELEGATE_LAUNCH`
+- **Architektur-Entscheidung & 4-Phasen-Impact (Argon Medium):**
+  1. *Impact-Mapping:* `mixChunker.ts`, `tarUtils.ts`, `mixer.ts`, `injector.ts`, `storage.ts`, `hudStylesAndDom.ts`, `worker-smoke.mjs`, Rebuild `gemini-bridge.user.js`.
+  2. *Root Cause:* Gemini Web blockiert `.xml`-Uploads mit rotem Ausrufezeichen und limitiert Datei-Anhänge auf maximal 10 Dateien. Bisheriges 85k-Chunking erzeugte 22 Chunks bei 440k-Token-Repos.
+  3. *Lösung:* Umstellung auf `.txt` und MIME `text/plain`, Begrenzung auf maximal 10 Parts mit automatischer Budget-Skalierung, Aufnahme von Python-Ordnern (`.venv`, `venv`, `__pycache__`) in Standardfilter und dynamische Auswertung von `.repomixignore.cf` / `.repomixignore` in `mixer.ts`.
+  4. *Complexity Score:* `5/10 <= 6` -> Ausführung über **Flash-Subagent (`Model: 'flash'`)** via `/flash` Single-Action Protocol.
+- **Aktion:** Execution Artifact `stage_6_2_gemini_txt_limits_and_ignore_cf.md` erstellt. Starte Subagent.
+
+### [2026-10-19T14:12:00+02:00] | Flash-Subagent (Complexity 5/10) | Stage 6.2: Gemini Web .txt Migration, 10-Parts Guardrail & .repomixignore.cf Support
+- **Status:** `DONE`
+- **Umgesetzte Komponenten:**
+  - `packages/edge-worker/src/utils/tarUtils.ts` (113 Zeilen): `parseIgnoreLines` (Kommentare/Leerzeilen-Bereinigung) und `matchesIgnorePattern` (Unterstützung für Verzeichnisse `dir/`, Wildcards `*.csv`, Anker `/file.txt` und Prefix-Matching) implementiert.
+  - `packages/edge-worker/src/modules/mixer.ts` (473 Zeilen):
+    - Python-Ordner (`.venv`, `venv`, `env`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.ipynb_checkpoints`) in `ignoredDirNames` aufgenommen.
+    - Dynamische Erkennung und Parsing von `.repomixignore.cf` und `.repomixignore` während des TAR-Decompression-Streams; retroaktive Bereinigung bereits gelesener Einträge und On-the-fly-Filterung nachfolgender Stream-Blöcke.
+    - Datei bleibt mit 473 Zeilen sicher unter dem 500-Zeilen-Gesetz.
+  - `packages/edge-worker/src/modules/mixChunker.ts` (278 Zeilen):
+    - `MAX_GEMINI_PARTS = 10` Guardrail eingeführt. Übersteigt die Zerlegung 10 Parts, skaliert der Worker das Zeichenbudget dynamisch hoch und führt Chunks zusammen, sodass niemals mehr als 10 Dateien entstehen.
+    - Dateinamen von `.xml` auf `.txt` migriert (`repo-mix.txt` bzw. `repo-mix.part${partNum}.txt`).
+  - `packages/userscript-hud/src/dom/injector.ts` (144 Zeilen):
+    - Virtueller File-Paste auf MIME-Typ `text/plain` umgestellt (`new File([part.xmlContent], part.fileName, { type: 'text/plain' })`), womit Gemini Webs rotes Ausrufezeichen bei `.xml` behoben ist.
+    - Default-Dateiname auf `repo-mix.txt` geändert.
+  - `packages/userscript-hud/src/services/storage.ts` & `hudStylesAndDom.ts` & `shadowHud.ts`:
+    - `maxChunkChars` Validierungsgrenze auf bis zu `2.000.000` angehoben.
+    - UI-Label im HUD Drawer auf `Max Chunk Chars (Default: 85000, Max 10 Parts)` aktualisiert.
+  - `packages/userscript-hud/dist/gemini-bridge.user.js` & Root `gemini-bridge.user.js`:
+    - Erfolgreich via `build-userscript.mjs` neu gebaut und synchronisiert.
+  - `scripts/patches_and_tests/worker-smoke.mjs`:
+    - Probe 12 um Verträge für `.txt`, 10-Parts Guardrail, Ignore-Pattern Parsing/Matching und Userscript-MIME-Prüfung erweitert.
+- **Verifikation:**
+  - `tsc --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler).
+  - `tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+  - `tsc --noEmit -p packages/local-cli/tsconfig.json`: `PASS` (0 Fehler).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`12/12` Probes bestanden, **0/24** TypeScript-Dateien >= 500 Zeilen).
+  - `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (`22/22` Assertions).
+  - `node scripts/patches_and_tests/test-webhook-worker.mjs`: `PASS` (`18/18` Assertions).
+
+
+
+
 
 
 

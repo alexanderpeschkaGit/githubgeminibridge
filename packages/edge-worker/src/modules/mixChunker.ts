@@ -3,6 +3,7 @@ import { escapeCdata } from './mixer';
 
 export const DEFAULT_MAX_CHUNK_CHARS = 85_000;     // 85k Chars (15% buffer below Gemini's 100k char cutoff)
 export const HARD_GEMINI_CHAR_LIMIT = 100_000;     // Hard 100k character cutoff in Gemini Web UI
+export const MAX_GEMINI_PARTS = 10;                // Gemini Web maximum file attachments per prompt guardrail
 export const DEFAULT_MAX_CHUNK_BYTES = 512 * 1024; // Legacy byte ceiling
 export const DEFAULT_MAX_CHUNK_TOKENS = 125_000;   // Legacy token ceiling
 
@@ -162,45 +163,67 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
     };
   }
 
-  // 4. Multi-part atomic pre-file partitioning
-  const chunkBuckets: Array<Array<{ path: string; content: string; fileXml: string }>> = [];
-  let currentBucket: Array<{ path: string; content: string; fileXml: string }> = [];
-  const part1BaseOverhead = fullTreeXml.length + 220;
-  let currentBucketChars = part1BaseOverhead;
+  // 4. Multi-part atomic pre-file partitioning with Gemini 10-parts guardrail
+  function partitionFiles(budgetChars: number) {
+    const buckets: Array<Array<{ path: string; content: string; fileXml: string }>> = [];
+    let currentBucket: Array<{ path: string; content: string; fileXml: string }> = [];
+    const part1BaseOverhead = fullTreeXml.length + 220;
+    let currentBucketChars = part1BaseOverhead;
 
-  for (let i = 0; i < validFiles.length; i++) {
-    const f = validFiles[i];
-    const isPart1 = chunkBuckets.length === 0;
-    const fileAdditionChars = isPart1
-      ? f.fileXml.length + 1
-      : f.fileXml.length + 1 + f.path.length + 1;
+    for (let i = 0; i < validFiles.length; i++) {
+      const f = validFiles[i];
+      const isPart1 = buckets.length === 0;
+      const fileAdditionChars = isPart1
+        ? f.fileXml.length + 1
+        : f.fileXml.length + 1 + f.path.length + 1;
 
-    if (currentBucket.length > 0) {
-      if (currentBucketChars + fileAdditionChars > effectiveMaxChars) {
-        chunkBuckets.push(currentBucket);
-        currentBucket = [];
-        currentBucketChars = 260; // Base overhead for compact part 2..N
+      if (currentBucket.length > 0) {
+        if (currentBucketChars + fileAdditionChars > budgetChars) {
+          buckets.push(currentBucket);
+          currentBucket = [];
+          currentBucketChars = 260; // Base overhead for compact part 2..N
+        }
+      } else if (isPart1) {
+        // Empty Part 1: check if file alone with fullTreeXml would exceed hardFileLimit
+        if (currentBucketChars + fileAdditionChars > Math.max(budgetChars, hardFileLimit)) {
+          buckets.push([]);
+          currentBucket = [];
+          currentBucketChars = 260;
+        }
       }
-    } else if (isPart1) {
-      // Empty Part 1: check if file alone with fullTreeXml would exceed 100k
-      if (currentBucketChars + fileAdditionChars > hardFileLimit) {
-        chunkBuckets.push([]);
-        currentBucket = [];
-        currentBucketChars = 260;
-      }
+
+      currentBucket.push(f);
+      currentBucketChars += (buckets.length === 0 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1);
     }
 
-    const activeIsPart1 = chunkBuckets.length === 0;
-    const activeAdditionChars = activeIsPart1
-      ? f.fileXml.length + 1
-      : f.fileXml.length + 1 + f.path.length + 1;
-
-    currentBucket.push(f);
-    currentBucketChars += activeAdditionChars;
+    if (currentBucket.length > 0) {
+      buckets.push(currentBucket);
+    }
+    return buckets;
   }
 
-  if (currentBucket.length > 0) {
-    chunkBuckets.push(currentBucket);
+  let dynamicMaxChars = effectiveMaxChars;
+  let chunkBuckets = partitionFiles(dynamicMaxChars);
+
+  if (chunkBuckets.length > MAX_GEMINI_PARTS) {
+    // Upscale budget so total parts fit within MAX_GEMINI_PARTS
+    const totalRawChars = validFiles.reduce((acc, f) => acc + f.fileXml.length, 0) + fullTreeXml.length;
+    dynamicMaxChars = Math.max(dynamicMaxChars, Math.ceil(totalRawChars / (MAX_GEMINI_PARTS - 1)));
+    chunkBuckets = partitionFiles(dynamicMaxChars);
+
+    while (chunkBuckets.length > MAX_GEMINI_PARTS) {
+      let minCombinedSize = Infinity;
+      let minIndex = 0;
+      for (let j = 0; j < chunkBuckets.length - 1; j++) {
+        const combined = chunkBuckets[j].length + chunkBuckets[j + 1].length;
+        if (combined < minCombinedSize) {
+          minCombinedSize = combined;
+          minIndex = j;
+        }
+      }
+      chunkBuckets[minIndex] = [...chunkBuckets[minIndex], ...chunkBuckets[minIndex + 1]];
+      chunkBuckets.splice(minIndex + 1, 1);
+    }
   }
 
   const totalParts = chunkBuckets.length;
@@ -231,7 +254,7 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
     parts.push({
       partIndex: partNum,
       totalParts,
-      fileName: `repo-mix.part${partNum}.xml`,
+      fileName: totalParts === 1 ? 'repo-mix.txt' : `repo-mix.part${partNum}.txt`,
       xmlContent: partXml,
       stats: {
         fileCount: bucket.length,

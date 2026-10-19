@@ -102,7 +102,7 @@ export function loadHudConfig(): HudConfig {
 
   const maxChunkCharsStr = getStoredValue('max_chunk_chars', '85000');
   const parsedChars = parseInt(maxChunkCharsStr, 10);
-  const maxChunkChars = Number.isFinite(parsedChars) && parsedChars >= 10000 ? parsedChars : 85000;
+  const maxChunkChars = Number.isFinite(parsedChars) && parsedChars >= 10000 && parsedChars <= 2000000 ? parsedChars : 85000;
 
   return {
     workerUrl: workerUrl.replace(/\/+$/, ''),

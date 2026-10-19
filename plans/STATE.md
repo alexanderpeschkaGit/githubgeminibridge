@@ -4,9 +4,9 @@
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
 
 ## Aktuelle Phase
-- **Aktive Stufe:** **Stufe 6.1 & Hybrid Routing Review** erfolgreich abgeschlossen (`12/12 PASS`, 22/22 Local-CLI PASS, 18/18 Webhook PASS). In `main` gemerged. **100 % aller 24 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
+- **Aktive Stufe:** **Stufe 6.2 (Gemini Web .txt Migration, 10-Parts Guardrail & .repomixignore.cf Support)** erfolgreich abgeschlossen (`12/12 PASS`, 22/22 Local-CLI PASS, 18/18 Webhook PASS). **100 % aller 24 aktiven TypeScript-Quelldateien im Monorepo sind strikt `< 500` Zeilen.**
 - **Modell-Politik:** Vorab-Gesamtplanung & Strukturierung aller Parts auf **Argon High oder Argon Medium (`pro`/`inherit`)**; Ausführung & `/delegate` der Arbeitspakete mit `Complexity < 6` auf **Flash (`Model: 'flash'`)** und ab `Complexity >= 6` auf **Argon Medium (`Model: 'pro'`)**
-- **Letztes Update:** 2026-10-18T15:08:00+02:00 (Commit `2f00d08` & Fast-Forward-Merge in `master` und `main`: Hybrid-Routing Tests & Build-Artefakte, Webhook-CORS-Fix, Monorepo-Dateien synchronisiert, 12/12 Probes bestanden, 24/24 TS-Dateien < 500 Zeilen).
+- **Letztes Update:** 2026-10-19T14:12:00+02:00 (Stufe 6.2 abgeschlossen: `.txt` & MIME `text/plain` Dateilieferung, `MAX_GEMINI_PARTS = 10` Auto-Upscaling Guardrail, Python-Umgebungsfilter `.venv`/`venv`/`__pycache__`, dynamische `.repomixignore.cf` & `.repomixignore` Unterstützung im TAR-Stream, Userscript HUD Rebuild, Smoke Suite 12/12 PASS, 24/24 TS-Dateien < 500 Zeilen).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**
@@ -52,7 +52,11 @@
 - [x] **Stufe 6.1 (Flash-Subagent / `#flash`): RepoMix 85k Character Limit & Atomic File Partitioning**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, exakte Zeichen-Budgetierung in `mixChunker.ts`, atomare Trennung ohne Filesplits, hierarchischer Filetree (Part 1 vollständiger Baum bis 14k Chars, Folgeparts fokussierter Teilbaum), Skip-Marker `[SKIPPED: >100k chars for Gemini Chat limit]`, HUD `maxChunkCharsInput`, Probe 12 verifiziert (`12/12 PASS`), 24/24 TypeScript-Dateien strikt `< 500` Zeilen.
+- [x] **Stufe 6.2 (Flash-Subagent / `#flash #solve`): Gemini Web .txt Migration, 10-Parts Guardrail & .repomixignore.cf Support**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: Umstellung auf `.txt` und MIME `text/plain` (`mixChunker.ts`, `injector.ts`), `MAX_GEMINI_PARTS = 10` Guardrail, Python-Umgebungs-Ignorierlisten (`.venv`, `venv`, `__pycache__`) und dynamische Auswertung von `.repomixignore.cf` / `.repomixignore` in `mixer.ts` via `tarUtils.ts`. Rebuild von `gemini-bridge.user.js` und Smoke-Suite 12/12.
 
 ## Offene Entscheidungen / Blocker
-- Keine Blocker. Alle Stufen 0 bis 6.1 sind vollständig implementiert, durch Typechecks und die 12-stufige Smoke-Suite verifiziert.
+- Keine Blocker. Stage 6.2 erfolgreich umgesetzt und verifiziert (12/12 Probes PASS, 22/22 Local-CLI PASS, 18/18 Webhook PASS, 24/24 TS-Dateien < 500 Zeilen). Bereit für Live-Deployment (`npx wrangler deploy`).
+
 

@@ -58,7 +58,7 @@ export function injectRepoMixParts(parts: MixFileItem[]): boolean {
   try {
     const dataTransfer = new DataTransfer();
     for (const part of parts) {
-      const file = new File([part.xmlContent], part.fileName, { type: 'text/xml' });
+      const file = new File([part.xmlContent], part.fileName, { type: 'text/plain' });
       dataTransfer.items.add(file);
     }
 
@@ -77,9 +77,9 @@ export function injectRepoMixParts(parts: MixFileItem[]): boolean {
 }
 
 /**
- * Injects repo-mix.xml as a virtual file paste into the chat prompt area.
+ * Injects repo-mix.txt as a virtual file paste into the chat prompt area.
  */
-export function injectRepoMixFile(xmlContent: string, fileName = 'repo-mix.xml'): boolean {
+export function injectRepoMixFile(xmlContent: string, fileName = 'repo-mix.txt'): boolean {
   return injectRepoMixParts([{ fileName, xmlContent }]);
 }
 

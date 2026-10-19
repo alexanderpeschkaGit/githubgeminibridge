@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-18T13:07:43.378Z",
+  "timestamp": "2026-10-19T12:10:37.548Z",
   "overallStatus": "PASS",
   "passedCount": 12,
   "totalProbes": 12,
@@ -108,11 +108,11 @@
       "warningZoneFilesCount": 8,
       "overLimitFilesCount": 0,
       "bundleByteIdentical": true,
-      "bundleSize": 54118,
+      "bundleSize": 54222,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
-          "lines": 448
+          "lines": 473
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
@@ -136,7 +136,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 430
+          "lines": 432
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
@@ -155,11 +155,11 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
-          "lines": 255
+          "lines": 278
         },
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
-          "lines": 448
+          "lines": 473
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
@@ -191,7 +191,7 @@
         },
         {
           "file": "packages/edge-worker/src/utils/tarUtils.ts",
-          "lines": 40
+          "lines": 113
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
@@ -223,7 +223,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 430
+          "lines": 432
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
@@ -265,11 +265,19 @@
       "hasBuildChunked": true,
       "hasInjectParts": true,
       "hasDefault85k": true,
+      "hasMaxParts10": true,
+      "hasTxtExtension": true,
       "hasSkipMarker": true,
+      "hasIgnoreUtils": true,
+      "hasDynamicIgnoreInMixer": true,
+      "storageSupports2M": true,
       "bundleHasInjectParts": true,
       "bundleHasIncludePaths": true,
       "bundleHasMaxChunkChars": true,
-      "functionalBudgetPass": true
+      "bundleHasTxtMime": true,
+      "functionalBudgetPass": true,
+      "guardrailPass": true,
+      "ignorePass": true
     }
   ]
 }

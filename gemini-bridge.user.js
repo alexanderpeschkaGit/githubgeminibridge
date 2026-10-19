@@ -126,7 +126,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
     const maxChunkCharsStr = getStoredValue("max_chunk_chars", "85000");
     const parsedChars = parseInt(maxChunkCharsStr, 10);
-    const maxChunkChars = Number.isFinite(parsedChars) && parsedChars >= 1e4 ? parsedChars : 85e3;
+    const maxChunkChars = Number.isFinite(parsedChars) && parsedChars >= 1e4 && parsedChars <= 2e6 ? parsedChars : 85e3;
     return {
       workerUrl: workerUrl.replace(/\/+$/, ""),
       workerSecret,
@@ -318,7 +318,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     try {
       const dataTransfer = new DataTransfer();
       for (const part of parts) {
-        const file = new File([part.xmlContent], part.fileName, { type: "text/xml" });
+        const file = new File([part.xmlContent], part.fileName, { type: "text/plain" });
         dataTransfer.items.add(file);
       }
       const pasteEvent = new ClipboardEvent("paste", {
@@ -333,7 +333,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       return false;
     }
   }
-  function injectRepoMixFile(xmlContent, fileName = "repo-mix.xml") {
+  function injectRepoMixFile(xmlContent, fileName = "repo-mix.txt") {
     return injectRepoMixParts([{ fileName, xmlContent }]);
   }
   function injectPromptText(promptText, autoSubmit = false) {
@@ -786,9 +786,11 @@ Fix Instructions:
     pathsRow.appendChild(includePathsInput);
     body.appendChild(pathsRow);
     const maxChunkRow = createHudElement("div", "hud-form-row");
-    const maxChunkLabel = createHudElement("span", "hud-label", "Max Chunk Chars (Default: 85000, max 95000)");
+    const maxChunkLabel = createHudElement("span", "hud-label", "Max Chunk Chars (Default: 85000, Max 10 Parts)");
     const maxChunkCharsInput = createHudElement("input", "hud-input");
     maxChunkCharsInput.type = "number";
+    maxChunkCharsInput.min = "10000";
+    maxChunkCharsInput.max = "2000000";
     maxChunkCharsInput.value = String(config.maxChunkChars || 85e3);
     maxChunkRow.appendChild(maxChunkLabel);
     maxChunkRow.appendChild(maxChunkCharsInput);
@@ -989,7 +991,7 @@ Fix Instructions:
     dom.maxChunkCharsInput.onchange = () => {
       try {
         const val = parseInt(dom.maxChunkCharsInput.value, 10);
-        const safe = Math.max(1e4, Math.min(95e3, Number.isFinite(val) ? val : 85e3));
+        const safe = Math.max(1e4, Math.min(2e6, Number.isFinite(val) ? val : 85e3));
         config.maxChunkChars = safe;
         dom.maxChunkCharsInput.value = String(safe);
         saveHudConfig({ maxChunkChars: safe });

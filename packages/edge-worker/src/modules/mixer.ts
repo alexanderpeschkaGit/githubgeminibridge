@@ -1,6 +1,6 @@
 import type { MixRequest, MixResponse } from '../types';
 import { parseRepoOwner, getBranchHeadOid, commitSingleFileViaGraphQL } from '../utils/github';
-import { concatBuffers, parseAsciiString, parseOctal } from '../utils/tarUtils';
+import { concatBuffers, parseAsciiString, parseOctal, parseIgnoreLines, matchesIgnorePattern } from '../utils/tarUtils';
 import { buildChunkedMixXml } from './mixChunker';
 
 /**
@@ -44,16 +44,9 @@ export function shouldSkipTarEntry(
 
   // 3. Ignored directory paths
   const ignoredDirNames = new Set([
-    '.git',
-    'node_modules',
-    'dist',
-    'build',
-    '.wrangler',
-    '.turbo',
-    '.next',
-    'coverage',
-    '_v1_backup',
-    'backup_unused'
+    '.git', 'node_modules', 'dist', 'build', '.wrangler', '.turbo', '.next',
+    'coverage', '_v1_backup', 'backup_unused', '.venv', 'venv', 'env',
+    '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.ipynb_checkpoints'
   ]);
 
   for (let i = 0; i < segments.length - 1; i++) {
@@ -64,12 +57,7 @@ export function shouldSkipTarEntry(
   }
 
   // 4. Ignored lockfiles, bundle outputs and temporary artifacts
-  const ignoredFiles = new Set([
-    'package-lock.json',
-    'yarn.lock',
-    'pnpm-lock.yaml',
-    'bun.lockb'
-  ]);
+  const ignoredFiles = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb']);
 
   if (
     ignoredFiles.has(filename) ||
@@ -96,10 +84,12 @@ export function shouldSkipTarEntry(
 
   // 6. Whitelist includePaths filter
   if (includePaths && includePaths.length > 0) {
-    const normalizedIncludes = includePaths.map((p) => p.replace(/^\.?\/+/, ''));
-    const isIncluded = normalizedIncludes.some((prefix) => normalized.startsWith(prefix));
-    if (!isIncluded) {
-      return { skip: true, reason: 'NOT_INCLUDED' };
+    if (normalized !== '.repomixignore.cf' && normalized !== '.repomixignore') {
+      const normalizedIncludes = includePaths.map((p) => p.replace(/^\.?\/+/, ''));
+      const isIncluded = normalizedIncludes.some((prefix) => normalized.startsWith(prefix));
+      if (!isIncluded) {
+        return { skip: true, reason: 'NOT_INCLUDED' };
+      }
     }
   }
 
@@ -200,6 +190,7 @@ export async function handleMixRequest(
 
   const fileTreeEntries: string[] = [];
   const files: { path: string; content: string }[] = [];
+  const dynamicIgnorePatterns: string[] = [];
   const textDecoder = new TextDecoder();
 
   // Read next chunk into buffer if needed
@@ -334,6 +325,17 @@ export async function handleMixRequest(
         continue;
       }
 
+      // Early skip if dynamic ignore patterns already matched
+      if (
+        dynamicIgnorePatterns.length > 0 &&
+        relPath !== '.repomixignore.cf' &&
+        relPath !== '.repomixignore' &&
+        matchesIgnorePattern(relPath, dynamicIgnorePatterns)
+      ) {
+        await discardBytes(paddedSize);
+        continue;
+      }
+
       // Filter check at header level
       const filterDecision = shouldSkipTarEntry(relPath, size, typeflag, req.includePaths);
 
@@ -354,6 +356,29 @@ export async function handleMixRequest(
 
       // Skip binary files if null bytes are present
       if (content.includes('\0')) {
+        continue;
+      }
+
+      // Dynamically load ignore rules from .repomixignore.cf or .repomixignore
+      if (relPath === '.repomixignore.cf' || relPath === '.repomixignore') {
+        const newPatterns = parseIgnoreLines(content);
+        if (newPatterns.length > 0) {
+          dynamicIgnorePatterns.push(...newPatterns);
+          for (let i = files.length - 1; i >= 0; i--) {
+            if (matchesIgnorePattern(files[i].path, dynamicIgnorePatterns)) {
+              files.splice(i, 1);
+            }
+          }
+          for (let i = fileTreeEntries.length - 1; i >= 0; i--) {
+            const entryPath = fileTreeEntries[i].replace(/\s+\[SKIPPED:.*\]$/, '');
+            if (matchesIgnorePattern(entryPath, dynamicIgnorePatterns)) {
+              fileTreeEntries.splice(i, 1);
+            }
+          }
+        }
+      }
+
+      if (dynamicIgnorePatterns.length > 0 && matchesIgnorePattern(relPath, dynamicIgnorePatterns)) {
         continue;
       }
 

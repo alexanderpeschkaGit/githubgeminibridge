@@ -207,7 +207,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   dom.maxChunkCharsInput.onchange = () => {
     try {
       const val = parseInt(dom.maxChunkCharsInput.value, 10);
-      const safe = Math.max(10000, Math.min(95000, Number.isFinite(val) ? val : 85000));
+      const safe = Math.max(10000, Math.min(2000000, Number.isFinite(val) ? val : 85000));
       config.maxChunkChars = safe;
       dom.maxChunkCharsInput.value = String(safe);
       saveHudConfig({ maxChunkChars: safe });

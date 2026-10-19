@@ -212,17 +212,24 @@
   - **Probe 12 Stage 6.1 Contracts:** `PASS` (funktionale Validierung von 85k Chunking, Baum-Hierarchie und Skip-Marker).
 - **GESAMTSTATUS**: `PASS`
 
-### [2026-10-18T14:59:00+02:00] | Live Cloudflare Worker Deployment & Health Verifikation (Stage 6.1)
-- **Befehl**: `npx wrangler deploy` (packages/edge-worker)
-- **Deployment Details**:
-  - Worker Name: `gemini-git-bridge`
-  - URL: `https://gemini-git-bridge.sikanda.workers.dev`
-  - Version ID: `74f12a91-6660-4439-8404-30899e56cf36`
-  - Upload Size: 68.79 KiB (gzip: 16.02 KiB)
-- **Live Health Check**:
-  - `GET https://gemini-git-bridge.sikanda.workers.dev/health` -> HTTP 200 `{ status: 'ok', service: 'gemini-git-bridge', version: '2.0.0', hasBridgeSecret: true, hasGithubToken: true }`
-- **Smoke-Suite nach Deployment**:
-  - `node scripts/patches_and_tests/worker-smoke.mjs` -> `PASS` (`12/12` Probes bestanden).
+### [2026-10-19T14:11:00+02:00] | Stage 6.2: Gemini Web .txt Migration, 10-Parts Guardrail & .repomixignore.cf Support
+- **Command**:
+  - `node packages/userscript-hud/scripts/build-userscript.mjs`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/edge-worker/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/local-cli/tsconfig.json`
+  - `node scripts/patches_and_tests/worker-smoke.mjs`
+  - `node scripts/patches_and_tests/test-local-cli.mjs`
+  - `node scripts/patches_and_tests/test-webhook-worker.mjs`
+- **Ergebnis**: `PASS` (`12/12` Probes bestanden, `22/22` CLI Assertions, `18/18` Webhook Assertions).
+- **Geprüfte Features & Invarianten**:
+  - **Gemini Web .txt & MIME `text/plain` Migration:** `injector.ts` injiziert alle RepoMix-Parts nun mit `{ type: 'text/plain' }` und Default-Dateinamen `repo-mix.txt`, wodurch Gemini Webs rotes Ausrufezeichen bei `.xml`-Dateien nativ behoben ist.
+  - **10-Parts Attachment Guardrail:** `MAX_GEMINI_PARTS = 10` in `mixChunker.ts`. Übersteigt eine Zerlegung 10 Parts, skaliert der Worker das Zeichenbudget automatisch dynamisch hoch (`Math.ceil(totalChars / (MAX_GEMINI_PARTS - 1))`) und führt benachbarte Buckets zusammen, sodass niemals mehr als 10 Dateien an einen Prompt angehängt werden müssen.
+  - **Python Environment Exclusions:** In `mixer.ts` wurden `.venv`, `venv`, `env`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.ipynb_checkpoints` zu `ignoredDirNames` hinzugefügt.
+  - **Dynamischer `.repomixignore.cf` & `.repomixignore` Support:** In `tarUtils.ts` wurden `parseIgnoreLines` und `matchesIgnorePattern` implementiert (inkl. Wildcard-, Verzeichnis- und Prefix-Matching). `mixer.ts` liest diese Dateien während des Streams, filtert Folge-Dateien on-the-fly und bereinigt bereits erfasste Dateien retroaktiv.
+  - **HUD & Storage Skalierung:** `storage.ts` und `hudStylesAndDom.ts` erlauben nun `maxChunkChars` bis zu `2.000.000` (z. B. für Pro-Accounts oder massive 1-File Mixes), mit aktualisiertem Label `Max Chunk Chars (Default: 85000, Max 10 Parts)`.
+  - **Modularitäts-Audit (`Probe 10`):** Alle 24 TypeScript-Dateien bleiben ausnahmslos unter der 500-Zeilen-Grenze (`mixer.ts`: 473 Zeilen, `hudStylesAndDom.ts`: 432 Zeilen, `shadowHud.ts`: 421 Zeilen, `mixChunker.ts`: 278 Zeilen).
+  - **Userscript Bundle-Integrität:** `dist/gemini-bridge.user.js` und Root `gemini-bridge.user.js` byte-identisch neu gebaut und synchronisiert.
 - **GESAMTSTATUS**: `PASS`
 
 

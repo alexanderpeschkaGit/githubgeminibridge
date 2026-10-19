@@ -451,25 +451,37 @@ async function main() {
   results.push(await runProbe(12, 'Stage 6 RepoMix Atomic Chunking & Multi-Part Ingestion Contracts', async () => {
     const chunkerPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixChunker.ts');
     const tarUtilsPath = path.join(ROOT_DIR, 'packages/edge-worker/src/utils/tarUtils.ts');
+    const mixerPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixer.ts');
     const injectorPath = path.join(ROOT_DIR, 'packages/userscript-hud/src/dom/injector.ts');
+    const storagePath = path.join(ROOT_DIR, 'packages/userscript-hud/src/services/storage.ts');
     const rootUserScriptPath = path.join(ROOT_DIR, 'gemini-bridge.user.js');
 
-    const filesExist = [chunkerPath, tarUtilsPath, injectorPath, rootUserScriptPath].every((p) => fs.existsSync(p));
+    const filesExist = [chunkerPath, tarUtilsPath, mixerPath, injectorPath, storagePath, rootUserScriptPath].every((p) => fs.existsSync(p));
     if (!filesExist) return { pass: false, error: 'Required chunking files missing' };
 
     const chunkerContent = fs.readFileSync(chunkerPath, 'utf-8');
+    const tarUtilsContent = fs.readFileSync(tarUtilsPath, 'utf-8');
+    const mixerContent = fs.readFileSync(mixerPath, 'utf-8');
     const injectorContent = fs.readFileSync(injectorPath, 'utf-8');
+    const storageContent = fs.readFileSync(storagePath, 'utf-8');
     const rootUserScript = fs.readFileSync(rootUserScriptPath, 'utf-8');
 
     const hasBuildChunked = chunkerContent.includes('export function buildChunkedMixXml');
     const hasInjectParts = injectorContent.includes('export function injectRepoMixParts');
     const hasDefault85k = chunkerContent.includes('DEFAULT_MAX_CHUNK_CHARS = 85_000') || chunkerContent.includes('85000');
+    const hasMaxParts10 = chunkerContent.includes('MAX_GEMINI_PARTS = 10');
+    const hasTxtExtension = chunkerContent.includes('repo-mix.part${partNum}.txt') && injectorContent.includes("type: 'text/plain'") && injectorContent.includes("'repo-mix.txt'");
     const hasSkipMarker = chunkerContent.includes('[SKIPPED: >100k chars for Gemini Chat limit]');
+    const hasIgnoreUtils = tarUtilsContent.includes('export function parseIgnoreLines') && tarUtilsContent.includes('export function matchesIgnorePattern');
+    const hasDynamicIgnoreInMixer = mixerContent.includes('dynamicIgnorePatterns') && mixerContent.includes('.repomixignore.cf') && mixerContent.includes('.venv');
+    const storageSupports2M = storageContent.includes('2000000');
     const bundleHasInjectParts = rootUserScript.includes('injectRepoMixParts');
     const bundleHasIncludePaths = rootUserScript.includes('includePathsInput');
     const bundleHasMaxChunkChars = rootUserScript.includes('maxChunkCharsInput');
+    const bundleHasTxtMime = (rootUserScript.includes("'text/plain'") || rootUserScript.includes('"text/plain"')) &&
+      (rootUserScript.includes("'repo-mix.txt'") || rootUserScript.includes('"repo-mix.txt"'));
 
-    // 4. Functional test of 85k char budgeting & atomic file boundaries
+    // Functional test of 85k char budgeting, 10-parts guardrail & atomic file boundaries
     function simulateChunking(files, fileTreeEntries, maxChunkChars = 85000, hardLimit = 100000) {
       function escapeCdata(c) { return c.replace(/\]\]>/g, ']]]]><![CDATA[>'); }
       function formatFileXml(f) { return `  <file path="${f.path}"><![CDATA[${escapeCdata(f.content)}]]></file>`; }
@@ -509,46 +521,47 @@ async function main() {
         fullTreeXml = (lastNl !== -1 ? truncated.slice(0, lastNl) : truncated) + '\n... [file_tree truncated to preserve character budget]';
       }
 
-      const chunkBuckets = [];
-      let currentBucket = [];
-      const part1Base = fullTreeXml.length + 220;
-      let currentChars = part1Base;
-
-      for (let i = 0; i < validFiles.length; i++) {
-        const f = validFiles[i];
-        const isPart1 = chunkBuckets.length === 0;
-        const addChars = isPart1 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1;
-
-        if (currentBucket.length > 0) {
-          if (currentChars + addChars > maxChunkChars) {
-            chunkBuckets.push(currentBucket);
-            currentBucket = [];
-            currentChars = 260;
+      function partition(budget) {
+        const buckets = [];
+        let cur = [];
+        let curChars = fullTreeXml.length + 220;
+        for (let i = 0; i < validFiles.length; i++) {
+          const f = validFiles[i];
+          const isP1 = buckets.length === 0;
+          const add = isP1 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1;
+          if (cur.length > 0 && curChars + add > budget) {
+            buckets.push(cur);
+            cur = [];
+            curChars = 260;
           }
-        } else if (isPart1) {
-          if (currentChars + addChars > hardLimit) {
-            chunkBuckets.push([]);
-            currentBucket = [];
-            currentChars = 260;
-          }
+          cur.push(f);
+          curChars += (buckets.length === 0 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1);
         }
-
-        const activeIsPart1 = chunkBuckets.length === 0;
-        const activeAddChars = activeIsPart1 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1;
-        currentBucket.push(f);
-        currentChars += activeAddChars;
+        if (cur.length > 0) buckets.push(cur);
+        return buckets;
       }
-      if (currentBucket.length > 0) chunkBuckets.push(currentBucket);
+
+      let chunkBuckets = partition(maxChunkChars);
+      const MAX_GEMINI_PARTS = 10;
+      if (chunkBuckets.length > MAX_GEMINI_PARTS) {
+        const totalRaw = validFiles.reduce((acc, f) => acc + f.fileXml.length, 0) + fullTreeXml.length;
+        chunkBuckets = partition(Math.max(maxChunkChars, Math.ceil(totalRaw / (MAX_GEMINI_PARTS - 1))));
+        while (chunkBuckets.length > MAX_GEMINI_PARTS) {
+          chunkBuckets[0] = [...chunkBuckets[0], ...chunkBuckets[1]];
+          chunkBuckets.splice(1, 1);
+        }
+      }
 
       const parts = [];
       for (let i = 0; i < chunkBuckets.length; i++) {
         const bucket = chunkBuckets[i];
         const partNum = i + 1;
+        const fileName = chunkBuckets.length === 1 ? 'repo-mix.txt' : `repo-mix.part${partNum}.txt`;
         const partTree = i === 0
           ? fullTreeXml
           : `# Part ${partNum}/${chunkBuckets.length} files (${bucket.length} files):\n${bucket.map((b) => b.path).join('\n')}`;
         const partXml = buildPartXml(partNum, chunkBuckets.length, partTree, bucket.map((b) => b.fileXml));
-        parts.push({ partNum, xml: partXml, bucket, tree: partTree });
+        parts.push({ partNum, fileName, xml: partXml, bucket, tree: partTree });
       }
       return { parts, treeEntries, validFiles };
     }
@@ -560,7 +573,7 @@ async function main() {
       { path: 'src/c.ts', content: 'C'.repeat(35000) }
     ];
     const resA = simulateChunking(testFilesA, ['src/a.ts', 'src/b.ts', 'src/c.ts'], 85000, 100000);
-    const partsUnder85k = resA.parts.length >= 2 && resA.parts.every((p) => p.xml.length <= 85000);
+    const partsUnder85k = resA.parts.length >= 2 && resA.parts.every((p) => p.xml.length <= 85000 && p.fileName.endsWith('.txt'));
     const part1HasFullTree = resA.parts[0].tree.includes('src/a.ts') && resA.parts[0].tree.includes('src/c.ts');
     const part2HasCompactTree = resA.parts[1].tree.includes('# Part 2/');
 
@@ -573,21 +586,77 @@ async function main() {
     const hugeSkipped = resB.treeEntries.some((e) => e.includes('src/huge.ts [SKIPPED: >100k chars for Gemini Chat limit]'));
     const hugeNotInFiles = resB.validFiles.every((f) => f.path !== 'src/huge.ts');
 
+    // Test C: 10-parts Guardrail (25 files of 20k chars each)
+    const testFilesC = Array.from({ length: 25 }, (_, i) => ({
+      path: `src/mod${i}.ts`,
+      content: `// mod${i}\n` + 'X'.repeat(20000)
+    }));
+    const resC = simulateChunking(testFilesC, testFilesC.map((f) => f.path), 40000, 100000);
+    const guardrailPass = resC.parts.length <= 10 && resC.parts.every((p) => p.fileName.endsWith('.txt'));
+
+    // Test D: Ignore pattern parser and matcher
+    function parseIgnoreLinesTest(c) {
+      if (!c) return [];
+      return c.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith('#'));
+    }
+    function matchesIgnoreTest(relPath, patterns) {
+      const normalized = relPath.replace(/^\/+/, '');
+      const segments = normalized.split('/');
+      const fileName = segments[segments.length - 1];
+      for (let pat of patterns) {
+        pat = pat.trim();
+        if (!pat || pat.startsWith('#')) continue;
+        const isDir = pat.endsWith('/');
+        if (isDir) pat = pat.slice(0, -1);
+        const isAnchored = pat.startsWith('/');
+        if (isAnchored) pat = pat.slice(1);
+        if (pat.includes('*') || pat.includes('?')) {
+          const rxStr = pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+          const rx = new RegExp(isAnchored ? `^${rxStr}$` : `(^|/)${rxStr}$`);
+          if (rx.test(normalized) || (!pat.includes('/') && rx.test(fileName))) return true;
+          continue;
+        }
+        if (isDir) {
+          if (isAnchored ? (normalized === pat || normalized.startsWith(pat + '/')) : (segments.includes(pat) || normalized.startsWith(pat + '/') || normalized.includes('/' + pat + '/'))) return true;
+          continue;
+        }
+        if (isAnchored ? (normalized === pat || normalized.startsWith(pat + '/')) : (fileName === pat || normalized === pat || normalized.startsWith(pat + '/') || segments.includes(pat))) return true;
+      }
+      return false;
+    }
+    const testPats = parseIgnoreLinesTest('# Repomix ignore\ntests/\n*.csv\n.venv\n/root_only.txt\n');
+    const ignorePass = matchesIgnoreTest('tests/unit.py', testPats) &&
+      matchesIgnoreTest('data/raw.csv', testPats) &&
+      matchesIgnoreTest('.venv/bin/python', testPats) &&
+      matchesIgnoreTest('root_only.txt', testPats) &&
+      !matchesIgnoreTest('src/index.ts', testPats) &&
+      !matchesIgnoreTest('nested/root_only.txt', testPats);
+
     const functionalBudgetPass = partsUnder85k && part1HasFullTree && part2HasCompactTree && hugeSkipped && hugeNotInFiles;
 
-    const pass = hasBuildChunked && hasInjectParts && hasDefault85k && hasSkipMarker &&
-      bundleHasInjectParts && bundleHasIncludePaths && bundleHasMaxChunkChars && functionalBudgetPass;
+    const pass = hasBuildChunked && hasInjectParts && hasDefault85k && hasMaxParts10 &&
+      hasTxtExtension && hasSkipMarker && hasIgnoreUtils && hasDynamicIgnoreInMixer &&
+      storageSupports2M && bundleHasInjectParts && bundleHasIncludePaths &&
+      bundleHasMaxChunkChars && bundleHasTxtMime && functionalBudgetPass && guardrailPass && ignorePass;
 
     return {
       pass,
       hasBuildChunked,
       hasInjectParts,
       hasDefault85k,
+      hasMaxParts10,
+      hasTxtExtension,
       hasSkipMarker,
+      hasIgnoreUtils,
+      hasDynamicIgnoreInMixer,
+      storageSupports2M,
       bundleHasInjectParts,
       bundleHasIncludePaths,
       bundleHasMaxChunkChars,
-      functionalBudgetPass
+      bundleHasTxtMime,
+      functionalBudgetPass,
+      guardrailPass,
+      ignorePass
     };
   }));
 

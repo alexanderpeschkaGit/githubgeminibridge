@@ -338,9 +338,11 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
 
   // Max Chunk Chars Row (Gemini Chat 85k budget)
   const maxChunkRow = createHudElement('div', 'hud-form-row');
-  const maxChunkLabel = createHudElement('span', 'hud-label', 'Max Chunk Chars (Default: 85000, max 95000)');
+  const maxChunkLabel = createHudElement('span', 'hud-label', 'Max Chunk Chars (Default: 85000, Max 10 Parts)');
   const maxChunkCharsInput = createHudElement('input', 'hud-input');
   maxChunkCharsInput.type = 'number';
+  maxChunkCharsInput.min = '10000';
+  maxChunkCharsInput.max = '2000000';
   maxChunkCharsInput.value = String(config.maxChunkChars || 85000);
   maxChunkRow.appendChild(maxChunkLabel);
   maxChunkRow.appendChild(maxChunkCharsInput);
