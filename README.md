@@ -39,13 +39,21 @@ Das Projekt besteht aus zwei perfekt aufeinander abgestimmten Komponenten:
 Um die 1-Click-Commit-Buttons in Google Gemini und AI Studio zu aktivieren:
 
 1. **Tampermonkey** oder **Violentmonkey** im Browser öffnen (falls noch nicht vorhanden, über den Browser-Extension-Store installieren).
-2. **Neues Skript erstellen** (im Dashboard der Extension auf `+` bzw. `Neues Skript hinzufügen` klicken).
-3. **Inhalt von [`gemini-bridge.user.js`](gemini-bridge.user.js) hineinkopieren und speichern** (`Strg + S`).
+2. Die Raw-URL des Skripts öffnen — Tampermonkey zeigt dann die Installations-/Update-Seite:
+   `https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js`
+3. **Installieren** bzw. **Aktualisieren** klicken.
+
+> [!WARNING]
+> Das Skript **nicht** von Hand in den Editor kopieren. Ein abgeschnittener Paste führt zu
+> `injected: env: missing script "<uuid>"` — Tampermonkey kann das Skript dann nicht injizieren und
+> es läuft still gar nicht. Über `@downloadURL`/`@updateURL` aktualisiert Tampermonkey das Skript
+> anschließend selbst, sobald im Repo eine höhere `@version` liegt.
 
 ### Konfiguration im Browser
 Nach der Installation erscheint auf `gemini.google.com` und `aistudio.google.com`:
 - Ein Einstellungs-Icon (Zahnrad / Bridge-Badge) unten rechts oder am Code-Block.
 - Dort können die **Worker-URL**, das **Bridge-Secret**, das **Standard-Repository** (z. B. `owner/repo`) und der **Standard-Branch** (z. B. `main` oder `preview`) konfiguriert werden.
+- Das **Bridge-Secret (`WORKER_SECRET`) ist bewusst nicht im Skript enthalten**. Es wird einmalig in dieses Feld eingetragen und ausschließlich im Userscript-Speicher (GM-Storage) abgelegt — niemals im Repository. Ohne Eintrag zeigt der HUD „Set your Worker Secret (WORKER_SECRET) …“ und der Worker antwortet mit `401`.
 
 ---
 
