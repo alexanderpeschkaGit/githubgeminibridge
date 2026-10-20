@@ -211,7 +211,7 @@ function installStorage(initial = {}) {
     'HUD checkbox renders checked only on explicit opt-in'
   );
   const hudSource = fs.readFileSync(
-    path.join(ROOT, 'packages/userscript-hud/src/ui/shadowHud.ts'),
+    path.join(ROOT, 'packages/userscript-hud/src/ui/hudConfigBindings.ts'),
     'utf8'
   );
   assert.ok(

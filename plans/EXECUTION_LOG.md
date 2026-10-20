@@ -706,3 +706,15 @@
 - **Overall:** `DONE`. N√§chster Schritt f√ºr den User: 2.0.5 installieren, Tab neu laden; erscheint keine HUD, steht die Ursache k√ºnftig als rote Box bzw. als `[Gemini Edge HUD] ‚Ä¶`-Log in der Konsole.
 
 
+
+### [2026-10-21T01:10:00+02:00] | HUD `2.0.6`: Live-HEAD-Recovery statt ÑLoad Repo Mix"-Dead-End
+- **Status:** `DONE`
+- **Anlass:** Nach dem korrupten Tampermonkey-Install (`injected: env: missing script "<uuid>"`, Script lief nie) und der Neuinstallation war der GM-Storage leer: `?? Push via Bridge` endete mit `? Patch error: No repo mix snapshot for alexanderpeschkaGit/sikanda_projectinart_11-on-main@preview Ö`. Ohne vollst‰ndigen Repo-Mix war kein Patch anwendbar.
+- **Aenderungen:**
+  1. `packages/userscript-hud/src/services/workerClient.ts`: `parseRepoSlug`, `buildBranchHeadRequestBody`, `extractBranchHeadOid`, `requestBranchHead` ó HEAD-Auflˆsung in 1 GraphQL-Call ueber den bestehenden authentifizierten V1-`/graphql`-Proxy (kein Worker-Deploy).
+  2. `packages/userscript-hud/src/ui/shadowHud.ts`: `handleApplyPatch` loest bei fehlender Snapshot-OID live den Source-HEAD auf, persistiert ihn gescopt (`setSourceHeadOid`) und committet mit diesem `expectedHeadOid`; Statuszeile nennt den OID. Fehlschlag => ÑLoad Repo Mix"-Hinweis **plus** konkreter Grund. Invariante Ñkein Commit ohne validierten OID" bleibt (kein `/push`-Fallback).
+  3. Modularisierung (Dateigroessen-Gesetz): Config-Form-Handler nach `packages/userscript-hud/src/ui/hudConfigBindings.ts` (`bindHudConfigInputs`) extrahiert ó `shadowHud.ts` 520 -> 443 Zeilen, `hudConfigBindings.ts` 103 Zeilen.
+  4. Userscript `2.0.6` (`package.json`, Banner in `build-userscript.mjs`), Bundle neu gebaut (`dist` <=> Root identisch).
+  5. Regressionen: `test-hud-oid-scope.mjs` um die Branch-Head-Helfer und `requestBranchHead`-Fetch-Stubs erweitert; `test-recent-commits-opt-in.mjs` prueft den Handler jetzt in `hudConfigBindings.ts`.
+- **Validierung:** `tsc --noEmit` (HUD) `PASS`; Browser-E2E mit GM-Stubs (frischer Storage, `Ö-on-main`/`preview`, Target `bridge`): `/graphql` -> HEAD `aaaaÖ`, `/api/patch` mit `expectedHeadOid=aaaaÖ`, Status `? Committed to bridge`, Source-OID unveraendert, Target-OID `bbbbÖ` + `target_head_branch=bridge` persistiert; Negativpfad (`ref: null`) => Fehler mit Grund, Patch bleibt in der Queue; `run-regressions.mjs --include-smoke` `PASS` (10/10 Suiten, `worker-smoke` 14/14).
+- **Overall:** `DONE`. Wirksam nach Update im Tampermonkey; Worker bleibt `2.0.2` (kein Deploy noetig).

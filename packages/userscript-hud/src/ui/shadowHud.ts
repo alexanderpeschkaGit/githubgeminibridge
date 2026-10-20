@@ -5,11 +5,10 @@ import type {
 } from '../types';
 import {
   loadHudConfig,
-  saveHudConfig,
-  sanitizeNoGithubPat
 } from '../services/storage';
 import {
   requestRepoMix,
+  requestBranchHead,
   requestWorkerPatch
 } from '../services/workerClient';
 import { injectRepoMixFile, injectRepoMixParts, injectPromptText } from '../dom/injector';
@@ -18,7 +17,12 @@ import {
   buildSelfHealingPrompt,
   MAX_SELF_HEALING_RETRIES,
 } from '../services/selfHealing';
-import { buildWorkerPatchRequest, patchSnapshotRequiredMessage, resolveConflictOidReset } from '../services/patchOidState';
+import {
+  buildWorkerPatchRequest,
+  isPatchSnapshotReady,
+  patchSnapshotRequiredMessage,
+  resolveConflictOidReset
+} from '../services/patchOidState';
 import { getRunningScriptVersion } from '../services/runtimeInfo';
 import {
   applyPatchResponseOids,
@@ -34,6 +38,7 @@ import {
 } from '../services/patchQueue';
 import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } from './hudStylesAndDom';
 import { buildHudDomTree } from './hudDomTree';
+import { bindHudConfigInputs } from './hudConfigBindings';
 
 export {
   HUD_STYLES,
@@ -202,90 +207,14 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   };
   dom.closeBtn.onclick = closePanel;
 
-  dom.repoInput.onchange = () => {
-    try {
-      const sanitized = sanitizeNoGithubPat(dom.repoInput.value.trim(), 'repo');
-      const previousRepo = config.repo;
-      config.repo = sanitized;
-      saveHudConfig({ repo: sanitized });
-      if (sanitized !== previousRepo) resetPatchOidState(`Repository changed to "${sanitized}".`);
-    } catch (e: any) {
-      alert(e.message);
-      dom.repoInput.value = config.repo;
-    }
-  };
-
-  dom.branchInput.onchange = () => {
-    try {
-      const sanitized = sanitizeNoGithubPat(dom.branchInput.value.trim(), 'branch');
-      const previousBranch = config.branch;
-      config.branch = sanitized;
-      saveHudConfig({ branch: sanitized });
-      if (sanitized !== previousBranch) resetPatchOidState(`Branch changed to "${sanitized}".`);
-    } catch (e: any) {
-      alert(e.message);
-      dom.branchInput.value = config.branch;
-    }
-  };
-
-  dom.targetBranchInput.onchange = () => {
-    try {
-      const sanitized = sanitizeNoGithubPat(dom.targetBranchInput.value.trim(), 'targetBranch');
-      config.targetBranch = sanitized;
-      clearTargetOidState(state);
-      saveHudConfig({ targetBranch: sanitized });
-      renderState();
-    } catch (e: any) {
-      alert(e.message);
-      dom.targetBranchInput.value = config.targetBranch || '';
-    }
-  };
-
-  dom.includePathsInput.onchange = () => {
-    try {
-      const raw = dom.includePathsInput.value.trim();
-      const paths = raw.split(',').map((s) => s.trim()).filter(Boolean);
-      config.includePaths = paths;
-      saveHudConfig({ includePaths: paths });
-    } catch (e: any) {
-      alert(e.message);
-      dom.includePathsInput.value = (config.includePaths || []).join(', ');
-    }
-  };
-
-  dom.maxChunkCharsInput.onchange = () => {
-    try {
-      const val = parseInt(dom.maxChunkCharsInput.value, 10);
-      const safe = Math.max(10000, Math.min(2000000, Number.isFinite(val) ? val : 85000));
-      config.maxChunkChars = safe;
-      dom.maxChunkCharsInput.value = String(safe);
-      saveHudConfig({ maxChunkChars: safe });
-    } catch (e: any) {
-      alert(e.message);
-      dom.maxChunkCharsInput.value = String(config.maxChunkChars || 85000);
-    }
-  };
-
-  dom.secretInput.onchange = () => {
-    try {
-      const sanitized = sanitizeNoGithubPat(dom.secretInput.value.trim(), 'workerSecret');
-      config.workerSecret = sanitized;
-      saveHudConfig({ workerSecret: sanitized });
-    } catch (e: any) {
-      alert(e.message);
-      dom.secretInput.value = config.workerSecret;
-    }
-  };
-
-  dom.autoPilotCheck.onchange = () => {
-    config.autoPilot = dom.autoPilotCheck.checked;
-    saveHudConfig({ autoPilot: config.autoPilot });
-  };
-
-  dom.recentCommitsCheck.onchange = () => {
-    config.includeRecentCommits = dom.recentCommitsCheck.checked;
-    saveHudConfig({ includeRecentCommits: config.includeRecentCommits });
-  };
+  bindHudConfigInputs({
+    dom,
+    config,
+    state,
+    resetPatchOidState,
+    clearTargetOidState,
+    renderState,
+  });
 
   dom.mixBtn.onclick = async () => {
     try {
@@ -354,6 +283,28 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     });
 
     try {
+      // A missing snapshot (fresh install, cleared OID, repo switch, browser restart)
+      // must not dead-end: resolve the branch's current HEAD through the worker and use
+      // it as the concurrency token. The worker still validates it atomically on commit.
+      if (!isPatchSnapshotReady(state)) {
+        controller.updateState({
+          status: 'PATCHING',
+          statusMessage: `🔄 No snapshot OID — resolving current HEAD of ${config.repo}@${config.branch}...`,
+        });
+        try {
+          const resolvedOid = await requestBranchHead(config, config.repo, config.branch);
+          setSourceHeadOid(config, state, resolvedOid);
+          controller.updateState({
+            status: 'PATCHING',
+            statusMessage: `🔄 Using current ${config.branch} HEAD ${resolvedOid.slice(0, 7)} as concurrency token (no repo mix snapshot).`,
+          });
+        } catch (resolveErr: any) {
+          throw new Error(
+            `${patchSnapshotRequiredMessage(config, patch.commitMessage)} (HEAD lookup failed: ${resolveErr.message || String(resolveErr)})`
+          );
+        }
+      }
+
       if (state.headOid) {
         const patchReq = buildWorkerPatchRequest(config, state, patch.payload);
 

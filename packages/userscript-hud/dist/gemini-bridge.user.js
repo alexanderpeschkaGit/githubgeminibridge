@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.5
+// @version      2.0.6
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -310,6 +310,44 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     const url = `${cfg.workerUrl}/api/patch`;
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
+  var OID_REGEX = /^[0-9a-f]{40}$/i;
+  function parseRepoSlug(repo) {
+    const cleaned = (repo || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/^git@github\.com:/i, "").replace(/\.git$/i, "").replace(/\/+$/, "");
+    const parts = cleaned.split("/").filter(Boolean);
+    if (parts.length !== 2) {
+      throw new Error(`Invalid repository "${repo}": expected "owner/name".`);
+    }
+    return { owner: parts[0], name: parts[1] };
+  }
+  function buildBranchHeadRequestBody(repo, branch) {
+    const { owner, name } = parseRepoSlug(repo);
+    const branchName = (branch || "").trim().replace(/^refs\/heads\//, "");
+    if (!branchName) {
+      throw new Error("Cannot resolve a HEAD OID without a branch name.");
+    }
+    return {
+      query: "query BranchHead($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { ref(qualifiedName: $branch) { target { oid } } } }",
+      variables: { owner, repo: name, branch: `refs/heads/${branchName}` }
+    };
+  }
+  function extractBranchHeadOid(payload) {
+    const oid = payload?.data?.repository?.ref?.target?.oid;
+    return OID_REGEX.test(String(oid || "")) ? String(oid) : "";
+  }
+  async function requestBranchHead(cfg, repo, branch) {
+    const body = buildBranchHeadRequestBody(repo, branch);
+    const payload = await gmRequestJson(
+      `${cfg.workerUrl}/graphql`,
+      "POST",
+      cfg.workerSecret,
+      body
+    );
+    const oid = extractBranchHeadOid(payload);
+    if (!oid) {
+      throw new Error(`Branch "${body.variables.branch}" was not found in ${body.variables.owner}/${body.variables.repo}.`);
+    }
+    return oid;
+  }
   async function requestLegacyCommit(cfg, req) {
     const url = `${cfg.workerUrl}/push`;
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
@@ -528,7 +566,7 @@ Fix Instructions:
   }
 
   // packages/userscript-hud/src/services/patchOidState.ts
-  var OID_REGEX = /^[0-9a-f]{40}$/i;
+  var OID_REGEX2 = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
   }
@@ -541,9 +579,9 @@ Fix Instructions:
     }
     const configuredTarget = normalizeBranch(config.targetBranch || "");
     const storedTarget = normalizeBranch(stored.targetHeadBranch || "");
-    const targetIsCurrent = !!configuredTarget && storedTarget === configuredTarget && OID_REGEX.test(stored.targetHeadOid || "");
+    const targetIsCurrent = !!configuredTarget && storedTarget === configuredTarget && OID_REGEX2.test(stored.targetHeadOid || "");
     return {
-      headOid: OID_REGEX.test(stored.headOid || "") ? stored.headOid : "",
+      headOid: OID_REGEX2.test(stored.headOid || "") ? stored.headOid : "",
       targetHeadOid: targetIsCurrent ? stored.targetHeadOid : "",
       targetHeadBranch: targetIsCurrent ? storedTarget : ""
     };
@@ -551,7 +589,7 @@ Fix Instructions:
   function buildWorkerPatchRequest(config, state, payload) {
     const targetBranch = config.targetBranch?.trim() || void 0;
     const isDistinctTarget = !!targetBranch && normalizeBranch(targetBranch) !== normalizeBranch(config.branch);
-    const targetOidIsCurrent = isDistinctTarget && normalizeBranch(state.targetHeadBranch) === normalizeBranch(targetBranch) && OID_REGEX.test(state.targetHeadOid);
+    const targetOidIsCurrent = isDistinctTarget && normalizeBranch(state.targetHeadBranch) === normalizeBranch(targetBranch) && OID_REGEX2.test(state.targetHeadOid);
     return {
       repo: config.repo,
       branch: config.branch,
@@ -560,6 +598,9 @@ Fix Instructions:
       targetBranch,
       expectedTargetHeadOid: targetOidIsCurrent ? state.targetHeadOid || void 0 : void 0
     };
+  }
+  function isPatchSnapshotReady(state) {
+    return OID_REGEX2.test(state.headOid || "");
   }
   function patchSnapshotRequiredMessage(config, commitMessage) {
     return `No repo mix snapshot for ${config.repo}@${config.branch}. Click "Load Repo Mix" first \u2014 patches are only committed against a validated HEAD OID. (Patch: "${commitMessage}")`;
@@ -1168,6 +1209,88 @@ Fix Instructions:
     };
   }
 
+  // packages/userscript-hud/src/ui/hudConfigBindings.ts
+  function bindHudConfigInputs(deps) {
+    const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, renderState } = deps;
+    dom.repoInput.onchange = () => {
+      try {
+        const sanitized = sanitizeNoGithubPat(dom.repoInput.value.trim(), "repo");
+        const previousRepo = config.repo;
+        config.repo = sanitized;
+        saveHudConfig({ repo: sanitized });
+        if (sanitized !== previousRepo) resetPatchOidState(`Repository changed to "${sanitized}".`);
+      } catch (e) {
+        alert(e.message);
+        dom.repoInput.value = config.repo;
+      }
+    };
+    dom.branchInput.onchange = () => {
+      try {
+        const sanitized = sanitizeNoGithubPat(dom.branchInput.value.trim(), "branch");
+        const previousBranch = config.branch;
+        config.branch = sanitized;
+        saveHudConfig({ branch: sanitized });
+        if (sanitized !== previousBranch) resetPatchOidState(`Branch changed to "${sanitized}".`);
+      } catch (e) {
+        alert(e.message);
+        dom.branchInput.value = config.branch;
+      }
+    };
+    dom.targetBranchInput.onchange = () => {
+      try {
+        const sanitized = sanitizeNoGithubPat(dom.targetBranchInput.value.trim(), "targetBranch");
+        config.targetBranch = sanitized;
+        clearTargetOidState2(state);
+        saveHudConfig({ targetBranch: sanitized });
+        renderState();
+      } catch (e) {
+        alert(e.message);
+        dom.targetBranchInput.value = config.targetBranch || "";
+      }
+    };
+    dom.includePathsInput.onchange = () => {
+      try {
+        const raw = dom.includePathsInput.value.trim();
+        const paths = raw.split(",").map((s) => s.trim()).filter(Boolean);
+        config.includePaths = paths;
+        saveHudConfig({ includePaths: paths });
+      } catch (e) {
+        alert(e.message);
+        dom.includePathsInput.value = (config.includePaths || []).join(", ");
+      }
+    };
+    dom.maxChunkCharsInput.onchange = () => {
+      try {
+        const val = parseInt(dom.maxChunkCharsInput.value, 10);
+        const safe = Math.max(1e4, Math.min(2e6, Number.isFinite(val) ? val : 85e3));
+        config.maxChunkChars = safe;
+        dom.maxChunkCharsInput.value = String(safe);
+        saveHudConfig({ maxChunkChars: safe });
+      } catch (e) {
+        alert(e.message);
+        dom.maxChunkCharsInput.value = String(config.maxChunkChars || 85e3);
+      }
+    };
+    dom.secretInput.onchange = () => {
+      try {
+        const sanitized = sanitizeNoGithubPat(dom.secretInput.value.trim(), "workerSecret");
+        config.workerSecret = sanitized;
+        saveHudConfig({ workerSecret: sanitized });
+      } catch (e) {
+        alert(e.message);
+        dom.secretInput.value = config.workerSecret;
+      }
+    };
+    dom.autoPilotCheck.onchange = () => {
+      config.autoPilot = dom.autoPilotCheck.checked;
+      saveHudConfig({ autoPilot: config.autoPilot });
+    };
+    dom.recentCommitsCheck.onchange = () => {
+      config.includeRecentCommits = dom.recentCommitsCheck.checked;
+      saveHudConfig({ includeRecentCommits: config.includeRecentCommits });
+    };
+  }
+
   // packages/userscript-hud/src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
@@ -1297,83 +1420,14 @@ Fix Instructions:
       }
     };
     dom.closeBtn.onclick = closePanel;
-    dom.repoInput.onchange = () => {
-      try {
-        const sanitized = sanitizeNoGithubPat(dom.repoInput.value.trim(), "repo");
-        const previousRepo = config.repo;
-        config.repo = sanitized;
-        saveHudConfig({ repo: sanitized });
-        if (sanitized !== previousRepo) resetPatchOidState(`Repository changed to "${sanitized}".`);
-      } catch (e) {
-        alert(e.message);
-        dom.repoInput.value = config.repo;
-      }
-    };
-    dom.branchInput.onchange = () => {
-      try {
-        const sanitized = sanitizeNoGithubPat(dom.branchInput.value.trim(), "branch");
-        const previousBranch = config.branch;
-        config.branch = sanitized;
-        saveHudConfig({ branch: sanitized });
-        if (sanitized !== previousBranch) resetPatchOidState(`Branch changed to "${sanitized}".`);
-      } catch (e) {
-        alert(e.message);
-        dom.branchInput.value = config.branch;
-      }
-    };
-    dom.targetBranchInput.onchange = () => {
-      try {
-        const sanitized = sanitizeNoGithubPat(dom.targetBranchInput.value.trim(), "targetBranch");
-        config.targetBranch = sanitized;
-        clearTargetOidState(state);
-        saveHudConfig({ targetBranch: sanitized });
-        renderState();
-      } catch (e) {
-        alert(e.message);
-        dom.targetBranchInput.value = config.targetBranch || "";
-      }
-    };
-    dom.includePathsInput.onchange = () => {
-      try {
-        const raw = dom.includePathsInput.value.trim();
-        const paths = raw.split(",").map((s) => s.trim()).filter(Boolean);
-        config.includePaths = paths;
-        saveHudConfig({ includePaths: paths });
-      } catch (e) {
-        alert(e.message);
-        dom.includePathsInput.value = (config.includePaths || []).join(", ");
-      }
-    };
-    dom.maxChunkCharsInput.onchange = () => {
-      try {
-        const val = parseInt(dom.maxChunkCharsInput.value, 10);
-        const safe = Math.max(1e4, Math.min(2e6, Number.isFinite(val) ? val : 85e3));
-        config.maxChunkChars = safe;
-        dom.maxChunkCharsInput.value = String(safe);
-        saveHudConfig({ maxChunkChars: safe });
-      } catch (e) {
-        alert(e.message);
-        dom.maxChunkCharsInput.value = String(config.maxChunkChars || 85e3);
-      }
-    };
-    dom.secretInput.onchange = () => {
-      try {
-        const sanitized = sanitizeNoGithubPat(dom.secretInput.value.trim(), "workerSecret");
-        config.workerSecret = sanitized;
-        saveHudConfig({ workerSecret: sanitized });
-      } catch (e) {
-        alert(e.message);
-        dom.secretInput.value = config.workerSecret;
-      }
-    };
-    dom.autoPilotCheck.onchange = () => {
-      config.autoPilot = dom.autoPilotCheck.checked;
-      saveHudConfig({ autoPilot: config.autoPilot });
-    };
-    dom.recentCommitsCheck.onchange = () => {
-      config.includeRecentCommits = dom.recentCommitsCheck.checked;
-      saveHudConfig({ includeRecentCommits: config.includeRecentCommits });
-    };
+    bindHudConfigInputs({
+      dom,
+      config,
+      state,
+      resetPatchOidState,
+      clearTargetOidState,
+      renderState
+    });
     dom.mixBtn.onclick = async () => {
       try {
         dom.mixBtn.disabled = true;
@@ -1431,6 +1485,24 @@ Fix Instructions:
         statusMessage: `\u23F3 Applying patch: "${patch.commitMessage}"...`
       });
       try {
+        if (!isPatchSnapshotReady(state)) {
+          controller.updateState({
+            status: "PATCHING",
+            statusMessage: `\u{1F504} No snapshot OID \u2014 resolving current HEAD of ${config.repo}@${config.branch}...`
+          });
+          try {
+            const resolvedOid = await requestBranchHead(config, config.repo, config.branch);
+            setSourceHeadOid(config, state, resolvedOid);
+            controller.updateState({
+              status: "PATCHING",
+              statusMessage: `\u{1F504} Using current ${config.branch} HEAD ${resolvedOid.slice(0, 7)} as concurrency token (no repo mix snapshot).`
+            });
+          } catch (resolveErr) {
+            throw new Error(
+              `${patchSnapshotRequiredMessage(config, patch.commitMessage)} (HEAD lookup failed: ${resolveErr.message || String(resolveErr)})`
+            );
+          }
+        }
         if (state.headOid) {
           const patchReq = buildWorkerPatchRequest(config, state, patch.payload);
           const res = await requestWorkerPatch(config, patchReq);

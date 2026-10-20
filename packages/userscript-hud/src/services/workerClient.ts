@@ -145,6 +145,71 @@ export async function requestWorkerPatch(
   return gmRequestJson<WorkerPatchResponse>(url, 'POST', cfg.workerSecret, req);
 }
 
+const OID_REGEX = /^[0-9a-f]{40}$/i;
+
+/** Accepts `owner/name`, a GitHub URL or `git@github.com:owner/name`. */
+export function parseRepoSlug(repo: string): { owner: string; name: string } {
+  const cleaned = (repo || '')
+    .trim()
+    .replace(/^https?:\/\/github\.com\//i, '')
+    .replace(/^git@github\.com:/i, '')
+    .replace(/\.git$/i, '')
+    .replace(/\/+$/, '');
+  const parts = cleaned.split('/').filter(Boolean);
+  if (parts.length !== 2) {
+    throw new Error(`Invalid repository "${repo}": expected "owner/name".`);
+  }
+  return { owner: parts[0], name: parts[1] };
+}
+
+/** Pure request builder so the wire contract stays unit-testable without network access. */
+export function buildBranchHeadRequestBody(
+  repo: string,
+  branch: string
+): { query: string; variables: { owner: string; repo: string; branch: string } } {
+  const { owner, name } = parseRepoSlug(repo);
+  const branchName = (branch || '').trim().replace(/^refs\/heads\//, '');
+  if (!branchName) {
+    throw new Error('Cannot resolve a HEAD OID without a branch name.');
+  }
+  return {
+    query:
+      'query BranchHead($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { ref(qualifiedName: $branch) { target { oid } } } }',
+    variables: { owner, repo: name, branch: `refs/heads/${branchName}` },
+  };
+}
+
+/** Extracts `repository.ref.target.oid` from the `/graphql` proxy envelope. */
+export function extractBranchHeadOid(payload: unknown): string {
+  const oid = (payload as any)?.data?.repository?.ref?.target?.oid;
+  return OID_REGEX.test(String(oid || '')) ? String(oid) : '';
+}
+
+/**
+ * Resolves the current HEAD of `repo@branch` through the authenticated V1 `/graphql`
+ * proxy (1 GraphQL call, no tarball). Used when the HUD has no mix snapshot: the
+ * resulting OID is a real concurrency token, so a patch is still never committed
+ * against an unvalidated revision.
+ */
+export async function requestBranchHead(
+  cfg: HudConfig,
+  repo: string,
+  branch: string
+): Promise<string> {
+  const body = buildBranchHeadRequestBody(repo, branch);
+  const payload = await gmRequestJson<unknown>(
+    `${cfg.workerUrl}/graphql`,
+    'POST',
+    cfg.workerSecret,
+    body
+  );
+  const oid = extractBranchHeadOid(payload);
+  if (!oid) {
+    throw new Error(`Branch "${body.variables.branch}" was not found in ${body.variables.owner}/${body.variables.repo}.`);
+  }
+  return oid;
+}
+
 export async function requestLegacyCommit(
   cfg: HudConfig,
   req: CommitRequest

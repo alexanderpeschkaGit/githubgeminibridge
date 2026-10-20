@@ -136,4 +136,85 @@ assert.equal(resolveConflictOidReset({ status: 'NO_CHANGES_NEEDED', newHeadOid: 
 assert.equal(resolveConflictOidReset({ status: 'PREFLIGHT_FAILED' }), 'none');
 assert.equal(resolveConflictOidReset({ status: 'ERROR', errorMessage: 'boom' }), 'none');
 
+// 9. A missing snapshot is recovered by resolving the branch HEAD through the V1
+//    /graphql proxy instead of dead-ending on "Load Repo Mix first". The resolved OID
+//    is still a validated concurrency token, so the patch is never committed blindly.
+const clientEntry = path.join(ROOT, 'packages/userscript-hud/src/services/workerClient.ts');
+const clientBuild = await esbuild.build({
+  entryPoints: [clientEntry],
+  bundle: true,
+  write: false,
+  format: 'esm',
+  platform: 'node',
+});
+const clientModuleUrl = `data:text/javascript;base64,${Buffer.from(clientBuild.outputFiles[0].text).toString('base64')}`;
+const { buildBranchHeadRequestBody, extractBranchHeadOid, parseRepoSlug } = await import(clientModuleUrl);
+
+assert.deepEqual(parseRepoSlug('alexanderpeschkaGit/sikanda_projectinart_11-on-main'), {
+  owner: 'alexanderpeschkaGit',
+  name: 'sikanda_projectinart_11-on-main',
+});
+assert.deepEqual(parseRepoSlug('https://github.com/a/b.git'), { owner: 'a', name: 'b' });
+assert.deepEqual(parseRepoSlug('git@github.com:a/b/'), { owner: 'a', name: 'b' });
+assert.throws(() => parseRepoSlug('not-a-repo'), /expected "owner\/name"/);
+
+const headBody = buildBranchHeadRequestBody('alexanderpeschkaGit/sikanda_projectinart_11-on-main', 'preview');
+assert.match(headBody.query, /ref\(qualifiedName: \$branch\) \{ target \{ oid \} \}/);
+assert.deepEqual(headBody.variables, {
+  owner: 'alexanderpeschkaGit',
+  repo: 'sikanda_projectinart_11-on-main',
+  branch: 'refs/heads/preview',
+});
+assert.equal(
+  buildBranchHeadRequestBody('a/b', 'refs/heads/bridge').variables.branch,
+  'refs/heads/bridge'
+);
+assert.throws(() => buildBranchHeadRequestBody('a/b', '   '), /without a branch name/);
+
+assert.equal(
+  extractBranchHeadOid({ success: true, data: { repository: { ref: { target: { oid: OID_REPO_A } } } } }),
+  OID_REPO_A
+);
+assert.equal(extractBranchHeadOid({ success: true, data: { repository: { ref: null } } }), '');
+assert.equal(extractBranchHeadOid({ success: true, data: null }), '');
+assert.equal(extractBranchHeadOid(undefined), '');
+
+// 10. requestBranchHead() talks to the existing authenticated V1 /graphql proxy and
+//     refuses to invent an OID when the branch does not exist.
+const { requestBranchHead } = await import(clientModuleUrl);
+const cfg = { ...configA, workerUrl: 'https://worker.test', workerSecret: 'secret' };
+
+let capturedUrl = '';
+let capturedBody = null;
+const originalFetch = globalThis.fetch;
+
+globalThis.fetch = async (url, options) => {
+  capturedUrl = String(url);
+  capturedBody = JSON.parse(options.body);
+  return {
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ success: true, data: { repository: { ref: { target: { oid: OID_REPO_B } } } } }),
+  };
+};
+assert.equal(await requestBranchHead(cfg, configB.repo, 'preview'), OID_REPO_B);
+assert.equal(capturedUrl, 'https://worker.test/graphql');
+assert.deepEqual(capturedBody.variables, {
+  owner: 'alexanderpeschkaGit',
+  repo: 'sikanda_projectinart_11-on-main',
+  branch: 'refs/heads/preview',
+});
+
+globalThis.fetch = async () => ({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({ success: true, data: { repository: { ref: null } } }),
+});
+await assert.rejects(
+  () => requestBranchHead(cfg, configB.repo, 'does-not-exist'),
+  /Branch "refs\/heads\/does-not-exist" was not found/
+);
+
+globalThis.fetch = originalFetch;
+
 console.log('PASS: persisted patch OIDs are repo+branch scoped and foreign snapshots are never replayed');

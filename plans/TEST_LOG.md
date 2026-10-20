@@ -419,3 +419,10 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; Bundle `@version 2.0.5`, `dist` â‡„ Root identisch.
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten, `worker-smoke` 14/14).
 - **GESAMTSTATUS**: `PASS`
+### [2026-10-21T01:10:00+02:00] | HUD `2.0.6` (Live-HEAD-Recovery)
+- `node packages/edge-worker/node_modules/typescript/bin/tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+- `node scripts/patches_and_tests/test-hud-oid-scope.mjs`: `PASS` — zusaetzlich `parseRepoSlug` (owner/name, URL, `git@github.com:`, ungueltig), `buildBranchHeadRequestBody` (`refs/heads/preview`, leerer Branch => Fehler), `extractBranchHeadOid` (Envelope, `ref: null`, `data: null`, `undefined`) und `requestBranchHead` mit `fetch`-Stub (`POST <worker>/graphql`, korrekte Variablen, Branch-Not-Found => `Branch "refs/heads/does-not-exist" was not found`).
+- Browser-E2E (Bundle via `addScriptTag`, GM-Stubs, frischer Storage): HUD mountet, Harvester haengt `?? Push via Bridge` an; Klick => 1 GraphQL-Call loest `preview`-HEAD `aaaa…` auf, `/api/patch` sendet `expectedHeadOid=aaaa…` + `targetBranch=bridge`, Antwort `COMMITTED`, Status `? Committed to bridge: bbbbbbb`; `head_oid`/`head_oid_scope` bleiben `preview` (`aaaa…`), `target_head_oid=bbbb…`, `target_head_branch=bridge`. Negativpfad (`ref: null`): Status `? Patch error: No repo mix snapshot … (HEAD lookup failed: Branch "refs/heads/preview" was not found …)`, Queue-Eintrag bleibt erhalten.
+- `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten; `worker-smoke` 14/14 inkl. Probe 10 Dateigroessen-Audit `0` Dateien >= 500 Zeilen und Bundle-Identitaet).
+- `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; Bundle `@version 2.0.6`, `dist` <=> Root byte-identisch.
+- **GESAMTSTATUS**: `PASS` (wirksam nach Update im Tampermonkey; Worker unveraendert `2.0.2`)
