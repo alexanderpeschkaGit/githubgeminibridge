@@ -1,4 +1,4 @@
-# STATE.md – Projektstatus-Tracker (`cloudflare_orchestrator_Bridge`)
+﻿# STATE.md – Projektstatus-Tracker (`cloudflare_orchestrator_Bridge`)
 
 > **Verwendungszweck:** Single Source of Truth für den aktuellen Projektfortschritt.
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
@@ -77,5 +77,5 @@
   - Ziel: Die vier Review-Fixes (V2-Payload-Schema, sichere bestehende Target-Branches mit getrennten Source-/Target-OIDs, Recent-Commits strikt opt-in mit einmaliger Migration, gedeckelte Metadaten + absoluter 100k-Part-Deckel) plus CLI- und Webhook-Suiten in einem einzigen Runner (`scripts/patches_and_tests/run-regressions.mjs`) mit wahrheitsgemäßem Aggregat-Exit bündeln; Live-Smoke bleibt explizit (`--include-smoke`) außerhalb des Default-Gates. Dokumentations-Drift in `agents.md`, `edge-worker-architecture.md` und `REPOMIX_INSTRUCTIONS.md` (legacy V2-Schema) geschlossen. Verifikation: Runner 6/6 lokal, 7/7 mit Live-Smoke, Negative-Pfad Exit 1, Type-Checks PASS, 28/28 TS-Dateien < 500 Zeilen, Bundle-Identität, `git diff --check` PASS.
 
 ## Offene Entscheidungen / Blocker
-- **Plan Step 6 (finale Validierung & Checkpoint-Commit)** steht noch aus und wurde in dieser Welle bewusst nicht ausgeführt (kein Commit/Push/Deploy).
+- **Release-Update (2026-10-20):** Live-Deployment abgeschlossen - Worker `gemini-git-bridge` auf `2.0.1` deployt (Version ID `89284b1d`), Userscript-Bundle synchron, Post-Deploy-`/health` `PASS` (14/14 Smoke), lokaler Checkpoint-Commit erfolgt; kein `git push` (kein Remote konfiguriert).
 - Keine technischen Blocker. Target Branch Snapshot Concurrency, getrennte FIFO OID-Fortschreibung, Recent-Commits-Opt-In und der absolute 100k-Deckel sind vollständig integriert und verifiziert.

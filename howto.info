@@ -1,0 +1,129 @@
+# How-To Guide: Gemini-to-GitHub Bridge (.info)
+
+Praktische Schritt-für-Schritt-Anleitung für den täglichen Workflow: Vom Repomix-Kontext über das Prompting in Gemini Web / AI Studio bis zum 1-Click Git-Commit via Userscript & Cloudflare Edge Worker.
+
+---
+
+## 1. Voraussetzungen & Einmaliges Setup
+
+1. **Userscript im Browser:**
+   - [`gemini-bridge.user.js`](file:///Y:/projekte2026/website/gitTrans/githubgeminibridge/gemini-bridge.user.js) in Tampermonkey oder Violentmonkey installieren / aktualisieren.
+   - `gemini.google.com` oder `aistudio.google.com` im Browser öffnen (oder neu laden mit `F5`).
+2. **HUD-Konfiguration (Zahnrad / Bridge Drawer im Browser):**
+   - **Worker URL:** z. B. `https://gemini-git-bridge.<deine-subdomain>.workers.dev`
+   - **Bridge Secret:** Dein gesetztes Shared Secret (aus Cloudflare)
+   - **Default Repo:** `owner/repo` (z. B. `meinUser/meinProjekt`)
+   - **Default Branch:** z. B. `main` oder `preview`
+
+---
+
+## 2. Der Standard-Workflow (In 3 Schritten)
+
+### Schritt 1: Codebase als Kontext bereitstellen (Repomix / Mix Repo)
+1. Im HUD-Drawer auf **"📦 Mix Repo"** klicken (oder lokal Repomix ausführen).
+2. Das Userscript lädt das Repository über den Worker herunter, filtert Binärdateien & Node-Modules, zerlegt den Code atomar in Chunks ($\le$ 85k Zeichen als `.txt`) und fügt ihn direkt in den Chat ein.
+3. Gemini besitzt nun den vollständigen Dateibaum und den aktuellen Code im Kontext.
+
+---
+
+### Schritt 2: Gemini nach Code-Änderungen fragen (Prompting)
+
+Damit das Userscript und der Worker die Änderungen automatisch erkennen und auf GitHub committen können, muss Gemini die Antwort im passenden Format ausgeben.
+
+#### Variante A: V2 Patch-JSON (Empfohlen – Atomar & Kompakt)
+Ideal für Änderungen über mehrere Dateien hinweg in einem einzigen zusammenhängenden Commit.
+
+> **Minimaler Prompt für Gemini (ohne Kontext-Bloat):**
+> *"Gib die Änderungen ausschließlich als Patch-JSON mit branch, message und files (search/replace) aus."*
+
+Gemini antwortet dann in diesem Schema:
+```json
+{
+  "branch": "main",
+  "message": "feat: button styling and layout fix",
+  "files": [
+    {
+      "path": "src/components/Button.tsx",
+      "type": "modify",
+      "search": "const color = 'red';",
+      "replace": "const color = 'blue';"
+    },
+    {
+      "path": "src/utils/helpers.ts",
+      "type": "modify",
+      "search": "export const MAX_ITEMS = 10;",
+      "replace": "export const MAX_ITEMS = 25;"
+    }
+  ]
+}
+```
+
+*Unterstützte `type`-Aktionen im JSON:*
+- `modify`: Teiländerung einer bestehenden Datei via `search` und `replace`
+- `create`: Neue Datei erzeugen via `content` (vollständiger Dateiinhalt)
+- `delete`: Datei im GitHub-Repository löschen
+
+#### Variante B: SEARCH / REPLACE Blöcke (Klassisch / Markdown)
+Ideal für schnelle Einzeländerungen oder wenn Gemini Markdown-Blöcke bevorzugt.
+
+> **Minimaler Prompt:**
+> *"Gib die Änderung als SEARCH/REPLACE Block mit filepath an."*
+
+Gemini antwortet:
+```typescript
+// filepath: src/components/Button.tsx
+<<<<<<< SEARCH
+const color = 'red';
+=======
+const color = 'blue';
+>>>>>>> REPLACE
+```
+
+---
+
+### Schritt 3: Patches anwenden (Harvested Patches Drawer)
+
+Sobald Gemini die Antwort im Chat generiert, erkennt das Userscript die Patches automatisch im Hintergrund ("Harvested Patches"):
+
+1. **Option A – Alle nacheinander ausführen (`⚡ Apply All (N)`):**
+   - Klicke im Queue-Header auf **`⚡ Apply All`**.
+   - Das Skript wendet alle gesammelten Patches **chronologisch von alt nach neu (FIFO)** an.
+   - **Fail-Fast:** Tritt bei Patch 2 ein Fehler auf (z. B. Merge-Konflikt oder Linter-Fehler), **stoppt die Ausführung sofort**. Alle Folge-Patches bleiben unangetastet in der Queue.
+   - Jeder erfolgreich angewendete Patch wird sofort aus der Queue entfernt.
+
+2. **Option B – Einzeln anwenden (`Apply`):**
+   - Jeder Patch besitzt eine Diff-Vorschau und einen eigenen **`Apply`**-Button.
+   - **Reihenfolge bei manuellem Klick:** Immer von **alt nach neu (chronologisch)** anwenden, da spätere Patches auf den Änderungen früherer Patches aufbauen können.
+
+3. **Queue leeren (`🗑️ Clear`):**
+   - Mit einem Klick auf **`Clear`** verwirfst du alle aufgelaufenen Patches auf einmal.
+
+---
+
+## 3. Wichtige Regeln & Hard Guardrails
+
+### ❌ Niemals Platzhalter verwenden!
+- Der Cloudflare Worker besitzt eine strikte **Anti-Placeholder Guardrail**.
+- Code mit Kommentaren wie:
+  - `// ... existing code ...`
+  - `/* ... rest of code ... */`
+  - `# ... remaining code ...`
+  wird vom Worker **sofort mit `400 Bad Request` abgelehnt**!
+- **Hintergrund:** Dies schützt das Repository davor, dass versehentlich unvollständiger KI-Code bestehende Funktionen löscht.
+
+### 🔄 Optimistic Concurrency & Head-OID
+- Vor jedem Commit verifiziert der Worker die aktuelle Git HEAD-OID des Branches.
+- Bei `Apply All` wird die resultierende neue OID des vorherigen Commits direkt an den nächsten Commit übergeben.
+- Dadurch sind Race-Conditions und Versionskonflikte ausgeschlossen.
+
+---
+
+## 4. Schnelle Fehlerbehebung (Troubleshooting)
+
+| Problem | Ursache | Lösung |
+|---|---|---|
+| `400 Bad Request: Placeholder detected` | Gemini hat `// ... existing code ...` verwendet | Gemini auffordern: *"Schreibe den Code vollständig ohne Auslassungs-Kommentare oder nutze SEARCH/REPLACE"* |
+| `PREFLIGHT_FAILED / Conflict` | Such-Block (`search`) stimmt nicht exakt mit dem Dateiinhalt im Branch überein | Branch-Stand prüfen oder Gemini den aktuellen Codeausschnitt erneut vorgeben |
+| Kein `Apply`-Button / Queue bleibt leer | Kein relativer Dateipfad oder ungültiges JSON | Sicherstellen, dass die erste Zeile `// filepath: ...` lautet oder valides JSON vorliegt |
+| `401 Unauthorized` | Bridge-Secret im HUD ist falsch oder fehlt | Im HUD-Drawer das `Bridge Secret` mit dem im Cloudflare Worker hinterlegten Secret abgleichen |
+| Branch existiert nicht | Zielbranch auf GitHub nicht vorhanden | Branch auf GitHub anlegen oder im HUD auf `main` bzw. `preview` umstellen |

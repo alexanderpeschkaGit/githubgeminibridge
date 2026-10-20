@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-20T19:04:46.905Z",
+  "timestamp": "2026-10-20T19:25:39.543Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -42,7 +42,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },

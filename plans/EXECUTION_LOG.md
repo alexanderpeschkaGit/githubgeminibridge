@@ -555,3 +555,16 @@
   - `worker-smoke.mjs`: `PASS` (14/14) with redirected `OUTPUT_FILE`; `worker-baseline.json` byte-unchanged.
   - Userscript dist/root bundles byte-identical (63,400 bytes); 28/28 active TypeScript files < 500 lines (max 498); `git diff --check`: `PASS`.
 - **Overall:** `PASS`; no commits, pushes, or deployments. Plan Step 6 (final validation/checkpoint) intentionally left to the parent.
+
+### [2026-10-20T21:25:00+02:00] | Release Deploy: Live Worker v2.0.1 & Userscript Bundle Sync
+- **Status:** `DONE`
+- **Deployed:**
+  1. Cloudflare Worker `gemini-git-bridge` re-deployed from `packages/edge-worker` (`wrangler deploy`, version ID `89284b1d-e828-48b2-bdb7-bd523c9cb670`, 88.90 KiB / 20.84 KiB gzip).
+  2. Live `GET /health` now reports `version: 2.0.1` (previously `2.0.0`); `hasBridgeSecret` and `hasGithubToken` remain `true`, so no secret was reset (unchanged worker name preserves stored secrets).
+  3. Userscript rebuilt via `build-userscript.mjs`; `packages/userscript-hud/dist/gemini-bridge.user.js` and root `gemini-bridge.user.js` are byte-identical (61.9 KB) and unchanged versus the committed bundle.
+- **Validation:**
+  - `npx tsc --noEmit` (edge worker): `PASS`.
+  - `node scripts/patches_and_tests/run-regressions.mjs`: `PASS` (6/6).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (14/14, including live `/health`).
+  - Post-deploy `/health` probe: `PASS` (`version: 2.0.1`).
+- **Overall:** `PASS`; local checkpoint commit only, no `git push` (repository has no configured remote).
