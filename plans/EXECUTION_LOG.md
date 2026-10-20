@@ -636,3 +636,11 @@
   6. Docs synchronisiert: `agents.md` (P1-Zeile HUD, Modul-Liste, Mix-Flow), `.agents/rules/userscript-shadow-hud.md` (Abschnitte 6 & 7).
 - **Validierung:** `tsc --noEmit` HUD `PASS` (0 Fehler); `run-regressions.mjs` `PASS` (8/8, inkl. neuer `hud-oid-scope`-Suite); `worker-smoke.mjs` `PASS` (14/14, inkl. Probe 10 Dateigrößen-Audit 30 Dateien / 0 ≥ 500); Userscript-Build `PASS`, dist/root byte-identisch (SHA256 `2C590CFD…`, 67.612 Bytes).
 - **Overall:** `PASS`; kein `git push`, kein `wrangler deploy` (Worker-Code unverändert — nur HUD/Client).
+
+### [2026-10-20T23:48:00+02:00] | `PLAN_DONE`: Retest-Plan nach HUD-Scope-Fix (`useModalCloseHandler.ts`)
+- **Status:** `PLAN_DONE` (kein Code, nur Planartefakt)
+- **Anlass:** Klaerung der Frage, ob `src/hooks/feed/useModalCloseHandler.ts` nach dem `GIT_CONFLICT` noch relevant ist.
+- **Verifizierte Fakten (GitHub-API, read-only):** Datei existiert ausschliesslich auf `alexanderpeschkaGit/sikanda_projectinart_11-on-main@preview` (auf `main` → 404); `preview`-HEAD `65dbd85` seit `2026-10-20T16:05:01Z` unveraendert (kein Artefakt des Fehllaufs eingecheckt); letzte Dateiberuehrung `8679ea1`.
+- **Ergebnis:** Datei/Patch weiterhin relevant, aber nur auf `preview`. Neuer Plan `plans/06_HUD_SCOPE_FIX_RETEST_PLAN.md` (7 Schritte, `#exec all`, Flash-First, Scope-/Isolations-Invarianten).
+- **Overall:** `PLAN_DONE`; kein Code, kein Commit, kein `git push`.
+
