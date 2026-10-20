@@ -1,6 +1,6 @@
 {
   "name": "gemini-edge-hud",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "type": "module",
   "description": "Tampermonkey Shadow-DOM HUD for Google Gemini & AI Studio (Stage 3)",
