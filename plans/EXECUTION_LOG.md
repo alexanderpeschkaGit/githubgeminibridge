@@ -644,3 +644,11 @@
 - **Ergebnis:** Datei/Patch weiterhin relevant, aber nur auf `preview`. Neuer Plan `plans/06_HUD_SCOPE_FIX_RETEST_PLAN.md` (7 Schritte, `#exec all`, Flash-First, Scope-/Isolations-Invarianten).
 - **Overall:** `PLAN_DONE`; kein Code, kein Commit, kein `git push`.
 
+### [2026-10-20T23:52:00+02:00] | Retest-Prompt fuer neuen Chat erstellt
+- **Status:** `DONE` (nur Artefakt)
+- **Anlass:** User-Korrektur: Branch war `main`, Target `bridge` (noch nicht existent); erneuter Versuch lieferte erneut `GIT_CONFLICT: Expected 639fb9e… but branch "preview" is at "65dbd85…"`.
+- **Diagnose:** `639fb9e` ist weiterhin der alte Mix-`headOid` von `sikanda_projectinart_11@main`. Der Fehlversuch sendete also noch eine stale OID — entweder Userscript 2.0.2 aktiv oder nach dem Config-Wechsel kein frischer Mix geladen. Die Zieldatei existiert nur auf `preview`; die korrekte Quelle ist daher `…-on-main@preview` (HEAD `65dbd85`), Target `bridge` wird daraus erzeugt.
+- **Artefakt:** `plans/07_HUD_RETEST_PROMPT.md` (copy-paste-faehiger Prompt fuer einen neuen Chat).
+- **Overall:** `DONE`; kein Code, kein Commit ueber diesen Schritt hinaus.
+
+
