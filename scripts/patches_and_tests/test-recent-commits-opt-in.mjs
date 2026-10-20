@@ -203,7 +203,7 @@ function installStorage(initial = {}) {
 
 {
   const domSource = fs.readFileSync(
-    path.join(ROOT, 'packages/userscript-hud/src/ui/hudStylesAndDom.ts'),
+    path.join(ROOT, 'packages/userscript-hud/src/ui/hudDomTree.ts'),
     'utf8'
   );
   assert.ok(

@@ -591,3 +591,13 @@
   4. Dokumentations-Sync: `userscript-shadow-hud.md` (Queue-Helfer statt Inline-Logik), `agents.md` (Modulliste um `patchQueue.ts`).
 - **Validierung:** `tsc --noEmit` HUD `PASS`; `test-harvest-dedupe.mjs` `PASS`; `run-regressions.mjs` `PASS` (7/7); Bundle neu gebaut und byte-identisch (SHA256 `A0263B43…`, 65.405 Bytes); Dateigrößen-Audit 28 Dateien / 0 ≥ 500 / Maximum 495.
 - **Overall:** `PASS`; kein `git push`, kein `wrangler deploy`.
+
+### [2026-10-20T22:33:54+02:00] | HUD Queue UX Fix: Disabled-Styling & Dateipfad-Anzeige
+- **Status:** `DONE`
+- **Aenderungen:**
+  1. `packages/userscript-hud/src/ui/hudStylesAndDom.ts`: `:disabled`-CSS (`.hud-btn:disabled`, `.hud-btn-primary:disabled`) ergaenzt, `max-height` der Queue von 150px auf 280px erhoeht, neue Klassen `.hud-patch-item-meta`/`.hud-patch-item-sub` hinzugefuegt.
+  2. `packages/userscript-hud/src/ui/shadowHud.ts`: Queue-Item rendert jetzt den Dateipfad (`patch.payload.patches[].path`) als Titel und `commitMessage` als Unterzeile.
+  3. Pflicht-Dekomposition (Dateigroessen-Gesetz < 500 Zeilen): `buildHudDomTree` in neues Modul `packages/userscript-hud/src/ui/hudDomTree.ts` ausgelagert; `hudStylesAndDom.ts` enthaelt nur noch Styles + DOM-Helfer.
+  4. `scripts/patches_and_tests/test-recent-commits-opt-in.mjs`: Assertions-Pfad auf `hudDomTree.ts` korrigiert (Checkbox-Verdrahtung lebt jetzt dort).
+- **Validierung:** `tsc --noEmit` HUD `PASS` (0 Fehler); `test-harvest-dedupe.mjs` `PASS`; `run-regressions.mjs` `PASS` (7/7); Userscript-Build `PASS`, dist/root byte-identisch (SHA256 `1990F103...`, 66.399 Bytes); Dateigroessen-Audit 29 Dateien / 0 >= 500 Zeilen; `git diff --check` clean.
+- **Overall:** `PASS`; kein `git push`, kein `wrangler deploy`.

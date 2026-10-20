@@ -781,9 +781,19 @@ Fix Instructions:
     color: #ffffff;
     border-color: #38bdf8;
   }
-  .hud-btn-primary:hover {
+  .hud-btn-primary:hover:not(:disabled) {
     background: #0284c7;
     box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+  }
+  .hud-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .hud-btn-primary:disabled {
+    background: #334155;
+    border-color: #475569;
+    color: #94a3b8;
   }
   .hud-btn-secondary {
     background: #1e293b;
@@ -832,7 +842,7 @@ Fix Instructions:
     border-radius: 8px;
     background: #182234;
     padding: 8px;
-    max-height: 150px;
+    max-height: 280px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -855,6 +865,22 @@ Fix Instructions:
     white-space: nowrap;
     color: #e2e8f0;
     flex: 1;
+    min-width: 0;
+  }
+  .hud-patch-item-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+    flex: 1;
+    min-width: 0;
+  }
+  .hud-patch-item-sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    color: #94a3b8;
   }
 `;
   var HUD_SHADOW_STYLES = HUD_STYLES;
@@ -864,6 +890,8 @@ Fix Instructions:
     if (textContent !== void 0) el.textContent = textContent;
     return el;
   }
+
+  // packages/userscript-hud/src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -1110,19 +1138,26 @@ Fix Instructions:
       } else {
         state.harvestedPatches.forEach((patch) => {
           const item = createHudElement("div", "hud-patch-item");
+          const meta = createHudElement("div", "hud-patch-item-meta");
+          const paths = (patch.payload.patches || []).map((p) => p.path);
+          const pathLabel = paths.length > 0 ? paths.join(", ") : patch.commitMessage;
           const itemTitle = createHudElement(
             "div",
             "hud-patch-item-title",
-            `${patch.mode === "v2_json" ? "\u26A1" : "\u{1F4DD}"} ${patch.commitMessage}`
+            `${patch.mode === "v2_json" ? "\u26A1" : "\u{1F4DD}"} ${pathLabel}`
           );
-          itemTitle.title = patch.commitMessage;
+          itemTitle.title = pathLabel;
+          const itemSub = createHudElement("div", "hud-patch-item-sub", patch.commitMessage);
+          itemSub.title = patch.commitMessage;
           const applyBtn = createHudElement("button", "hud-btn hud-btn-primary", "Apply");
           applyBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
           applyBtn.disabled = isBusy;
           applyBtn.onclick = () => {
             controller.handleApplyPatch(patch);
           };
-          item.appendChild(itemTitle);
+          meta.appendChild(itemTitle);
+          meta.appendChild(itemSub);
+          item.appendChild(meta);
           item.appendChild(applyBtn);
           dom.patchQueueEl.appendChild(item);
         });

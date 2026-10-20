@@ -27,13 +27,8 @@ import {
   removeHarvestedPatch,
   runPatchQueue,
 } from '../services/patchQueue';
-import {
-  HUD_STYLES,
-  HUD_SHADOW_STYLES,
-  createHudElement,
-  buildHudDomTree,
-  type HudDomElements
-} from './hudStylesAndDom';
+import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } from './hudStylesAndDom';
+import { buildHudDomTree } from './hudDomTree';
 
 export {
   HUD_STYLES,
@@ -147,12 +142,17 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     } else {
       state.harvestedPatches.forEach((patch) => {
         const item = createHudElement('div', 'hud-patch-item');
+        const meta = createHudElement('div', 'hud-patch-item-meta');
+        const paths = (patch.payload.patches || []).map((p) => p.path);
+        const pathLabel = paths.length > 0 ? paths.join(', ') : patch.commitMessage;
         const itemTitle = createHudElement(
           'div',
           'hud-patch-item-title',
-          `${patch.mode === 'v2_json' ? '⚡' : '📝'} ${patch.commitMessage}`
+          `${patch.mode === 'v2_json' ? '⚡' : '📝'} ${pathLabel}`
         );
-        itemTitle.title = patch.commitMessage;
+        itemTitle.title = pathLabel;
+        const itemSub = createHudElement('div', 'hud-patch-item-sub', patch.commitMessage);
+        itemSub.title = patch.commitMessage;
 
         const applyBtn = createHudElement('button', 'hud-btn hud-btn-primary', 'Apply');
         applyBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
@@ -161,7 +161,9 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
           controller.handleApplyPatch(patch);
         };
 
-        item.appendChild(itemTitle);
+        meta.appendChild(itemTitle);
+        meta.appendChild(itemSub);
+        item.appendChild(meta);
         item.appendChild(applyBtn);
         dom.patchQueueEl.appendChild(item);
       });

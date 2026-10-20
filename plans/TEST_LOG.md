@@ -331,3 +331,12 @@
 - Userscript-Build: `PASS`; dist/root byte-identisch (SHA256 `A0263B43…`, 65.405 Bytes).
 - Dateigrößen-Audit (Probe-Metrik `split('\n').length`): 28 Dateien, 0 ≥ 500, Maximum 495.
 - **GESAMTSTATUS**: `PASS`
+
+### [2026-10-20T22:33:54+02:00] | HUD Queue UX Fix (Disabled-Styling + Dateipfad-Anzeige)
+- `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+- `node scripts/patches_and_tests/test-harvest-dedupe.mjs`: `PASS` (`Harvest dedupe: PASS`).
+- `node scripts/patches_and_tests/run-regressions.mjs`: `PASS` (7/7 lokale Suiten).
+- `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; `packages/userscript-hud/dist/gemini-bridge.user.js` und Root `gemini-bridge.user.js` byte-identisch (SHA256 `1990F10358B7EEF70B0B334FD8D86959530D87B6D82B458C84617227CC5F378C`, 66.399 Bytes).
+- Dateigroessen-Audit (Probe-Metrik split(\n).length): 29 aktive TypeScript-Dateien, 0 >= 500 Zeilen.
+- `git diff --check`: `PASS` (Exit 0, nur CRLF-Hinweise).
+- **GESAMTSTATUS**: `PASS`
