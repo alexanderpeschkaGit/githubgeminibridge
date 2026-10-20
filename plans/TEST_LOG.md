@@ -350,3 +350,9 @@
 - Dateigrößen-Audit: 29 TS-Dateien, 0 ≥ 500 Zeilen.
 - `git diff --check`: `PASS` (nur CRLF-Hinweise).
 - **GESAMTSTATUS**: `PASS`
+### [2026-10-20T23:08:06+02:00] | Live-Deploy Worker v2.0.1 (Idempotenz-Fix)
+- `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (14/14) — Baseline `worker-baseline.json` refresh (29 Dateien, 0 ≥ 500, Bundle 66.872 B).
+- `npx wrangler deploy`: `PASS` — Version ID `d96125bb-b943-443d-85af-926a201ae64a`, 89.02 KiB / gzip 20.87 KiB, Startup 2 ms.
+- Live `GET /health`: `PASS` — `status: ok`, `version: 2.0.1`, `hasBridgeSecret: true`, `hasGithubToken: true`.
+- Bundle-Nachweis: `packages/edge-worker/dist/worker.mjs` enthält `block.replace.length > 0 && currentContent.includes(block.replace)` (Zeile 944).
+- **GESAMTSTATUS**: `PASS`

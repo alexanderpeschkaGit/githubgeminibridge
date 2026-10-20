@@ -12,6 +12,12 @@ function utf8ToBase64(str) {
 
 // packages/edge-worker/src/utils/github.ts
 var GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql";
+var BranchNotFoundError = class extends Error {
+  constructor(owner, repo, branch) {
+    super(`Branch "${branch}" was not found in repository "${owner}/${repo}".`);
+    this.name = "BranchNotFoundError";
+  }
+};
 function parseRepoOwner(repoInput, ownerInput) {
   if (ownerInput && repoInput && !repoInput.includes("/")) {
     return { owner: ownerInput.trim(), repo: repoInput.trim() };
@@ -51,18 +57,9 @@ async function getBranchHeadOid(owner, repo, branch, token) {
   const query = `
     query GetBranchHead($owner: String!, $repo: String!, $branch: String!) {
       repository(owner: $owner, name: $repo) {
-        ref(qualifiedName: $branch) {
-          name
-          target {
-            oid
-          }
-        }
-        defaultBranchRef {
-          name
-          target {
-            oid
-          }
-        }
+        id
+        ref(qualifiedName: $branch) { name target { oid } }
+        defaultBranchRef { name target { oid } }
       }
     }
   `;
@@ -72,18 +69,45 @@ async function getBranchHeadOid(owner, repo, branch, token) {
     throw new Error(`Repository "${owner}/${repo}" was not found or is not accessible with the provided token.`);
   }
   if (repository.ref?.target?.oid) {
-    return {
-      headOid: repository.ref.target.oid,
-      resolvedBranch: repository.ref.name
-    };
+    return { headOid: repository.ref.target.oid, resolvedBranch: repository.ref.name, repositoryId: repository.id };
   }
   if (!branch && repository.defaultBranchRef?.target?.oid) {
-    return {
-      headOid: repository.defaultBranchRef.target.oid,
-      resolvedBranch: repository.defaultBranchRef.name
-    };
+    return { headOid: repository.defaultBranchRef.target.oid, resolvedBranch: repository.defaultBranchRef.name, repositoryId: repository.id };
   }
-  throw new Error(`Branch "${branch}" (or "${qualifiedBranch}") not found in repository "${owner}/${repo}".`);
+  throw new BranchNotFoundError(owner, repo, branch || qualifiedBranch);
+}
+async function createBranchRef(owner, repo, branchName, oid, token, repositoryId) {
+  const cleanBranch = branchName.replace(/^refs\/heads\//, "");
+  const qualifiedName = `refs/heads/${cleanBranch}`;
+  if (repositoryId) {
+    const mutation = `
+      mutation CreateRef($input: CreateRefInput!) {
+        createRef(input: $input) { ref { name target { oid } } }
+      }
+    `;
+    try {
+      const data = await executeGraphQL(mutation, { input: { repositoryId, name: qualifiedName, oid } }, token);
+      const ref = data?.createRef?.ref;
+      if (ref?.name) return { refName: ref.name, oid: ref.target?.oid || oid };
+    } catch {
+    }
+  }
+  const restUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs`;
+  const res = await fetch(restUrl, {
+    method: "POST",
+    headers: {
+      "User-Agent": "Cloudflare-Worker-gemini-git-bridge",
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ ref: qualifiedName, sha: oid })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Failed to create branch "${cleanBranch}" on "${owner}/${repo}": HTTP ${res.status} - ${errText}`);
+  }
+  const json = await res.json();
+  return { refName: json.ref, oid: json.object?.sha || oid };
 }
 async function fetchFileContent(owner, repo, branch, path, token) {
   const expression = `${branch}:${path}`;
@@ -917,6 +941,9 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         try {
           currentContent = applySearchReplace(currentContent, block.search, block.replace, op.path);
         } catch (err) {
+          if (block.replace.length > 0 && currentContent.includes(block.replace)) {
+            continue;
+          }
           errors.push({
             file: op.path,
             stage: "SEARCH_REPLACE",
@@ -1077,35 +1104,88 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
       errorMessage: err.message || "Invalid repository format"
     };
   }
-  const requestedBranch = req.branch.trim();
-  let currentHeadOid = "";
-  let resolvedBranch = requestedBranch;
-  try {
-    const branchInfo = await getBranchHeadOid(owner, repo, requestedBranch, githubToken);
-    currentHeadOid = branchInfo.headOid;
-    resolvedBranch = branchInfo.resolvedBranch;
-  } catch (err) {
-    return {
-      status: "ERROR",
-      errorMessage: `Failed to resolve branch "${requestedBranch}": ${err.message}`
-    };
+  const baseBranch = req.branch.trim();
+  const effectiveTargetBranch = (req.targetBranch || req.branch).trim();
+  const normalizeBranch = (branch) => branch.replace(/^refs\/heads\//, "");
+  const isDistinctTarget = normalizeBranch(effectiveTargetBranch) !== normalizeBranch(baseBranch);
+  if (req.expectedTargetHeadOid !== void 0 && (typeof req.expectedTargetHeadOid !== "string" || !/^[0-9a-f]{40}$/i.test(req.expectedTargetHeadOid))) {
+    return { status: "ERROR", errorMessage: "expectedTargetHeadOid must be a 40-character Git commit OID." };
   }
-  if (currentHeadOid !== req.expectedHeadOid) {
+  let sourceInfo;
+  try {
+    sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
+  } catch (err) {
+    return { status: "ERROR", errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+  }
+  if (sourceInfo.headOid !== req.expectedHeadOid) {
     return {
       status: "GIT_CONFLICT",
-      newHeadOid: currentHeadOid,
-      errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${resolvedBranch}" is at "${currentHeadOid}". Fetch the latest repo-mix.xml and retry.`
+      newHeadOid: sourceInfo.headOid,
+      errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
     };
   }
+  let targetInfo = sourceInfo;
+  let createdBranch = false;
+  if (isDistinctTarget) {
+    try {
+      targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+    } catch (err) {
+      if (!(err instanceof BranchNotFoundError)) {
+        return { status: "ERROR", errorMessage: `Failed to resolve target branch "${effectiveTargetBranch}": ${err.message}` };
+      }
+      if (req.expectedTargetHeadOid) {
+        return {
+          status: "GIT_CONFLICT",
+          errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${req.expectedTargetHeadOid}".`
+        };
+      }
+      if (req.createBranchIfNeeded === false) {
+        return {
+          status: "ERROR",
+          errorMessage: `Target branch "${effectiveTargetBranch}" does not exist and createBranchIfNeeded is false.`
+        };
+      }
+      try {
+        await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
+        createdBranch = true;
+      } catch (createErr) {
+        try {
+          targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+        } catch (resolveErr) {
+          return {
+            status: "ERROR",
+            errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
+          };
+        }
+      }
+      if (createdBranch) {
+        try {
+          targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+        } catch (resolveErr) {
+          return {
+            status: "ERROR",
+            errorMessage: `Target branch "${effectiveTargetBranch}" was created but could not be resolved: ${resolveErr.message}`
+          };
+        }
+      }
+    }
+    if (req.expectedTargetHeadOid && targetInfo.headOid !== req.expectedTargetHeadOid) {
+      return {
+        status: "GIT_CONFLICT",
+        newHeadOid: targetInfo.headOid,
+        targetBranch: targetInfo.resolvedBranch,
+        errorMessage: `Expected target HEAD "${req.expectedTargetHeadOid}" but branch "${targetInfo.resolvedBranch}" is at "${targetInfo.headOid}".`
+      };
+    }
+  }
+  const commitBranch = targetInfo.resolvedBranch;
+  const commitExpectedHeadOid = targetInfo.headOid;
   const allTargetPaths = Array.from(new Set(req.payload.patches.map((p) => p.path)));
   let existingFiles = {};
   try {
-    existingFiles = await fetchMultipleFilesViaGraphQL(owner, repo, resolvedBranch, allTargetPaths, githubToken);
+    existingFiles = await fetchMultipleFilesViaGraphQL(owner, repo, commitExpectedHeadOid, allTargetPaths, githubToken);
   } catch (err) {
-    return {
-      status: "ERROR",
-      errorMessage: `Batch fetch failed for target files: ${err.message}`
-    };
+    return { status: "ERROR", errorMessage: `Batch fetch failed for target files: ${err.message}` };
   }
   const patchResult = await applyPatchesInMemory2(
     req.payload.patches,
@@ -1114,15 +1194,14 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
     preflightHook
   );
   if (patchResult.errors.length > 0) {
-    return {
-      status: "PREFLIGHT_FAILED",
-      errors: patchResult.errors
-    };
+    return { status: "PREFLIGHT_FAILED", errors: patchResult.errors };
   }
   if (!patchResult.hasEffectiveChanges) {
     return {
       status: "NO_CHANGES_NEEDED",
-      newHeadOid: currentHeadOid
+      newHeadOid: commitExpectedHeadOid,
+      targetBranch: commitBranch,
+      createdBranch
     };
   }
   const encodedAdditions = patchResult.additions.map((a) => ({
@@ -1133,34 +1212,36 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
     const commitResult = await createCommitOnBranch(
       owner,
       repo,
-      resolvedBranch,
-      req.expectedHeadOid,
+      commitBranch,
+      commitExpectedHeadOid,
       req.payload.commitMessage || "chore: apply patches via gemini-git-bridge",
       encodedAdditions,
       patchResult.deletions,
       githubToken
     );
+    const compareUrl = `https://github.com/${owner}/${repo}/compare/${sourceInfo.resolvedBranch}...${commitBranch}?expand=1`;
     return {
       status: "COMMITTED",
       newHeadOid: commitResult.oid,
-      commitUrl: commitResult.url
+      commitUrl: commitResult.url,
+      targetBranch: commitBranch,
+      createdBranch,
+      pullRequestUrl: isDistinctTarget ? compareUrl : void 0
     };
   } catch (err) {
     const errMsg = err.message || "";
-    if (errMsg.includes("expectedHeadOid") || errMsg.includes("conflict") || errMsg.includes("stale") || errMsg.includes("HEAD")) {
-      const latestHead = await getBranchHeadOid(owner, repo, resolvedBranch, githubToken).catch(() => ({
-        headOid: currentHeadOid
+    if (/expectedHeadOid|conflict|stale|HEAD/i.test(errMsg)) {
+      const latestHead = await getBranchHeadOid(owner, repo, commitBranch, githubToken).catch(() => ({
+        headOid: commitExpectedHeadOid
       }));
       return {
         status: "GIT_CONFLICT",
         newHeadOid: latestHead.headOid,
+        targetBranch: commitBranch,
         errorMessage: errMsg
       };
     }
-    return {
-      status: "ERROR",
-      errorMessage: `Commit execution failed: ${errMsg}`
-    };
+    return { status: "ERROR", errorMessage: `Commit execution failed: ${errMsg}` };
   }
 }
 async function resolveFileContent(fileInput, existingContentFetcher) {
@@ -1224,10 +1305,183 @@ function parseOctal(buffer, start, length) {
   const parsed = parseInt(raw, 8);
   return Number.isNaN(parsed) ? 0 : parsed;
 }
+function parseIgnoreLines(content) {
+  if (!content) return [];
+  return content.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0 && !line.startsWith("#"));
+}
+function matchesIgnorePattern(relPath, patterns) {
+  if (!relPath || !patterns || patterns.length === 0) return false;
+  const normalized = relPath.replace(/^\/+/, "");
+  const segments = normalized.split("/");
+  const fileName = segments[segments.length - 1];
+  for (const rawPattern of patterns) {
+    let pat = rawPattern.trim();
+    if (!pat || pat.startsWith("#")) continue;
+    const isDirOnly = pat.endsWith("/");
+    if (isDirOnly) {
+      pat = pat.slice(0, -1);
+    }
+    const isAnchored = pat.startsWith("/");
+    if (isAnchored) {
+      pat = pat.slice(1);
+    }
+    if (pat.includes("*") || pat.includes("?")) {
+      const regexStr = pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+      const regex = new RegExp(isAnchored ? `^${regexStr}$` : `(^|/)${regexStr}$`);
+      if (regex.test(normalized) || !pat.includes("/") && regex.test(fileName)) {
+        return true;
+      }
+      continue;
+    }
+    if (isDirOnly) {
+      if (isAnchored) {
+        if (normalized === pat || normalized.startsWith(pat + "/")) return true;
+      } else {
+        if (segments.includes(pat) || normalized.startsWith(pat + "/") || normalized.includes("/" + pat + "/")) {
+          return true;
+        }
+      }
+      continue;
+    }
+    if (isAnchored) {
+      if (normalized === pat || normalized.startsWith(pat + "/")) return true;
+    } else {
+      if (fileName === pat || normalized === pat || normalized.startsWith(pat + "/") || segments.includes(pat)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+var DEFAULT_IGNORED_DIR_NAMES = /* @__PURE__ */ new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  ".wrangler",
+  ".turbo",
+  ".next",
+  "coverage",
+  "_v1_backup",
+  "backup_unused",
+  ".venv",
+  "venv",
+  "env",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".ipynb_checkpoints"
+]);
+var DEFAULT_IGNORED_FILES = /* @__PURE__ */ new Set([
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "bun.lockb"
+]);
+var DEFAULT_IGNORED_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".avif",
+  ".ico",
+  ".svg",
+  ".mp4",
+  ".webm",
+  ".mov",
+  ".mp3",
+  ".wav",
+  ".ogg",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".eot",
+  ".pdf",
+  ".zip",
+  ".tar",
+  ".gz",
+  ".7z",
+  ".wasm",
+  ".exe",
+  ".dll",
+  ".so",
+  ".dylib",
+  ".pyc"
+]);
 
 // packages/edge-worker/src/modules/mixChunker.ts
+var DEFAULT_MAX_CHUNK_CHARS = 85e3;
+var HARD_GEMINI_CHAR_LIMIT = 1e5;
+var MAX_GEMINI_PARTS = 10;
 var DEFAULT_MAX_CHUNK_BYTES = 512 * 1024;
 var DEFAULT_MAX_CHUNK_TOKENS = 125e3;
+var MAX_RECENT_COMMITS_CHARS = 8e3;
+var RECENT_COMMITS_TRUNCATION_MARKER = "... [recent_commits truncated to preserve character budget]";
+function capRecentCommitsText(text, maxChars = MAX_RECENT_COMMITS_CHARS) {
+  if (!text || text.trim().length === 0) return "";
+  const limit = Math.max(0, Math.floor(maxChars));
+  if (text.length <= limit) return text;
+  const sliceBudget = limit - RECENT_COMMITS_TRUNCATION_MARKER.length - 1;
+  if (sliceBudget <= 0) return RECENT_COMMITS_TRUNCATION_MARKER.slice(0, limit);
+  const head = text.slice(0, sliceBudget);
+  const lastNewline = head.lastIndexOf("\n");
+  const kept = lastNewline > 0 ? head.slice(0, lastNewline) : head;
+  return `${kept}
+${RECENT_COMMITS_TRUNCATION_MARKER}`;
+}
+var DEFAULT_MIX_INSTRUCTIONS = [
+  "<instructions>",
+  "# REPOSITORY CONTEXT AND PROTOCOL",
+  "1. CONTEXT: The files below represent the authoritative codebase snapshot at commit headOid.",
+  "2. MULTI-PART: If split across parts, all parts form the complete repository (Part 1 contains the master file_tree).",
+  "3. READ-ONLY TASKS: If the user asks questions, explains logic, or reviews code: Answer naturally in the requested language. Do NOT emit patches.",
+  "4. MODIFICATION TASKS: If and only if the user explicitly requests code changes, bugfixes, or new files:",
+  "   - Never rewrite whole existing files.",
+  '   - Never use placeholders (e.g. "// ... existing code ...", "/* rest unchanged */").',
+  "   - Search snippets must match existing code verbatim (including whitespace/indentation).",
+  "   - Prefer the V2 GeminiPatchPayload JSON format below. It is a payload only; worker request fields are supplied separately.",
+  "     ```json",
+  "     {",
+  '       "commitMessage": "feat: describe the change",',
+  '       "patches": [',
+  '         { "path": "src/example.ts", "action": "modify", "blocks": [{ "search": "export const oldValue = 1;", "replace": "export const newValue = 2;" }] },',
+  '         { "path": "src/new-file.ts", "action": "create", "fullContent": "export const helper = () => true;\\n" },',
+  '         { "path": "src/obsolete.ts", "action": "delete" }',
+  "       ]",
+  "     }",
+  "     ```",
+  "   - For V2 modify operations, use blocks with exact search and replace strings; create operations use fullContent; delete operations need no content fields.",
+  "   - Keep the classic V1 Search/Replace block format as a separate fallback, not as a V2 JSON variant. Include its // filepath: path header and the established SEARCH, separator, and REPLACE markers.",
+  "</instructions>"
+].join("\n");
+var CONTINUATION_MIX_INSTRUCTIONS = (partNum, totalParts) => `<instructions>
+# Part ${partNum}/${totalParts} Continuation: Refer to Part 1 for master file_tree and modification protocol.
+</instructions>`;
+function formatFileXml(f) {
+  return `  <file path="${f.path}"><![CDATA[${escapeCdata(f.content)}]]></file>`;
+}
+function buildPartXml(params) {
+  const repoAttr = params.partNum !== void 0 && params.totalParts !== void 0 ? `<repository repo="${params.owner}/${params.repo}" branch="${params.branch}" headOid="${params.headOid}" part="${params.partNum}" totalParts="${params.totalParts}">` : `<repository repo="${params.owner}/${params.repo}" branch="${params.branch}" headOid="${params.headOid}">`;
+  const sections = [repoAttr];
+  if (params.instructionsText) {
+    sections.push(params.instructionsText);
+  }
+  if (params.recentCommitsText) {
+    sections.push(params.recentCommitsText);
+  }
+  sections.push(
+    "<file_tree>",
+    params.treeText,
+    "</file_tree>",
+    "<files>",
+    ...params.fileXmlList,
+    "</files>",
+    "</repository>"
+  );
+  return sections.join("\n");
+}
 function buildChunkedMixXml(input) {
   const {
     owner,
@@ -1236,92 +1490,362 @@ function buildChunkedMixXml(input) {
     headOid,
     fileTreeEntries,
     files,
+    maxChunkChars = DEFAULT_MAX_CHUNK_CHARS,
     maxChunkBytes = DEFAULT_MAX_CHUNK_BYTES,
     maxChunkTokens = DEFAULT_MAX_CHUNK_TOKENS,
     splitOutput
   } = input;
-  const sortedTree = [...fileTreeEntries].sort();
-  const fileTreeXml = sortedTree.join("\n");
-  let totalRawSize = fileTreeXml.length + 200;
+  const effectiveMaxChars = Math.min(
+    maxChunkChars,
+    maxChunkBytes,
+    maxChunkTokens * 4,
+    HARD_GEMINI_CHAR_LIMIT
+  );
+  const treeEntries = [...fileTreeEntries];
+  const validFiles = [];
   for (const f of files) {
-    totalRawSize += f.path.length + f.content.length + 60;
+    const fileXml = formatFileXml(f);
+    const standaloneXml = buildPartXml({
+      owner,
+      repo,
+      branch,
+      headOid,
+      partNum: 1,
+      totalParts: 1,
+      instructionsText: DEFAULT_MIX_INSTRUCTIONS,
+      treeText: f.path,
+      fileXmlList: [fileXml]
+    });
+    if (standaloneXml.length > HARD_GEMINI_CHAR_LIMIT) {
+      const idx = treeEntries.indexOf(f.path);
+      const skippedAnnotation = `${f.path} [SKIPPED: >100k chars for Gemini Chat limit]`;
+      if (idx !== -1) {
+        treeEntries[idx] = skippedAnnotation;
+      } else {
+        treeEntries.push(skippedAnnotation);
+      }
+    } else {
+      validFiles.push({ path: f.path, content: f.content, fileXml });
+    }
   }
-  const totalEstimatedTokens = Math.ceil(totalRawSize / 4);
-  const shouldSplit = splitOutput === true || splitOutput !== false && files.length > 1 && (totalRawSize > maxChunkBytes || totalEstimatedTokens > maxChunkTokens);
-  if (!shouldSplit || files.length <= 1) {
-    const filesXml = files.map((f) => `  <file path="${f.path}"><![CDATA[${escapeCdata(f.content)}]]></file>`).join("\n");
-    const singleXml = [
-      `<repository repo="${owner}/${repo}" branch="${branch}" headOid="${headOid}">`,
-      `<file_tree>`,
-      fileTreeXml,
-      `</file_tree>`,
-      `<files>`,
-      filesXml,
-      `</files>`,
-      `</repository>`
-    ].join("\n");
+  const maxTreeChars = Math.min(Math.floor(effectiveMaxChars * 0.45), 14e3);
+  let fullTreeXml = [...treeEntries].sort().join("\n");
+  if (fullTreeXml.length > maxTreeChars) {
+    const truncated = fullTreeXml.slice(0, maxTreeChars);
+    const lastNewline = truncated.lastIndexOf("\n");
+    fullTreeXml = (lastNewline !== -1 ? truncated.slice(0, lastNewline) : truncated) + "\n... [file_tree truncated to preserve character budget]";
+  }
+  const part1OverheadGuess = fullTreeXml.length + DEFAULT_MIX_INSTRUCTIONS.length + 512;
+  const metadataBudget = Math.max(
+    0,
+    Math.min(MAX_RECENT_COMMITS_CHARS, effectiveMaxChars - part1OverheadGuess)
+  );
+  const cappedRecentCommitsText = capRecentCommitsText(input.recentCommitsText, metadataBudget);
+  function fitPart(params) {
+    const build = (treeText2, metadata2, entries2) => buildPartXml({
+      owner,
+      repo,
+      branch,
+      headOid,
+      partNum: params.partNum,
+      totalParts: params.totalParts,
+      instructionsText: params.instructionsText,
+      recentCommitsText: metadata2 || void 0,
+      treeText: treeText2,
+      fileXmlList: entries2.map((e) => e.fileXml)
+    });
+    let metadata = params.metadata;
+    let entries = params.fileEntries;
+    let treeText = params.treeText;
+    const skippedPaths = [];
+    let xml = build(treeText, metadata, entries);
+    if (xml.length <= HARD_GEMINI_CHAR_LIMIT) {
+      return { xml, entries, metadata, skippedPaths };
+    }
+    if (metadata) {
+      const overflow = xml.length - HARD_GEMINI_CHAR_LIMIT;
+      metadata = capRecentCommitsText(params.metadata, Math.max(0, params.metadata.length - overflow - 1));
+      xml = build(treeText, metadata, entries);
+      if (xml.length <= HARD_GEMINI_CHAR_LIMIT) {
+        return { xml, entries, metadata, skippedPaths };
+      }
+      metadata = "";
+      xml = build(treeText, metadata, entries);
+      if (xml.length <= HARD_GEMINI_CHAR_LIMIT) {
+        return { xml, entries, metadata, skippedPaths };
+      }
+    }
+    while (entries.length > 0 && xml.length > HARD_GEMINI_CHAR_LIMIT) {
+      skippedPaths.push(entries[entries.length - 1].path);
+      entries = entries.slice(0, -1);
+      const annotations = skippedPaths.map((p) => `${p} [SKIPPED: exceeds 100k part limit]`);
+      treeText = `${params.treeText}
+${annotations.join("\n")}`;
+      xml = build(treeText, metadata, entries);
+    }
+    return { xml, entries, metadata, skippedPaths };
+  }
+  const singleRawXml = buildPartXml({
+    owner,
+    repo,
+    branch,
+    headOid,
+    instructionsText: DEFAULT_MIX_INSTRUCTIONS,
+    recentCommitsText: cappedRecentCommitsText || void 0,
+    treeText: fullTreeXml,
+    fileXmlList: validFiles.map((f) => f.fileXml)
+  });
+  const single = fitPart({
+    instructionsText: DEFAULT_MIX_INSTRUCTIONS,
+    metadata: cappedRecentCommitsText,
+    treeText: fullTreeXml,
+    fileEntries: validFiles
+  });
+  const shouldSplit = splitOutput === true || single.skippedPaths.length > 0 || splitOutput !== false && validFiles.length > 1 && singleRawXml.length > effectiveMaxChars;
+  if (!shouldSplit) {
     return {
-      xmlContent: singleXml,
+      xmlContent: single.xml,
       isChunked: false,
       stats: {
-        fileCount: files.length,
-        estimatedTokens: Math.ceil(singleXml.length / 4)
+        fileCount: single.entries.length,
+        estimatedTokens: Math.ceil(single.xml.length / 4),
+        charCount: single.xml.length
       }
     };
   }
-  const chunkBuckets = [];
-  let currentBucket = [];
-  let currentBucketBytes = fileTreeXml.length + 300;
-  for (const f of files) {
-    const fileXmlSize = f.path.length + f.content.length + 60;
-    const estimatedFileTokens = Math.ceil(fileXmlSize / 4);
-    if (currentBucket.length > 0 && (currentBucketBytes + fileXmlSize > maxChunkBytes || Math.ceil((currentBucketBytes + fileXmlSize) / 4) > maxChunkTokens)) {
-      chunkBuckets.push(currentBucket);
-      currentBucket = [];
-      currentBucketBytes = fileTreeXml.length + 300;
+  function partitionFiles(budgetChars) {
+    const buckets = [];
+    let currentBucket = [];
+    const partBudget = Math.min(budgetChars, HARD_GEMINI_CHAR_LIMIT);
+    const part1BaseOverhead = fullTreeXml.length + 220 + DEFAULT_MIX_INSTRUCTIONS.length + (cappedRecentCommitsText ? cappedRecentCommitsText.length + 1 : 0);
+    let currentBucketChars = part1BaseOverhead;
+    for (let i = 0; i < validFiles.length; i++) {
+      const f = validFiles[i];
+      const isPart1 = buckets.length === 0;
+      const fileAdditionChars = isPart1 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1;
+      if (currentBucket.length > 0) {
+        if (currentBucketChars + fileAdditionChars > partBudget) {
+          buckets.push(currentBucket);
+          currentBucket = [];
+          currentBucketChars = 260 + CONTINUATION_MIX_INSTRUCTIONS(2, 2).length;
+        }
+      } else if (isPart1) {
+        if (currentBucketChars + fileAdditionChars > partBudget) {
+          buckets.push([]);
+          currentBucket = [];
+          currentBucketChars = 260 + CONTINUATION_MIX_INSTRUCTIONS(2, 2).length;
+        }
+      }
+      currentBucket.push(f);
+      currentBucketChars += buckets.length === 0 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1;
     }
-    currentBucket.push(f);
-    currentBucketBytes += fileXmlSize;
+    if (currentBucket.length > 0) {
+      buckets.push(currentBucket);
+    }
+    return buckets;
   }
-  if (currentBucket.length > 0) {
-    chunkBuckets.push(currentBucket);
+  let dynamicMaxChars = effectiveMaxChars;
+  let chunkBuckets = partitionFiles(dynamicMaxChars);
+  if (chunkBuckets.length > MAX_GEMINI_PARTS) {
+    const totalRawChars = validFiles.reduce((acc, f) => acc + f.fileXml.length, 0) + fullTreeXml.length + cappedRecentCommitsText.length;
+    dynamicMaxChars = Math.min(
+      HARD_GEMINI_CHAR_LIMIT,
+      Math.max(dynamicMaxChars, Math.ceil(totalRawChars / (MAX_GEMINI_PARTS - 1)))
+    );
+    chunkBuckets = partitionFiles(dynamicMaxChars);
+    while (chunkBuckets.length > MAX_GEMINI_PARTS) {
+      let minCombinedSize = Infinity;
+      let minIndex = 0;
+      for (let j = 0; j < chunkBuckets.length - 1; j++) {
+        const combined = chunkBuckets[j].length + chunkBuckets[j + 1].length;
+        if (combined < minCombinedSize) {
+          minCombinedSize = combined;
+          minIndex = j;
+        }
+      }
+      chunkBuckets[minIndex] = [...chunkBuckets[minIndex], ...chunkBuckets[minIndex + 1]];
+      chunkBuckets.splice(minIndex + 1, 1);
+    }
   }
   const totalParts = chunkBuckets.length;
   const parts = [];
+  let totalChars = 0;
+  let emittedFileCount = 0;
   for (let i = 0; i < totalParts; i++) {
     const bucket = chunkBuckets[i];
     const partNum = i + 1;
-    const filesXml = bucket.map((f) => `  <file path="${f.path}"><![CDATA[${escapeCdata(f.content)}]]></file>`).join("\n");
-    const partXml = [
-      `<repository repo="${owner}/${repo}" branch="${branch}" headOid="${headOid}" part="${partNum}" totalParts="${totalParts}">`,
-      `<file_tree>`,
-      fileTreeXml,
-      `</file_tree>`,
-      `<files>`,
-      filesXml,
-      `</files>`,
-      `</repository>`
-    ].join("\n");
+    const partTreeText = i === 0 ? fullTreeXml : `# Part ${partNum}/${totalParts} files (${bucket.length} files):
+${bucket.map((b) => b.path).join("\n")}`;
+    const partInstructions = partNum === 1 ? DEFAULT_MIX_INSTRUCTIONS : CONTINUATION_MIX_INSTRUCTIONS(partNum, totalParts);
+    const fitted = fitPart({
+      partNum,
+      totalParts,
+      instructionsText: partInstructions,
+      metadata: partNum === 1 ? cappedRecentCommitsText : "",
+      treeText: partTreeText,
+      fileEntries: bucket
+    });
+    const partXml = fitted.xml;
+    totalChars += partXml.length;
+    emittedFileCount += fitted.entries.length;
     parts.push({
       partIndex: partNum,
       totalParts,
-      fileName: `repo-mix.part${partNum}.xml`,
+      fileName: totalParts === 1 ? "repo-mix.txt" : `repo-mix.part${partNum}.txt`,
       xmlContent: partXml,
       stats: {
-        fileCount: bucket.length,
-        estimatedTokens: Math.ceil(partXml.length / 4)
+        fileCount: fitted.entries.length,
+        estimatedTokens: Math.ceil(partXml.length / 4),
+        charCount: partXml.length
       }
     });
   }
   return {
-    xmlContent: parts[0].xmlContent,
+    xmlContent: parts[0]?.xmlContent ?? single.xml,
     parts,
     isChunked: true,
     stats: {
-      fileCount: files.length,
-      estimatedTokens: totalEstimatedTokens
+      fileCount: emittedFileCount,
+      estimatedTokens: Math.ceil(totalChars / 4),
+      charCount: totalChars
     }
   };
+}
+
+// packages/edge-worker/src/modules/recentCommits.ts
+function escapeXml(str) {
+  if (!str) return "";
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+function formatRecentCommitsXml(commits, volatileFiles) {
+  if (!commits || commits.length === 0) {
+    return "";
+  }
+  const sections = ["<recent_commits>"];
+  for (const c of commits) {
+    const authorAttr = escapeXml(c.author);
+    const dateAttr = escapeXml(c.date);
+    const hashAttr = escapeXml(c.hash);
+    const titleText = escapeXml(c.title);
+    sections.push(`  <commit hash="${hashAttr}" date="${dateAttr}" author="${authorAttr}">`);
+    sections.push(`    <title>${titleText}</title>`);
+    if (c.files.length > 0) {
+      sections.push("    <files>");
+      for (const f of c.files) {
+        sections.push(`      <file path="${escapeXml(f.path)}" status="${escapeXml(f.status)}" />`);
+      }
+      sections.push("    </files>");
+    }
+    sections.push("  </commit>");
+  }
+  sections.push("</recent_commits>");
+  if (volatileFiles && volatileFiles.length > 0) {
+    sections.push("<volatile_files>");
+    for (const v of volatileFiles) {
+      sections.push(
+        `  <file path="${escapeXml(v.path)}" touchCount="${v.touchCount}" latestStatus="${escapeXml(v.latestStatus)}" />`
+      );
+    }
+    sections.push("</volatile_files>");
+  }
+  return sections.join("\n");
+}
+async function fetchRecentCommitsAndVolatileFiles(owner, repo, branch, token, count = 3) {
+  const safeCount = Math.min(5, Math.max(1, count));
+  const fallback = { commits: [], volatileFiles: [], xmlContent: "" };
+  try {
+    const listUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(branch)}&per_page=${safeCount}`;
+    const listRes = await fetch(listUrl, {
+      headers: {
+        "User-Agent": "Cloudflare-Worker-gemini-git-bridge",
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/vnd.github.v3+json"
+      }
+    });
+    if (!listRes.ok) {
+      return fallback;
+    }
+    const listData = await listRes.json();
+    if (!Array.isArray(listData) || listData.length === 0) {
+      return fallback;
+    }
+    const detailPromises = listData.slice(0, safeCount).map(async (c) => {
+      const sha = c.sha || "";
+      const rawMsg = c.commit?.message || "";
+      const title = rawMsg.split("\n")[0] || "";
+      const author = c.commit?.author?.name || c.author?.login || "unknown";
+      const date = c.commit?.author?.date || c.commit?.committer?.date || "";
+      try {
+        const detailUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(sha)}`;
+        const detailRes = await fetch(detailUrl, {
+          headers: {
+            "User-Agent": "Cloudflare-Worker-gemini-git-bridge",
+            "Authorization": `Bearer ${token}`,
+            "Accept": "application/vnd.github.v3+json"
+          }
+        });
+        if (detailRes.ok) {
+          const detailData = await detailRes.json();
+          const detailMsg = detailData.commit?.message || rawMsg;
+          const detailTitle = detailMsg.split("\n")[0] || title;
+          const detailAuthor = detailData.commit?.author?.name || detailData.author?.login || author;
+          const detailDate = detailData.commit?.author?.date || detailData.commit?.committer?.date || date;
+          const files = Array.isArray(detailData.files) ? detailData.files.map((f) => ({
+            path: String(f.filename || ""),
+            status: String(f.status || "modified")
+          })).filter((f) => f.path.length > 0) : [];
+          return {
+            hash: sha,
+            date: detailDate,
+            author: detailAuthor,
+            title: detailTitle,
+            files
+          };
+        }
+      } catch {
+      }
+      return {
+        hash: sha,
+        date,
+        author,
+        title,
+        files: []
+      };
+    });
+    const commits = await Promise.all(detailPromises);
+    const fileMap = /* @__PURE__ */ new Map();
+    for (let cIdx = 0; cIdx < commits.length; cIdx++) {
+      const commit = commits[cIdx];
+      for (const f of commit.files) {
+        if (!f.path) continue;
+        const existing = fileMap.get(f.path);
+        if (!existing) {
+          fileMap.set(f.path, {
+            path: f.path,
+            touchCount: 1,
+            latestStatus: f.status,
+            latestCommitIndex: cIdx
+          });
+        } else {
+          existing.touchCount++;
+        }
+      }
+    }
+    const volatileFiles = Array.from(fileMap.values()).sort((a, b) => {
+      if (b.touchCount !== a.touchCount) {
+        return b.touchCount - a.touchCount;
+      }
+      return a.latestCommitIndex - b.latestCommitIndex;
+    }).map(({ path, touchCount, latestStatus }) => ({ path, touchCount, latestStatus }));
+    const xmlContent = formatRecentCommitsXml(commits, volatileFiles);
+    return {
+      commits,
+      volatileFiles,
+      xmlContent
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 // packages/edge-worker/src/modules/mixer.ts
@@ -1338,73 +1862,26 @@ function shouldSkipTarEntry(relPath, size, typeflag, includePaths) {
   }
   const segments = normalized.split("/");
   const filename = segments[segments.length - 1];
-  const ignoredDirNames = /* @__PURE__ */ new Set([
-    ".git",
-    "node_modules",
-    "dist",
-    "build",
-    ".wrangler",
-    ".turbo",
-    ".next",
-    "coverage",
-    "_v1_backup",
-    "backup_unused"
-  ]);
   for (let i = 0; i < segments.length - 1; i++) {
     const seg = segments[i];
-    if (ignoredDirNames.has(seg) || seg.startsWith("repomix_")) {
+    if (DEFAULT_IGNORED_DIR_NAMES.has(seg) || seg.startsWith("repomix_")) {
       return { skip: true, reason: "IGNORED_PATH" };
     }
   }
-  const ignoredFiles = /* @__PURE__ */ new Set([
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-    "bun.lockb"
-  ]);
-  if (ignoredFiles.has(filename) || filename.endsWith(".bundle") || filename.startsWith("repomix-output") || /.*-bundle.*\.txt$/i.test(filename)) {
+  if (DEFAULT_IGNORED_FILES.has(filename) || filename.endsWith(".bundle") || filename.startsWith("repomix-output") || /.*-bundle.*\.txt$/i.test(filename)) {
     return { skip: true, reason: "IGNORED_PATH" };
   }
-  const ignoredExtensions = /* @__PURE__ */ new Set([
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".webp",
-    ".avif",
-    ".ico",
-    ".svg",
-    ".mp4",
-    ".webm",
-    ".mov",
-    ".mp3",
-    ".wav",
-    ".ogg",
-    ".woff",
-    ".woff2",
-    ".ttf",
-    ".eot",
-    ".pdf",
-    ".zip",
-    ".tar",
-    ".gz",
-    ".7z",
-    ".wasm",
-    ".exe",
-    ".dll",
-    ".so",
-    ".dylib",
-    ".pyc"
-  ]);
   const extMatch = filename.match(/\.[a-zA-Z0-9]+$/);
-  if (extMatch && ignoredExtensions.has(extMatch[0].toLowerCase())) {
+  if (extMatch && DEFAULT_IGNORED_EXTENSIONS.has(extMatch[0].toLowerCase())) {
     return { skip: true, reason: "IGNORED_PATH" };
   }
   if (includePaths && includePaths.length > 0) {
-    const normalizedIncludes = includePaths.map((p) => p.replace(/^\.?\/+/, ""));
-    const isIncluded = normalizedIncludes.some((prefix) => normalized.startsWith(prefix));
-    if (!isIncluded) {
-      return { skip: true, reason: "NOT_INCLUDED" };
+    if (normalized !== ".repomixignore.cf" && normalized !== ".repomixignore") {
+      const normalizedIncludes = includePaths.map((p) => p.replace(/^\.?\/+/, ""));
+      const isIncluded = normalizedIncludes.some((prefix) => normalized.startsWith(prefix));
+      if (!isIncluded) {
+        return { skip: true, reason: "NOT_INCLUDED" };
+      }
     }
   }
   if (size > 524288) {
@@ -1413,15 +1890,8 @@ function shouldSkipTarEntry(relPath, size, typeflag, includePaths) {
   return { skip: false };
 }
 function extractHeadOidFromPaxHeader(paxText) {
-  const match = paxText.match(/(?:^|\n)(?:\d+\s+)?comment=([0-9a-fA-F]{40})(?:\r?\n|$)/);
-  if (match) {
-    return match[1].toLowerCase();
-  }
-  const directMatch = paxText.match(/\b([0-9a-fA-F]{40})\b/);
-  if (directMatch) {
-    return directMatch[1].toLowerCase();
-  }
-  return null;
+  const match = paxText.match(/(?:^|\n)(?:\d+\s+)?comment=([0-9a-fA-F]{40})(?:\r?\n|$)/) || paxText.match(/\b([0-9a-fA-F]{40})\b/);
+  return match ? match[1].toLowerCase() : null;
 }
 async function handleMixRequest(req, githubToken) {
   let owner = "";
@@ -1476,6 +1946,7 @@ async function handleMixRequest(req, githubToken) {
   let nextPaxPath = null;
   const fileTreeEntries = [];
   const files = [];
+  const dynamicIgnorePatterns = [];
   const textDecoder = new TextDecoder();
   async function ensureBytes(count) {
     while (buffer.length < count) {
@@ -1580,6 +2051,10 @@ async function handleMixRequest(req, githubToken) {
         await discardBytes(paddedSize);
         continue;
       }
+      if (dynamicIgnorePatterns.length > 0 && relPath !== ".repomixignore.cf" && relPath !== ".repomixignore" && matchesIgnorePattern(relPath, dynamicIgnorePatterns)) {
+        await discardBytes(paddedSize);
+        continue;
+      }
       const filterDecision = shouldSkipTarEntry(relPath, size, typeflag, req.includePaths);
       if (filterDecision.skip) {
         if (filterDecision.reason === "OVERSIZED") {
@@ -1593,6 +2068,26 @@ async function handleMixRequest(req, githubToken) {
       buffer = buffer.subarray(paddedSize);
       const content = textDecoder.decode(fileBytes);
       if (content.includes("\0")) {
+        continue;
+      }
+      if (relPath === ".repomixignore.cf" || relPath === ".repomixignore") {
+        const newPatterns = parseIgnoreLines(content);
+        if (newPatterns.length > 0) {
+          dynamicIgnorePatterns.push(...newPatterns);
+          for (let i = files.length - 1; i >= 0; i--) {
+            if (matchesIgnorePattern(files[i].path, dynamicIgnorePatterns)) {
+              files.splice(i, 1);
+            }
+          }
+          for (let i = fileTreeEntries.length - 1; i >= 0; i--) {
+            const entryPath = fileTreeEntries[i].replace(/\s+\[SKIPPED:.*\]$/, "");
+            if (matchesIgnorePattern(entryPath, dynamicIgnorePatterns)) {
+              fileTreeEntries.splice(i, 1);
+            }
+          }
+        }
+      }
+      if (dynamicIgnorePatterns.length > 0 && matchesIgnorePattern(relPath, dynamicIgnorePatterns)) {
         continue;
       }
       fileTreeEntries.push(relPath);
@@ -1626,6 +2121,24 @@ async function handleMixRequest(req, githubToken) {
       };
     }
   }
+  let recentCommitsText = "";
+  let recentCommitsCount = 0;
+  let volatileFilesCount = 0;
+  if (req.includeRecentCommits === true) {
+    try {
+      const commitsResult = await fetchRecentCommitsAndVolatileFiles(
+        owner,
+        repo,
+        resolvedBranch,
+        githubToken,
+        req.recentCommitsCount || 3
+      );
+      recentCommitsText = commitsResult.xmlContent;
+      recentCommitsCount = commitsResult.commits.length;
+      volatileFilesCount = commitsResult.volatileFiles.length;
+    } catch {
+    }
+  }
   const mixResult = buildChunkedMixXml({
     owner,
     repo,
@@ -1633,6 +2146,8 @@ async function handleMixRequest(req, githubToken) {
     headOid,
     fileTreeEntries,
     files,
+    recentCommitsText,
+    maxChunkChars: req.maxChunkChars,
     maxChunkBytes: req.maxChunkBytes,
     maxChunkTokens: req.maxChunkTokens,
     splitOutput: req.splitOutput
@@ -1658,7 +2173,10 @@ async function handleMixRequest(req, githubToken) {
         xmlContent: mixResult.xmlContent,
         parts: mixResult.parts,
         isChunked: mixResult.isChunked,
-        stats: mixResult.stats,
+        stats: {
+          ...mixResult.stats,
+          ...recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {}
+        },
         errorMessage: `Failed to persist repo-mix.xml snapshot to GitHub: ${err.message}`
       };
     }
@@ -1669,7 +2187,10 @@ async function handleMixRequest(req, githubToken) {
     xmlContent: mixResult.xmlContent,
     parts: mixResult.parts,
     isChunked: mixResult.isChunked,
-    stats: mixResult.stats,
+    stats: {
+      ...mixResult.stats,
+      ...recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {}
+    },
     ...persistedCommitOid ? { persistedCommitOid } : {}
   };
 }
@@ -1944,7 +2465,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "2.0.0",
+        version: "2.0.1",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))

@@ -613,3 +613,13 @@
   5. Docs synchronisiert: `edge-worker-architecture.md`, `userscript-shadow-hud.md`.
 - **Validierung:** `tsc --noEmit` edge-worker & HUD `PASS`; `test-local-cli.mjs` 24/24 `PASS`; `run-regressions.mjs` 7/7 `PASS`; Userscript-Build `PASS`, dist/root byte-identisch (SHA256 `C96F91BE…`, 66.872 B); Dateigrößen-Audit 29 Dateien / 0 ≥ 500; `git diff --check` `PASS` (nur CRLF-Hinweise).
 - **Overall:** `PASS`; kein `git push`, kein `wrangler deploy` (Worker-Idempotenz greift live erst nach expliziter Deploy-Freigabe).
+### [2026-10-20T23:08:03+02:00] | Live-Deploy: Worker-Idempotenz-Fix v2.0.1
+- **Status:** `DONE`
+- **Freigabe:** Explizites User-Kommando `deploy` (Hard Stop eingehalten).
+- **Ablauf:**
+  1. `node scripts/patches_and_tests/worker-smoke.mjs` → `PASS` (14/14 Probes, inkl. Live-`/health`), Baseline-Datei aktualisiert (29 TS-Dateien, 0 ≥ 500 Zeilen).
+  2. `npx wrangler deploy` in `packages/edge-worker` → `Uploaded gemini-git-bridge (6.15 sec)`, `Deployed gemini-git-bridge triggers (2.13 sec)`, Upload 89.02 KiB / gzip 20.87 KiB, Startup 2 ms. **Version ID: `d96125bb-b943-443d-85af-926a201ae64a`**.
+  3. Live-`/health`-Probe: `PASS` — `{"status":"ok","service":"gemini-git-bridge","version":"2.0.1","hasBridgeSecret":true,"hasGithubToken":true}`.
+  4. Bundle-Verifikation: `node packages/edge-worker/scripts/build-worker.mjs` → Fix `block.replace.length > 0 && currentContent.includes(block.replace)` in `dist/worker.mjs` Zeile 944 nachgewiesen.
+- **Validierung:** Worker-Smoke 14/14 `PASS`; `/health` `PASS`; Bundle enthält den Idempotenz-Fix.
+- **Overall:** `PASS`. Kein authentifizierter `/api/patch`-Livetest möglich (kein `.dev.vars`/`.env` im Repo); Verhalten ist über den Local-CLI-Test `24/24` und den Bundle-Nachweis abgedeckt.
