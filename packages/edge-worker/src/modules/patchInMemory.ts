@@ -212,7 +212,7 @@ export async function applyPatchesInMemory(
         errors.push({
           file: op.path,
           stage: 'SEARCH_REPLACE',
-          message: 'Target file does not exist on branch'
+          message: 'Target file does not exist at the patch base revision. Verify the path is repo-relative (no leading "/", "./" or backslashes) or use action "create" for a new file.'
         });
         continue;
       }

@@ -8,6 +8,7 @@ import type {
   WorkerPatchResponse
 } from '../types';
 import { utf8ToBase64 } from '../utils/encoding';
+import { normalizeRepoPath, findRepoPathIssue } from '../../../../shared/repoPaths';
 import {
   parseRepoOwner,
   BranchNotFoundError,
@@ -224,6 +225,29 @@ export async function handlePatchRequest(
     };
   }
 
+  // LLM-supplied paths routinely carry "./", a leading "/" or Windows separators.
+  // GitHub resolves `<oid>:<path>` strictly, so every non-canonical variant reads as
+  // "file does not exist". Normalize once here so blob lookup, in-memory patch and
+  // commit mutation all address the exact same repo-relative path. Validation runs
+  // before any branch is created, so an invalid payload never leaves a new branch.
+  const patches: FilePatchOperation[] = [];
+  const pathErrors: LinterError[] = [];
+  for (const patch of req.payload.patches) {
+    const issue = findRepoPathIssue(patch.path);
+    if (issue) {
+      pathErrors.push({
+        file: patch.path || '(missing path)',
+        stage: 'SEARCH_REPLACE',
+        message: issue
+      });
+      continue;
+    }
+    patches.push({ ...patch, path: normalizeRepoPath(patch.path) });
+  }
+  if (pathErrors.length > 0) {
+    return { status: 'PREFLIGHT_FAILED', errors: pathErrors };
+  }
+
   // Resolve/create the actual commit branch before reading any files.
   let targetInfo = sourceInfo;
   let createdBranch = false;
@@ -288,7 +312,7 @@ export async function handlePatchRequest(
   const commitExpectedHeadOid = targetInfo.headOid;
 
   // Apply patches to the exact branch snapshot that will receive the commit.
-  const allTargetPaths = Array.from(new Set(req.payload.patches.map((p) => p.path)));
+  const allTargetPaths = Array.from(new Set(patches.map((p) => p.path)));
   let existingFiles: Record<string, string | null> = {};
   try {
     existingFiles = await fetchMultipleFilesViaGraphQL(owner, repo, commitExpectedHeadOid, allTargetPaths, githubToken);
@@ -297,7 +321,7 @@ export async function handlePatchRequest(
   }
 
   const patchResult = await applyPatchesInMemory(
-    req.payload.patches,
+    patches,
     existingFiles,
     req.payload.preflight,
     preflightHook

@@ -4,6 +4,7 @@ import { resolveFileContent, handlePatchRequest } from './modules/patcher';
 import { handleMixRequest } from './modules/mixer';
 import { handleGithubWebhookRequest } from './modules/webhookHandler';
 import { getBranchHeadOid, fetchFileContent, createCommitOnBranch, executeGraphQL, parseRepoOwner } from './utils/github';
+import { normalizeRepoPath, findRepoPathIssue } from '../../../shared/repoPaths';
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -78,7 +79,7 @@ export default {
       return jsonResponse({
         status: 'ok',
         service: 'gemini-git-bridge',
-        version: '2.0.2',
+        version: '2.0.3',
         timestamp: new Date().toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))
@@ -137,26 +138,33 @@ export default {
         const additions: { path: string; contents: string }[] = [];
 
         for (const fileInput of fileChanges) {
-          if (!fileInput.path) {
-            throw new Error('Every file entry must contain a "path" property.');
+          const pathIssue = findRepoPathIssue(fileInput.path);
+          if (pathIssue) {
+            throw new Error(pathIssue);
           }
+          const filePath = normalizeRepoPath(fileInput.path);
 
-          const contentFetcher = async (filePath: string) => {
-            return await fetchFileContent(owner, repo, resolvedBranch, filePath, githubToken);
+          const contentFetcher = async (requestedPath: string) => {
+            return await fetchFileContent(owner, repo, resolvedBranch, requestedPath, githubToken);
           };
 
-          const resolvedText = await resolveFileContent(fileInput, contentFetcher);
+          const resolvedText = await resolveFileContent({ ...fileInput, path: filePath }, contentFetcher);
           const encodedBase64 = utf8ToBase64(resolvedText);
 
           additions.push({
-            path: fileInput.path,
+            path: filePath,
             contents: encodedBase64
           });
         }
 
         // 4c. Format Deletions
         const formattedDeletions: { path: string }[] = deletions.map((del) => {
-          return typeof del === 'string' ? { path: del } : { path: del.path };
+          const rawPath = typeof del === 'string' ? del : del.path;
+          const pathIssue = findRepoPathIssue(rawPath);
+          if (pathIssue) {
+            throw new Error(pathIssue);
+          }
+          return { path: normalizeRepoPath(rawPath) };
         });
 
         // 4d. Execute createCommitOnBranch via GitHub GraphQL

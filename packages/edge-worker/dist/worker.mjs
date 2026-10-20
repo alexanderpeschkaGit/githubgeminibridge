@@ -10,6 +10,28 @@ function utf8ToBase64(str) {
   return btoa(binary);
 }
 
+// shared/repoPaths.ts
+function normalizeRepoPath(input) {
+  return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+}
+function findRepoPathIssue(input) {
+  const raw = (input || "").trim();
+  if (!raw) {
+    return 'Patch has no file path. Add a "// filepath: <repo/relative/path>" hint above the code block.';
+  }
+  const normalized = normalizeRepoPath(raw);
+  if (!normalized) {
+    return `Patch path "${raw}" does not point to a file inside the repository.`;
+  }
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    return `Patch path "${raw}" must be repo-relative (absolute drive paths are not allowed).`;
+  }
+  if (normalized.split("/").some((segment) => segment === ".." || segment === ".")) {
+    return `Patch path "${raw}" must be repo-relative and must not contain "." or ".." segments.`;
+  }
+  return null;
+}
+
 // packages/edge-worker/src/utils/github.ts
 var GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql";
 var BranchNotFoundError = class extends Error {
@@ -172,7 +194,7 @@ async function fetchMultipleFilesViaGraphQL(arg1, arg2, arg3, arg4, arg5) {
     paths = arg4;
     token = arg5;
   }
-  const uniquePaths = Array.from(new Set(paths));
+  const uniquePaths = Array.from(new Set(paths.map((p) => normalizeRepoPath(p)))).filter(Boolean);
   const result = {};
   if (uniquePaths.length === 0) {
     return result;
@@ -234,10 +256,15 @@ async function createCommitOnBranch(owner, repo, branch, expectedHeadOid, messag
   const body = message.includes("\n") ? message.split("\n").slice(1).join("\n").trim() : void 0;
   const fileChanges = {};
   if (additions.length > 0) {
-    fileChanges.additions = additions;
+    fileChanges.additions = additions.map((addition) => ({
+      ...addition,
+      path: normalizeRepoPath(addition.path)
+    }));
   }
   if (deletions.length > 0) {
-    fileChanges.deletions = deletions;
+    fileChanges.deletions = deletions.map((deletion) => ({
+      path: normalizeRepoPath(deletion.path)
+    }));
   }
   const cleanBranch = branch.replace(/^refs\/heads\//, "");
   const variables = {
@@ -385,6 +412,7 @@ async function validateSyntaxInWorker(filePath, content) {
   if (oxcErrors) {
     return oxcErrors;
   }
+  const allowsJsx = ext === ".tsx" || ext === ".jsx" || ext === ".js" || ext === ".mjs" || ext === ".cjs";
   let currentLine = 1;
   let currentCol = 1;
   const bracketStack = [];
@@ -564,6 +592,12 @@ async function validateSyntaxInWorker(filePath, content) {
       continue;
     }
     if (ch === "/") {
+      if (allowsJsx && lastNonWhitespaceChar === "<") {
+        lastNonWhitespaceChar = ch;
+        i++;
+        currentCol++;
+        continue;
+      }
       const regexPreceders = "=([{:;,?!&|+-*^~<>%return\n";
       const isRegex = lastNonWhitespaceChar === "" || regexPreceders.includes(lastNonWhitespaceChar);
       if (isRegex) {
@@ -571,6 +605,15 @@ async function validateSyntaxInWorker(filePath, content) {
         inRegexCharClass = false;
         stringStartLine = currentLine;
         stringStartCol = currentCol;
+        i++;
+        currentCol++;
+        continue;
+      }
+    }
+    if (allowsJsx && (ch === "'" || ch === '"')) {
+      const prevChar = i > 0 ? content[i - 1] : "";
+      if (/[A-Za-z]/.test(prevChar) && /[A-Za-z]/.test(nextCh)) {
+        lastNonWhitespaceChar = ch;
         i++;
         currentCol++;
         continue;
@@ -921,7 +964,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         errors.push({
           file: op.path,
           stage: "SEARCH_REPLACE",
-          message: "Target file does not exist on branch"
+          message: 'Target file does not exist at the patch base revision. Verify the path is repo-relative (no leading "/", "./" or backslashes) or use action "create" for a new file.'
         });
         continue;
       }
@@ -1130,6 +1173,23 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
       errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
     };
   }
+  const patches = [];
+  const pathErrors = [];
+  for (const patch of req.payload.patches) {
+    const issue = findRepoPathIssue(patch.path);
+    if (issue) {
+      pathErrors.push({
+        file: patch.path || "(missing path)",
+        stage: "SEARCH_REPLACE",
+        message: issue
+      });
+      continue;
+    }
+    patches.push({ ...patch, path: normalizeRepoPath(patch.path) });
+  }
+  if (pathErrors.length > 0) {
+    return { status: "PREFLIGHT_FAILED", errors: pathErrors };
+  }
   let targetInfo = sourceInfo;
   let createdBranch = false;
   if (isDistinctTarget) {
@@ -1186,7 +1246,7 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
   }
   const commitBranch = targetInfo.resolvedBranch;
   const commitExpectedHeadOid = targetInfo.headOid;
-  const allTargetPaths = Array.from(new Set(req.payload.patches.map((p) => p.path)));
+  const allTargetPaths = Array.from(new Set(patches.map((p) => p.path)));
   let existingFiles = {};
   try {
     existingFiles = await fetchMultipleFilesViaGraphQL(owner, repo, commitExpectedHeadOid, allTargetPaths, githubToken);
@@ -1194,7 +1254,7 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
     return { status: "ERROR", errorMessage: `Batch fetch failed for target files: ${err.message}` };
   }
   const patchResult = await applyPatchesInMemory2(
-    req.payload.patches,
+    patches,
     existingFiles,
     req.payload.preflight,
     preflightHook
@@ -2471,7 +2531,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "2.0.2",
+        version: "2.0.3",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))
@@ -2514,21 +2574,28 @@ var index_default = {
         const { headOid, resolvedBranch } = await getBranchHeadOid(owner, repo, targetBranch, githubToken);
         const additions = [];
         for (const fileInput of fileChanges) {
-          if (!fileInput.path) {
-            throw new Error('Every file entry must contain a "path" property.');
+          const pathIssue = findRepoPathIssue(fileInput.path);
+          if (pathIssue) {
+            throw new Error(pathIssue);
           }
-          const contentFetcher = async (filePath) => {
-            return await fetchFileContent(owner, repo, resolvedBranch, filePath, githubToken);
+          const filePath = normalizeRepoPath(fileInput.path);
+          const contentFetcher = async (requestedPath) => {
+            return await fetchFileContent(owner, repo, resolvedBranch, requestedPath, githubToken);
           };
-          const resolvedText = await resolveFileContent(fileInput, contentFetcher);
+          const resolvedText = await resolveFileContent({ ...fileInput, path: filePath }, contentFetcher);
           const encodedBase64 = utf8ToBase64(resolvedText);
           additions.push({
-            path: fileInput.path,
+            path: filePath,
             contents: encodedBase64
           });
         }
         const formattedDeletions = deletions.map((del) => {
-          return typeof del === "string" ? { path: del } : { path: del.path };
+          const rawPath = typeof del === "string" ? del : del.path;
+          const pathIssue = findRepoPathIssue(rawPath);
+          if (pathIssue) {
+            throw new Error(pathIssue);
+          }
+          return { path: normalizeRepoPath(rawPath) };
         });
         const commitResult = await createCommitOnBranch(
           owner,

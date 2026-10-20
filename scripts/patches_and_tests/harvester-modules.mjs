@@ -17,6 +17,10 @@ const RELATIVE_MODULES = [
     specifier: './patchIdentity',
     source: 'packages/userscript-hud/src/services/patchIdentity.ts',
   },
+  {
+    specifier: '../../../../shared/repoPaths',
+    source: 'shared/repoPaths.ts',
+  },
 ];
 
 const HARVESTER_SOURCE = 'packages/userscript-hud/src/dom/harvester.ts';

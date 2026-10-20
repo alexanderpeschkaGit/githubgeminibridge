@@ -6,6 +6,7 @@ import type {
   HarvestedPatch,
 } from '../types';
 import { createStablePatchId } from '../services/patchIdentity';
+import { normalizeRepoPath } from '../../../../shared/repoPaths';
 
 /**
  * Extracts a file path hint from code comments or preceding sibling elements in the DOM.
@@ -14,20 +15,22 @@ export function extractPathFromCode(codeText: string, preElement?: HTMLElement |
   // 1. Inline comment hints: // filepath: ... | # path: ... | /* path: ... */
   const inlineMatch = codeText.match(/(?:\/\/|#|\/\*)\s*(?:filepath|file|path):\s*([^\r\n*]+)/i);
   if (inlineMatch && inlineMatch[1]) {
-    return inlineMatch[1].trim().replace(/^["']|["']$/g, '');
+    const inlinePath = inlineMatch[1].trim().replace(/^["']|["']$/g, '');
+    return normalizeRepoPath(inlinePath);
   }
 
   // 2. Look for filename header right above the code block in the DOM
   if (preElement) {
     let prev = preElement.previousElementSibling;
     for (let i = 0; i < 3 && prev; i++) {
-      const text = prev.textContent?.trim() || '';
+      // Header text is often markdown-decorated ("**src/App.tsx**" or "`src/App.tsx`").
+      const text = (prev.textContent?.trim() || '').replace(/^[*`\s]+|[*`\s]+$/g, '');
       const headerMatch = text.match(/(?:File|Pfad|Datei)?:\s*([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)/i);
       if (headerMatch && headerMatch[1]) {
-        return headerMatch[1].trim();
+        return normalizeRepoPath(headerMatch[1].trim());
       }
       if (/^[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+$/.test(text)) {
-        return text;
+        return normalizeRepoPath(text);
       }
       prev = prev.previousElementSibling;
     }
@@ -102,8 +105,9 @@ export function convertLegacyBlocksToV2Payload(
 ): { payload: GeminiPatchPayload; legacyPayload: CommitRequest } | null {
   if (!codeText || codeText.trim().length === 0) return null;
 
-  const detectedPath = extractPathFromCode(codeText) || defaultPath || 'src/update.ts';
+  const detectedPath = normalizeRepoPath(extractPathFromCode(codeText) || defaultPath || '');
   const hasDiffBlocks = isSearchReplace(codeText);
+  const describePath = detectedPath || 'no path detected';
 
   if (hasDiffBlocks) {
     const blocks: PatchBlock[] = [];
@@ -125,7 +129,7 @@ export function convertLegacyBlocksToV2Payload(
       };
 
       const payload: GeminiPatchPayload = {
-        commitMessage: `refactor(${detectedPath}): apply search/replace patch`,
+        commitMessage: `refactor(${describePath}): apply search/replace patch`,
         patches: [fileOp],
       };
 
@@ -153,7 +157,7 @@ export function convertLegacyBlocksToV2Payload(
   };
 
   const payload: GeminiPatchPayload = {
-    commitMessage: `feat(${detectedPath}): update file via Gemini Git Bridge`,
+    commitMessage: `feat(${describePath}): update file via Gemini Git Bridge`,
     patches: [fileOp],
   };
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.7
+// @version      2.0.8
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -766,6 +766,54 @@ Fix Instructions:
     return { applied, total };
   }
 
+  // shared/repoPaths.ts
+  function normalizeRepoPath(input) {
+    return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+  }
+  function findRepoPathIssue(input) {
+    const raw = (input || "").trim();
+    if (!raw) {
+      return 'Patch has no file path. Add a "// filepath: <repo/relative/path>" hint above the code block.';
+    }
+    const normalized = normalizeRepoPath(raw);
+    if (!normalized) {
+      return `Patch path "${raw}" does not point to a file inside the repository.`;
+    }
+    if (/^[a-zA-Z]:\//.test(normalized)) {
+      return `Patch path "${raw}" must be repo-relative (absolute drive paths are not allowed).`;
+    }
+    if (normalized.split("/").some((segment) => segment === ".." || segment === ".")) {
+      return `Patch path "${raw}" must be repo-relative and must not contain "." or ".." segments.`;
+    }
+    return null;
+  }
+
+  // packages/userscript-hud/src/services/patchPaths.ts
+  function resolvePatchPaths(payload, prompt) {
+    const patches = (payload.patches || []).map((patch) => ({
+      ...patch,
+      path: normalizeRepoPath(patch.path)
+    }));
+    const missing = patches.filter((patch) => findRepoPathIssue(patch.path) !== null);
+    for (let index = 0; index < missing.length; index++) {
+      const answer = prompt(index + 1, missing.length);
+      if (answer === null || answer === void 0) {
+        return {
+          payload,
+          cancelled: true,
+          reason: 'Patch cancelled \u2014 no file path provided. Add a "// filepath: src/your-file.ts" hint to the code block and harvest it again.'
+        };
+      }
+      const candidate = normalizeRepoPath(answer);
+      const issue = findRepoPathIssue(candidate);
+      if (issue) {
+        return { payload, cancelled: true, reason: issue };
+      }
+      missing[index].path = candidate;
+    }
+    return { payload: { ...payload, patches }, cancelled: false };
+  }
+
   // packages/userscript-hud/src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
@@ -1484,6 +1532,26 @@ Fix Instructions:
         return onApplyPatchCustom(patch);
       }
       controller.openPanel();
+      const resolvedPaths = resolvePatchPaths(patch.payload, (index, total) => {
+        if (typeof window === "undefined" || typeof window.prompt !== "function") {
+          return null;
+        }
+        return window.prompt(
+          `File path for patch ${index}/${total} (repo-relative, e.g. src/App.tsx):`,
+          ""
+        );
+      });
+      if (resolvedPaths.cancelled) {
+        controller.updateState({
+          status: "ERROR",
+          statusMessage: `\u274C ${resolvedPaths.reason}`
+        });
+        return false;
+      }
+      const effectivePayload = resolvedPaths.payload;
+      state.harvestedPatches = state.harvestedPatches.map(
+        (entry) => entry.id === patch.id ? { ...entry, payload: effectivePayload } : entry
+      );
       controller.updateState({
         status: "PATCHING",
         statusMessage: `\u23F3 Applying patch: "${patch.commitMessage}"...`
@@ -1508,7 +1576,7 @@ Fix Instructions:
           }
         }
         if (state.headOid) {
-          const patchReq = buildWorkerPatchRequest(config, state, patch.payload);
+          const patchReq = buildWorkerPatchRequest(config, state, effectivePayload);
           const res = await requestWorkerPatch(config, patchReq);
           if (res.status === "COMMITTED") {
             state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
@@ -1624,18 +1692,19 @@ Fix Instructions:
   function extractPathFromCode(codeText, preElement) {
     const inlineMatch = codeText.match(/(?:\/\/|#|\/\*)\s*(?:filepath|file|path):\s*([^\r\n*]+)/i);
     if (inlineMatch && inlineMatch[1]) {
-      return inlineMatch[1].trim().replace(/^["']|["']$/g, "");
+      const inlinePath = inlineMatch[1].trim().replace(/^["']|["']$/g, "");
+      return normalizeRepoPath(inlinePath);
     }
     if (preElement) {
       let prev = preElement.previousElementSibling;
       for (let i = 0; i < 3 && prev; i++) {
-        const text = prev.textContent?.trim() || "";
+        const text = (prev.textContent?.trim() || "").replace(/^[*`\s]+|[*`\s]+$/g, "");
         const headerMatch = text.match(/(?:File|Pfad|Datei)?:\s*([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)/i);
         if (headerMatch && headerMatch[1]) {
-          return headerMatch[1].trim();
+          return normalizeRepoPath(headerMatch[1].trim());
         }
         if (/^[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+$/.test(text)) {
-          return text;
+          return normalizeRepoPath(text);
         }
         prev = prev.previousElementSibling;
       }
@@ -1677,8 +1746,9 @@ Fix Instructions:
   }
   function convertLegacyBlocksToV2Payload(codeText, defaultPath) {
     if (!codeText || codeText.trim().length === 0) return null;
-    const detectedPath = extractPathFromCode(codeText) || defaultPath || "src/update.ts";
+    const detectedPath = normalizeRepoPath(extractPathFromCode(codeText) || defaultPath || "");
     const hasDiffBlocks = isSearchReplace(codeText);
+    const describePath = detectedPath || "no path detected";
     if (hasDiffBlocks) {
       const blocks = [];
       const regex = /<{7}[^\r\n]*\r?\n([\s\S]*?)\r?\n={7}\r?\n([\s\S]*?)\r?\n>{7}[^\r\n]*/g;
@@ -1696,7 +1766,7 @@ Fix Instructions:
           blocks
         };
         const payload2 = {
-          commitMessage: `refactor(${detectedPath}): apply search/replace patch`,
+          commitMessage: `refactor(${describePath}): apply search/replace patch`,
           patches: [fileOp2]
         };
         const legacyPayload2 = {
@@ -1719,7 +1789,7 @@ Fix Instructions:
       fullContent: codeText
     };
     const payload = {
-      commitMessage: `feat(${detectedPath}): update file via Gemini Git Bridge`,
+      commitMessage: `feat(${describePath}): update file via Gemini Git Bridge`,
       patches: [fileOp]
     };
     const legacyPayload = {

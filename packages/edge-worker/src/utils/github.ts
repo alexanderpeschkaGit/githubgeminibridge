@@ -1,5 +1,6 @@
 import type { GitHubCommitResult } from '../types';
 import { utf8ToBase64 } from './encoding';
+import { normalizeRepoPath } from '../../../../shared/repoPaths';
 
 const GITHUB_GRAPHQL_ENDPOINT = 'https://api.github.com/graphql';
 
@@ -264,7 +265,9 @@ export async function fetchMultipleFilesViaGraphQL(
     token = arg5 as string;
   }
 
-  const uniquePaths = Array.from(new Set(paths));
+  // `expression: "<oid>:<path>"` is strict: "./src/a.ts", "/src/a.ts" and "src\a.ts"
+  // all resolve to null, so every lookup goes through the canonical form.
+  const uniquePaths = Array.from(new Set(paths.map((p) => normalizeRepoPath(p)))).filter(Boolean);
   const result: Record<string, string | null> = {};
   if (uniquePaths.length === 0) {
     return result;
@@ -347,10 +350,15 @@ export async function createCommitOnBranch(
 
   const fileChanges: Record<string, any> = {};
   if (additions.length > 0) {
-    fileChanges.additions = additions;
+    fileChanges.additions = additions.map((addition) => ({
+      ...addition,
+      path: normalizeRepoPath(addition.path)
+    }));
   }
   if (deletions.length > 0) {
-    fileChanges.deletions = deletions;
+    fileChanges.deletions = deletions.map((deletion) => ({
+      path: normalizeRepoPath(deletion.path)
+    }));
   }
 
   const cleanBranch = branch.replace(/^refs\/heads\//, '');

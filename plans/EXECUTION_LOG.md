@@ -730,3 +730,21 @@
   5. Regelwerk `userscript-shadow-hud.md` um �Kein gebuendeltes Secret" und Auto-Update ergaenzt.
 - **Validierung:** `tsc --noEmit` (HUD) `PASS`; Bundle enthaelt den alten Secret-Wert `0`x; `run-regressions.mjs --include-smoke` `PASS` (10/10).
 - **Overall:** `DONE`. Das alte Secret ist widerrufen; verbleibende Vorkommen in `repmixBridge.txt`/`_v1_backup` sind historisch und wertlos.
+
+### [2026-10-21T02:05:00+02:00] | Fix: `[SEARCH_REPLACE] src/update.ts: Target file does not exist on branch`
+- **Status:** `DONE` (Code) — **Deploy offen** (Live-Worker weiter `2.0.2`).
+- **Anlass:** Ein Search/Replace-Push über die Bridge scheiterte mit `[SEARCH_REPLACE] src/update.ts: Target file does not exist on branch`.
+- **Diagnose (live gegen `alexanderpeschkaGit/sikanda_projectinart_11@main`, HEAD `639fb9e`):**
+  1. `packages/userscript-hud/src/dom/harvester.ts` hatte einen hartkodierten Fallback `|| 'src/update.ts'`: jeder Codeblock **ohne** Pfadhinweis wurde still gegen diese (fast nie existierende) Datei geroutet.
+  2. `object(expression: "<oid>:<path>")` ist strikt: `./src/x.ts`, `/src/x.ts` und `src\x.ts` liefern alle `null` ⇒ identische, irreführende Fehlermeldung. Verifiziert per GraphQL-Probe (nur der kanonische Pfad liefert `byteSize`).
+  3. Zusatzbefund: der In-Worker-Lexer (`syntaxScanner.ts`) wertete `</span>` als Regex-Start und `Don't` als String-Start ⇒ jede valide `.tsx`-Datei erzeugte `OXC_SYNTAX`-Fake-Fehler (`src/App.tsx` 11 Fehler, `src/script.tsx` 1 Fehler), d. h. jeder Patch an React-Dateien wäre nach dem Pfad-Fix am Preflight gescheitert.
+- **Aenderungen:**
+  1. Neu `shared/repoPaths.ts` (`normalizeRepoPath`, `findRepoPathIssue`) — von Worker (`patcher.ts`, `github.ts`, `index.ts` V1-Route) und HUD (`harvester.ts`, `services/patchPaths.ts`) gemeinsam genutzt; `.agents/rules/…` + `agents.md` aktualisiert.
+  2. `patcher.ts`: Pfade werden **vor** Batch-Read/Commit kanonisiert; leere Pfade, `.`/`..`-Segmente und Drive-Pfade ⇒ `PREFLIGHT_FAILED` (`stage: "SEARCH_REPLACE"`) ohne GitHub-Call. `github.ts` normalisiert defensiv zusaetzlich in `fetchMultipleFilesViaGraphQL` und `createCommitOnBranch`.
+  3. `patchInMemory.ts`: Fehlertext nennt jetzt Basisrevision + `action: "create"`-Alternative.
+  4. `harvester.ts`: kein Platzhalterpfad mehr (leerer Pfad bleibt leer), Pfadhinweise werden kanonisiert; neu `services/patchPaths.ts` + `shadowHud.handleApplyPatch` fragt fehlende Pfade einmalig per `window.prompt` ab (Abbruch ⇒ `ERROR` ohne Request, Antwort wird im Queue-Eintrag persistiert).
+  5. `syntaxScanner.ts`: JSX-tauglich (`</tag>` kein Regex-Start, Kontraktionen `letter'letter` kein String-Delimiter) fuer `.tsx/.jsx/.js/.mjs/.cjs`; echte Defekte (Klammern, Conflict-Marker, offene Strings/Regex, JSON) werden weiter gemeldet.
+  6. Userscript `2.0.8` (Banner + `package.json`), Worker-Quelle `2.0.3` (`package.json` + `/health`-Version), beide Bundles neu gebaut (`dist` <=> Root byte-identisch).
+- **Tests:** neu `test-path-normalization.mjs` (12 Checks) und `test-jsx-syntax-scan.mjs`; neu `test-live-patch-e2e.mjs` (echte GitHub-API gegen `sikanda_projectinart_11`, read-only per Default, `--commit` nur auf Wegwerf-Branch + Cleanup); `harvester-modules.mjs` um `shared/repoPaths.ts` erweitert; `run-regressions.mjs` um `--include-live` ergaenzt.
+- **Validierung:** `tsc --noEmit` (Worker/HUD/CLI) `PASS`; `run-regressions.mjs --include-smoke --include-live` `PASS` (13/13 Suiten, `worker-smoke` 14/14, `live-patch-e2e` 9 Checks inkl. `COMMITTED` auf Wegwerf-Branch und unveraendertem `main`).
+- **Overall:** `DONE` (Code + Bundle). Naechster Schritt: `npx wrangler deploy` (Hard Stop, User-Freigabe) und Userscript-Update im Tampermonkey.

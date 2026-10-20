@@ -124,6 +124,7 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
   }
 
   // 3. Fast In-Worker Lexer and Bracket/Conflict-Marker Verifier
+  const allowsJsx = ext === '.tsx' || ext === '.jsx' || ext === '.js' || ext === '.mjs' || ext === '.cjs';
   let currentLine = 1;
   let currentCol = 1;
   const bracketStack: BracketEntry[] = [];
@@ -225,11 +226,25 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
     }
 
     if (ch === '/') {
+      // In JSX the sequence "</tag" closes an element; treating that slash as a
+      // regex start made every .tsx/.jsx file report "Unterminated regular expression".
+      if (allowsJsx && lastNonWhitespaceChar === '<') {
+        lastNonWhitespaceChar = ch; i++; currentCol++; continue;
+      }
       const regexPreceders = '=([{:;,?!&|+-*^~<>%return\n';
       const isRegex = lastNonWhitespaceChar === '' || regexPreceders.includes(lastNonWhitespaceChar);
       if (isRegex) {
         state = 'REGEX'; inRegexCharClass = false; stringStartLine = currentLine; stringStartCol = currentCol;
         i++; currentCol++; continue;
+      }
+    }
+
+    // JSX text may contain contractions ("Don't", "it's") that are not string
+    // delimiters; only the letter-quote-letter shape is treated as literal text.
+    if (allowsJsx && (ch === "'" || ch === '"')) {
+      const prevChar = i > 0 ? content[i - 1] : '';
+      if (/[A-Za-z]/.test(prevChar) && /[A-Za-z]/.test(nextCh)) {
+        lastNonWhitespaceChar = ch; i++; currentCol++; continue;
       }
     }
 

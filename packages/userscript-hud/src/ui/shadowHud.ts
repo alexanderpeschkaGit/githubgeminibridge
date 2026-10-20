@@ -36,6 +36,7 @@ import {
   removeHarvestedPatch,
   runPatchQueue,
 } from '../services/patchQueue';
+import { resolvePatchPaths } from '../services/patchPaths';
 import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } from './hudStylesAndDom';
 import { buildHudDomTree } from './hudDomTree';
 import { bindHudConfigInputs } from './hudConfigBindings';
@@ -279,6 +280,30 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     }
 
     controller.openPanel();
+
+    // A patch without a detected path can never succeed. Ask once, keep the answer in
+    // the queue entry so a retry/self-healing round does not prompt again.
+    const resolvedPaths = resolvePatchPaths(patch.payload, (index, total) => {
+      if (typeof window === 'undefined' || typeof window.prompt !== 'function') {
+        return null;
+      }
+      return window.prompt(
+        `File path for patch ${index}/${total} (repo-relative, e.g. src/App.tsx):`,
+        ''
+      );
+    });
+    if (resolvedPaths.cancelled) {
+      controller.updateState({
+        status: 'ERROR',
+        statusMessage: `❌ ${resolvedPaths.reason}`,
+      });
+      return false;
+    }
+    const effectivePayload = resolvedPaths.payload;
+    state.harvestedPatches = state.harvestedPatches.map((entry) =>
+      entry.id === patch.id ? { ...entry, payload: effectivePayload } : entry
+    );
+
     controller.updateState({
       status: 'PATCHING',
       statusMessage: `⏳ Applying patch: "${patch.commitMessage}"...`,
@@ -308,7 +333,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       }
 
       if (state.headOid) {
-        const patchReq = buildWorkerPatchRequest(config, state, patch.payload);
+        const patchReq = buildWorkerPatchRequest(config, state, effectivePayload);
 
         const res = await requestWorkerPatch(config, patchReq);
         if (res.status === 'COMMITTED') {

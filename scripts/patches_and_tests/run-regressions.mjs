@@ -63,6 +63,16 @@ const LOCAL_SUITES = [
     finding: 'Capped metadata and absolute 100k part ceiling',
   },
   {
+    id: 'path-normalization',
+    script: 'test-path-normalization.mjs',
+    finding: 'Repo-relative paths are canonicalized before GraphQL blob reads/commits; no invented default path',
+  },
+  {
+    id: 'jsx-syntax-scan',
+    script: 'test-jsx-syntax-scan.mjs',
+    finding: 'Valid JSX passes preflight while real syntax/conflict-marker defects are still reported',
+  },
+  {
     id: 'local-cli',
     script: 'test-local-cli.mjs',
     finding: 'Local CLI argument/preflight contracts',
@@ -80,6 +90,12 @@ const SMOKE_SUITE = {
   finding: 'Live /health probe, modularity audit, bundle identity, contract probes',
 };
 
+const LIVE_SUITE = {
+  id: 'live-patch-e2e',
+  script: 'test-live-patch-e2e.mjs',
+  finding: 'Real-repo /api/patch pipeline: path variants, missing files, throwaway-branch commit',
+};
+
 const HELP = `Usage: node scripts/patches_and_tests/run-regressions.mjs [options]
 
 Runs sequentially, as child processes, in the repository root:
@@ -94,6 +110,10 @@ Options:
                     worker-baseline.json stays untouched.
   --skip-smoke      Explicitly acknowledge skipping the live smoke suite
                     (the default; the run still prints that it was excluded).
+  --include-live    Also run the real-repository patch suite
+                    (scripts/patches_and_tests/${LIVE_SUITE.script}) in read-only
+                    mode. Needs a GitHub token (GITHUB_TOKEN or \`gh auth token\`);
+                    the write path stays opt-in via that script's \`--commit\` flag.
   --verbose         Print full child output instead of the concise tail.
   --timeout <ms>    Per-suite timeout, default ${DEFAULT_TIMEOUT_MS}.
   --help            Show this help.
@@ -103,6 +123,7 @@ function parseArgs(argv) {
   const options = {
     includeSmoke: false,
     skipSmoke: false,
+    includeLive: false,
     verbose: false,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     help: false,
@@ -114,6 +135,8 @@ function parseArgs(argv) {
       options.includeSmoke = true;
     } else if (arg === '--skip-smoke' || arg === '--no-smoke') {
       options.skipSmoke = true;
+    } else if (arg === '--include-live' || arg === '--with-live') {
+      options.includeLive = true;
     } else if (arg === '--verbose' || arg === '-v') {
       options.verbose = true;
     } else if (arg === '--help' || arg === '-h') {
@@ -228,6 +251,9 @@ function main() {
   }
 
   const suites = [...LOCAL_SUITES];
+  if (options.includeLive) {
+    suites.push(LIVE_SUITE);
+  }
   if (options.includeSmoke) {
     suites.push({
       ...SMOKE_SUITE,
