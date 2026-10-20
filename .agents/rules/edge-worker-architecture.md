@@ -30,8 +30,8 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
 
 | Endpoint | Method | Auth | Ursprung | Modul / Handler | Request / Response Vertrag |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `/` oder `/health` | `GET` | Public | V1 + V2 | `index.ts` | Gibt `{ status: "ok", service: "gemini-git-bridge", version: "2.0.0", hasBridgeSecret: boolean, hasGithubToken: boolean }` zurück ( niemals Klartext-Secrets!). |
-| `/api/mix` | `POST` | Bearer / `x-bridge-secret` | **V2 (Stufe 1 & 6)** | `modules/mixer.ts` + `modules/mixChunker.ts` | Body: `MixRequest` (`repo`, `branch`, `includePaths?`, `persistToGitHub?`, `maxChunkBytes?`, `maxChunkTokens?`, `splitOutput?`). Streamt GitHub-Tarball (1 Subrequest), filtert im RAM und liefert `MixResponse` (`headOid`, `xmlContent`, `parts?`, `isChunked?`, `stats`). |
+| `/` oder `/health` | `GET` | Public | V1 + V2 | `index.ts` | Gibt `{ status: "ok", service: "gemini-git-bridge", version: "2.0.0", hasBridgeSecret: boolean, hasGithubToken: boolean }` zurück (niemals Klartext-Secrets!). |
+| `/api/mix` | `POST` | Bearer / `x-bridge-secret` | **V2 (Stufe 1, 6–6.2)** | `modules/mixer.ts` + `modules/mixChunker.ts` | Body: `MixRequest` (`repo`, `branch`, `includePaths?`, `persistToGitHub?`, `maxChunkBytes?`, `maxChunkTokens?`, `splitOutput?`). Streamt GitHub-Tarball (1 Subrequest), filtert im RAM und liefert `MixResponse` (`headOid`, `xmlContent`, `parts?: MixPart[]` als `.txt` / `text/plain`, `isChunked?`, `stats`). |
 | `/api/patch` | `POST` | Bearer / `x-bridge-secret` | **V2 (Stufe 2 & 4)** | `modules/patcher.ts` + `modules/linter.ts` | Body: `WorkerPatchRequest` (`repo`, `branch`, `expectedHeadOid`, `payload: GeminiPatchPayload`). Führt Batch-Read, Search/Replace, Placeholder-Guardrail & `oxc-parser` WASM-Check aus. Liefert `WorkerPatchResponse` (`COMMITTED`, `PREFLIGHT_FAILED`, `GIT_CONFLICT`, `NO_CHANGES_NEEDED`, `ERROR`). |
 | `/push`, `/commit`, `/api/commit`, `/` | `POST` | Bearer / `x-bridge-secret` | **V1 Legacy** | `modules/patcher.ts` (`handleCommitRequest`) | Body: `CommitRequestPayload` (`repo`, `targetBranch`, `commitMessage`, `changes[]`, `deletions[]`, `expectedHeadOid?`). Muss zu 100 % abwärtskompatibel für bestehende V1-Clients bleiben! |
 | `/graphql` | `POST` | Bearer / `x-bridge-secret` | **V1 + V2** | `index.ts` (`handleGraphQLProxy`) | Body: `{ query: string, variables?: Record<string, unknown> }`. Authentifizierter Proxy zur GitHub GraphQL API v4. |
@@ -39,7 +39,7 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
 
 ---
 
-## 3. Technische Modul-Gesetze (Stufe 1, 2 & 4)
+## 3. Technische Modul-Gesetze (Stufe 1, 2, 4, 5 & 6)
 
 ### A. Untertool A: `src/modules/mixer.ts` (1-Subrequest Tarball-Stream + Repomix-Filterlogik)
 1. **1-Subrequest Tarball Streaming (`uithub`-Pattern):**
@@ -50,20 +50,22 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Wird `persistToGitHub === true` genutzt (`commitSingleFileViaGraphQL` nach `_context/repo-mix.xml`), wird `headOid` in der `MixResponse` auf die neue `persistedCommitOid` aktualisiert, damit nachfolgende `/api/patch`-Aufrufe keinen `GIT_CONFLICT` auslösen.
 3. **USTAR & PAX Extended Path Support:**
    - Unterstütze Dateipfade > 100 Zeichen verlustfrei über das USTAR-`prefix`-Feld (Offset 345, Länge 155) sowie PAX Extended Header (`typeflag === 'x'`, `path=...`).
-4. **128 MB RAM-Überlaufschutz & Repomix-inspirierte Ignore-Filter (Header-Level Stream-Skip):**
+4. **128 MB RAM-Überlaufschutz & Repomix-Filter (Header-Level Stream-Skip):**
    - Überspringe folgende Pfade und Dateitypen **bereits anhand des 512-Byte-TAR-Headers** direkt im Stream (ohne Buffer-/String-Allokation) über `shouldSkipTarEntry`:
-     - **Verzeichnisse:** `.git/`, `node_modules/`, `dist/`, `build/`, `.wrangler/`, `.turbo/`, `.next/`, `coverage/`, `_v1_backup/`, `repomix_*/`, `backup_unused/`.
+     - **Verzeichnisse:** `.git/`, `node_modules/`, `dist/`, `build/`, `.wrangler/`, `.turbo/`, `.next/`, `coverage/`, `_v1_backup/`, `repomix_*/`, `backup_unused/`, `.venv/`, `venv/`, `__pycache__/`.
      - **Lockfiles & Bundles:** `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`, `*.bundle`, `repomix-output*`, `*-bundle*.txt`.
      - **Binär- & Medien-Endungen:** `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.ico`, `.svg`, `.mp4`, `.webm`, `.mov`, `.mp3`, `.wav`, `.ogg`, `.woff`, `.woff2`, `.ttf`, `.eot`, `.pdf`, `.zip`, `.tar`, `.gz`, `.7z`, `.wasm`, `.exe`, `.dll`, `.so`, `.dylib`, `.pyc`.
+     - **Dynamische Ignore-Regeln:** Unterstütze `.repomixignore.cf` bzw. `.repomixignore` direkt aus dem TAR-Stream via `tarUtils.ts`.
      - **Größen-Limit:** Einzeldateien `> 512 KB` (`524288` Bytes) werden im Stream übersprungen (und im `<file_tree>` mit `[SKIPPED: >512KB]` vermerkt).
-5. **Strukturierter XML-Output (Repomix-kompatibel):**
-   - Erzeuge valides XML im Format `<repository repo="..." branch="..." headOid="..."><file_tree>...</file_tree><files><file path="..."><![CDATA[...]]></file></files></repository>`.
-   - Escape vorhandene `]]>`-Sequenzen im Dateiinhalt sicher als `]]]]><![CDATA[>` (`escapeCdata`), damit CDATA-Blöcke niemals aufbrechen.
+5. **Format-Migration auf `.txt` (Repomix-kompatibel, MIME `text/plain`):**
+   - Um XML-Parsing-Bugs und UI-Wrapping in Gemini / AI Studio zu verhindern, werden Chunks standardmäßig als `.txt`-Dateien mit MIME `text/plain` (`part-01.txt`, `part-02.txt` usw.) erzeugt.
+   - Escape vorhandene `]]>`-Sequenzen im Dateiinhalt sicher als `]]]]><![CDATA[>` (`escapeCdata`), falls XML-Wrapping verwendet wird.
 6. **RepoMix Atomic Chunking & Multi-Part Partitioning (`mixChunker.ts`):**
-   - Wird `splitOutput: true` übergeben oder überschreitet das Repository das Budget (`maxChunkChars` Standard 85.000 Zeichen unterhalb des 100k-Gemini-Limits, `maxChunkBytes` 512 KB bzw. `maxChunkTokens` 125.000 Tokens), partitioniert `buildChunkedMixXml` die Dateien **atomar** in nummerierte Chunks (`part 1 von N`).
-   - **Gemini Web UI 100k Cutoff-Schutz:** Jedes generierte `MixPart.xmlContent.length` bleibt strikt `<= 100_000` Zeichen (Target-Budget: `DEFAULT_MAX_CHUNK_CHARS = 85_000` Zeichen). Einzeldateien `> 100_000` Zeichen werden im Stream übersprungen und im `<file_tree>` mit `[SKIPPED: >100k chars for Gemini Chat limit]` markiert; Dateien zwischen 85k und 100k Zeichen erhalten einen isolierten Einzelpart.
-   - Part 1 enthält den vollständigen Repository `<file_tree>` (bis max. 14k Zeichen gedeckelt), Folgeparts `2..N` einen kompakten Baum (`# Part X/N files:`) nur für die im jeweiligen Part enthaltenen Dateien.
-   - **Invariante:** Einzelne Dateien werden **niemals** mitten im Quellcode zerschnitten. Jeder Part ist ein in sich geschlossenes, valides XML-Dokument mit vollständigen Header-Metadaten und Filetree.
+   - Wird `splitOutput: true` übergeben oder überschreitet das Repository das Budget (`maxChunkChars` Standard 85.000 Zeichen unterhalb des 100k-Gemini-Limits), partitioniert `buildChunkedMixFiles` die Dateien **atomar** in nummerierte Chunks (`part 1 von N`).
+   - **Gemini Web UI 100k Cutoff-Schutz:** Jedes generierte `MixPart.textContent.length` bleibt strikt `<= 100_000` Zeichen (Target-Budget: `DEFAULT_MAX_CHUNK_CHARS = 85_000` Zeichen). Einzeldateien `> 100_000` Zeichen werden im Stream übersprungen und im `<file_tree>` mit `[SKIPPED: >100k chars for Gemini Chat limit]` markiert; Dateien zwischen 85k und 100k Zeichen erhalten einen isolierten Einzelpart.
+   - **10-Parts-Guardrail:** Die Anzahl der Parts wird auf maximal 10 begrenzt (`MAX_GEMINI_PARTS = 10`), um Browser- und Clipboard-Überläufe zu verhindern.
+   - Part 1 enthält den vollständigen Repository `<file_tree>` (bis max. 14k Zeichen gedeckelt), Folgeparts `2..N` einen kompakten Teilbaum nur für die im jeweiligen Part enthaltenen Dateien.
+   - **Invariante:** Einzelne Dateien werden **niemals** mitten im Quellcode zerschnitten. Jeder Part ist ein in sich geschlossenes Dokument mit Metadaten und Filetree.
    - Low-Level TAR-Header-Parsing (`concatBuffers`, `parseAsciiString`, `parseOctal`) ist in `src/utils/tarUtils.ts` ausgelagert, um das `< 500`-Zeilen-Gesetz für `mixer.ts` strikt einzuhalten.
 
 ### B. Untertool B: `src/modules/patcher.ts` & `src/modules/patchInMemory.ts` & `src/utils/github.ts` (Stufe 2)
@@ -91,6 +93,7 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Unterstützt optionalen pluggbaren `registerOxcWasmParser` Hook.
 3. **Automatischer Hook (`runPreflightLinter`):**
    - Fungiert als Standard-`preflightHook` in `applyPatchesInMemory` und `handlePatchRequest`, aggregiert Syntax- und Custom-Rules (`validateNoPlaceholders`, `forbidPatterns`, `requireExports`) und dedupliziert identische Fehler-Einträge.
+
 ### D. Untertool D: `src/modules/webhookHandler.ts` (Stufe 5 Hybrid Routing & Webhook)
 1. **Zero Node.js Imports:**
    - Strikt reine Web-Standard-APIs (`crypto.subtle`, `fetch`, `Request`, `Response`, `TextEncoder`). Absolutes Verbot von Node.js-Modulen (`fs`, `child_process`, `simple-git`, `path`) im Worker-Kontext.
@@ -100,5 +103,4 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Um den strikten 10-Sekunden-Timeout von GitHub-Webhooks einzuhalten, antwortet der Worker sofort mit `202 Accepted` und delegiert `executeWorkerWorkflow` (Mixer -> Gemini REST -> Patcher -> PR/Issue-Feedback-Kommentar) an `ctx.waitUntil`.
 
 ### E. Validierung vor Abschluss:
-- Jede Änderung an `packages/edge-worker/` erfordert zwingend `npx tsc --noEmit` (im Arbeitsverzeichnis `packages/edge-worker`) sowie einen erfolgreichen Lauf von `node scripts/patches_and_tests/worker-smoke.mjs` (inkl. aller 12 Probes mit harter `< 500`-Zeilen-Bedingung über alle aktiven TypeScript-Quelldateien).
-
+- Jede Änderung an `packages/edge-worker/` erfordert zwingend `tsc --noEmit` sowie einen erfolgreichen Lauf von `node scripts/patches_and_tests/worker-smoke.mjs` (inkl. aller 12 Probes mit harter `< 500`-Zeilen-Bedingung über alle aktiven TypeScript-Quelldateien).

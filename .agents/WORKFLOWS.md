@@ -1,14 +1,19 @@
-# Global Workflow Commands (`cloudflare_orchestrator_Bridge`)
+# Global Workflow Commands
 
-When a user request or stage blueprint begins with a workflow command tag, read the corresponding skill file in addition to root `agents.md`:
+When a user request begins with a command, read the corresponding local skill file in addition to `AGENTS.md`:
 
-- `#ask` (or `/ask`): `.agents/skills/ask/SKILL.md` (or global `ask` skill – read-only investigation without modifying files)
-- `#grillme` (or `/grillme`): `.agents/skills/grillme/SKILL.md` (or global `grillme` skill – structured decision interview with `[1]`, `[2]` indexing)
-- `#plan` (or `/plan`): `.agents/skills/plan/SKILL.md` (5-step architectural plan with Execution Metadata Header)
-- `#exec` (or `/exec`): `.agents/skills/exec/SKILL.md` (execute approved plan steps with Single-Action Protocol)
-- `#exec-wave` (or `/exec-wave`, `#wave-exec`): `.agents/skills/exec-wave/SKILL.md` (orchestrate serial and parallel subagent waves across disjoint monorepo packages)
-- `#flash` (or `/flash`): `.agents/skills/flash/SKILL.md` (enforce Single-Action Protocol, zero `&&`/`;` command chaining, minimal context)
-- `#delegate` (or `/delegate`): `.agents/skills/delegate/SKILL.md` (write focused execution plan to artifact/blueprint and spawn isolated subagent)
-- `#solve` (or `/solve`): `.agents/skills/solve/SKILL.md` (4-phase impact analysis, plan artifact, virtual review, and subagent delegation / JSON-patch generation)
-- `#review` (or `/review`): `.agents/skills/review/SKILL.md` (audit code and contracts without modifying files)
-- `#refactor` (or `/refactor`): `.agents/skills/refactor/SKILL.md` (improve modularity while preserving 100 % V1/V2 behavior parity)
+- `#ask` (or `/ask`): `.agents/skills/ask/SKILL.md`
+- `#grillme` (or `/grillme`, `#grill-me`, `/grill-me`): `.agents/skills/grillme/SKILL.md`
+- `#plan` (or `/plan`): `.agents/skills/plan/SKILL.md`
+- `#exec` (or `/exec`): `.agents/skills/exec/SKILL.md`
+- `#exec-wave` (or `/exec-wave`, `#wave-exec`, `/wave-exec`): `.agents/skills/exec-wave/SKILL.md`
+- `#flash` (or `/flash`): `.agents/skills/flash/SKILL.md`
+- `#review` (or `/review`): `.agents/skills/review/SKILL.md`
+- `#refactor` (or `/refactor`): `.agents/skills/refactor/SKILL.md`
+- `#delegate` (or `/delegate`, `#deligate`, `/deligate`): `.agents/skills/delegate/SKILL.md`
+- `#solve` (or `/solve`): `.agents/skills/solve/SKILL.md`
+- `#deep-refactor` (or `/deep-refactor`, `#refrag`, `/refrag`, `#oneshot`, `/oneshot`): `.agents/skills/deep-refactor/SKILL.md`
+- `#zip-clean` (or `/zip-clean`, `#export-zip`, `/export-zip`, `#zip`, `/zip`): `.agents/skills/zip-clean/SKILL.md`
+- `#repomix` (or `/repomix`): `.agents/skills/repomix/SKILL.md`
+- `#bundle` (or `/bundle`, `#repomix-split`, `/repomix-split`): `.agents/skills/bundle/SKILL.md`
+- `#fetch-skill` (or `/fetch-skill`): `.agents/skills/fetch-skill/SKILL.md`

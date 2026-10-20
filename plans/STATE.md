@@ -4,9 +4,9 @@
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
 
 ## Aktuelle Phase
-- **Aktive Stufe:** **Stufe 6.3 (Userscript HUD "Apply All" & "Clear Queue" Sequential Fail-Fast)** erfolgreich abgeschlossen.
-- **Modell-Politik:** Vorab-Gesamtplanung & Strukturierung aller Parts auf **Argon High oder Argon Medium (`pro`/`inherit`)**; Ausführung & `/delegate` der Arbeitspakete mit `Complexity < 6` auf **Flash (`Model: 'flash'`)** und ab `Complexity >= 6` auf **Argon Medium (`Model: 'pro'`)**
-- **Letztes Update:** 2026-10-19T15:28:30+02:00 (Stufe 6.3 Abschluss: Userscript HUD "Apply All" & "Clear Queue" Buttons, FIFO-Reihenfolge, Fail-Fast & Concurrency-Schutz erfolgreich verifiziert).
+- **Aktive Stufe:** **Stufe 6.4 (Verfassungs-, Regelwerks- & Skill-Harmonisierung)** erfolgreich abgeschlossen.
+- **Modell-Politik:** 3-Tier-Modellmatrix: Vorab-Gesamtplanung auf **Argon High / Medium (`pro`/`inherit`)**; Ausführung mit Flash-First: Tier 1 (`flash_lite` [1–3]), Tier 2 (`flash` [4–6]), Tier 3 (`pro` [7–10]).
+- **Letztes Update:** 2026-10-20T17:36:00+02:00 (Stufe 6.4 Abschluss: Verfassung `AGENTS.md`, `.agents/rules/` und `.agents/skills/` synchronisiert mit Stage 6.3 Codebase; alle Probes 12/12 PASS).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**
@@ -21,7 +21,7 @@
   - Ziel: Sicherung von `cf-gemini-git-bridge/` und `gemini-bridge.user.js` nach `_v1_backup/`. Aufbau von `shared/types.ts`, `packages/edge-worker/` und `packages/userscript-hud/`. Portierung von `encoding.ts`, `github.ts` und `patch.ts` (inkl. `validateNoPlaceholders` Guardrail) auf die neuen Typen.
 - [x] **Stufe 0.6 (Harness-Upgrade & `P1`-Konsolidierung): Root-`agents.md`, `.agents/rules/`, Skills & Smoke-Test-Suite**
   - Status: *ABGESCHLOSSEN (`PASS` / `PLAN_DONE`)*.
-  - Ziel: `agents.md` im Root als führende Single Source of Truth inkl. verbindlicher **`P1` (1st Priority) für alle 6 Komponenten**, Modell-Politik (Argon High/Medium für Vorab-Planung aller Parts, Flash High für Ausführung bei `Complexity <= 6`), Planungs-/Ausführungs-Logging (`PLAN_START`/`PLAN_DONE`), `.agents/rules/*`, Skills (`exec-wave`, `solve`) und Smoke-Suite `scripts/patches_and_tests/worker-smoke.mjs` (`5/5 PASS`).
+  - Ziel: `agents.md` im Root als führende Single Source of Truth inkl. verbindlicher **`P1` (1st Priority) für alle 6 Komponenten**, Modell-Politik, Planungs-/Ausführungs-Logging (`PLAN_START`/`PLAN_DONE`), `.agents/rules/*`, Skills und Smoke-Suite `scripts/patches_and_tests/worker-smoke.mjs` (`5/5 PASS`).
 - [x] **Stufe 1 (Sub-Chat / `#delegate #flash`): Cloudflare Worker – Hauptorchestrator & Untertool A (`mixer.ts`)**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: `POST /api/mix` (1-Subrequest Tarball-Stream, Gzip-Decompress, 512-Byte-TAR-Parser mit PAX/USTAR, RAM-Filter `shouldSkipTarEntry`, XML-Output inkl. `<file_tree>` & 40-char `headOid` mit `getBranchHeadOid`-Fallback + `persistToGitHub`-Sync).
@@ -42,24 +42,25 @@
   - Ziel: Zerlegung von `linter.ts` (90 Z.) + `syntaxScanner.ts` (335 Z.), `patcher.ts` (366 Z.) + `patchInMemory.ts` (290 Z.) und `shadowHud.ts` (382 Z.) + `hudStylesAndDom.ts` (406 Z.) bei 100 % Export- und Verhaltensparität. Verschärfung von Probe 10 auf `overLimitZone.length === 0` (`10/10 PASS`). Alle 18 aktiven TypeScript-Quelldateien liegen ausnahmslos unter dem 500-Zeilen-Grenzwert!
 - [x] **Kontext-Handoff, Komponenten-Zusammenspiel & Live-Deployment-Plan (`plans/00_*`, `01_*`, `02_*`)**
   - Status: *ABGESCHLOSSEN (`PLAN_DONE`)*.
-  - Ziel: `agents.md` mit Progressive Disclosure + End-to-End Datenflüssen aktualisiert; `plans/00_STARTCHAT_ORCHESTRATOR.md` (Prompt A: Neuer Master-Orchestrator-Chat + Prompt B: 3-Punkte `#review`), `plans/01_PROJECT_REVIEW_AND_HANDOFF.md` (Mermaid-Sequenzdiagramm & 18-Modul-Interplay-Matrix) und `plans/02_LIVE_DEPLOYMENT_AND_E2E_PLAN.md` (5-Schritte Live-Deployment & Browser-E2E-Plan) erstellt.
+  - Ziel: `agents.md` mit Progressive Disclosure + End-to-End Datenflüssen aktualisiert; `plans/00_STARTCHAT_ORCHESTRATOR.md`, `plans/01_PROJECT_REVIEW_AND_HANDOFF.md` und `plans/02_LIVE_DEPLOYMENT_AND_E2E_PLAN.md` erstellt.
 - [x] **Stufe 5 (Subagent / `#delegate #flash`): Hybrides Routing (Local CLI `packages/local-cli/` vs. Edge-Worker GitHub-Webhook `packages/edge-worker/`)**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: `shared/hybridTypes.ts` Verträge (`ExecutionMode`, `HybridTaskInput`, `HybridTaskResult`, `HybridWorkerEnv`), `packages/local-cli/` (Pfad A: Node.js CLI mit `@google/genai` / REST Fallback, in-Memory-Preflight Validierung via `applyPatchesInMemory` + `runPreflightLinter` & Git-Commit), `packages/edge-worker/src/modules/webhookHandler.ts` & Route `POST /api/webhook/github` (Pfad B: Web Crypto HMAC-SHA256 Signatur-Prüfung, sofortiges `202 Accepted` & `ctx.waitUntil` async Workflow), Probe 11 in `worker-smoke.mjs` (`11/11 PASS`), 0 Node.js-Imports im Worker, 22/22 TypeScript-Dateien `< 500` Zeilen.
 - [x] **Stufe 6 (#exec): RepoMix Atomic Chunking, Multi-Part Ingestion & Scoped Path Filtering**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
-  - Ziel: `MixPart`-Vertrag in `shared/types.ts` (`maxChunkBytes`, `maxChunkTokens`, `splitOutput`, `parts?: MixPart[]`), atomare Zerlegung ohne Code-Zerschneiden in `packages/edge-worker/src/modules/mixChunker.ts`, TAR-Helper-Extraktion in `packages/edge-worker/src/utils/tarUtils.ts` (Schutz der `< 500`-Zeilen-Grenze für `mixer.ts`), Multi-File-Paste im Userscript-HUD via `injectRepoMixParts` (`injector.ts` & `shadowHud.ts`), `includePaths`-UI-Konfiguration im HUD Drawer (`hudStylesAndDom.ts`), Probe 12 verifiziert (`12/12 PASS`), 24/24 TypeScript-Dateien strikt `< 500` Zeilen.
+  - Ziel: `MixPart`-Vertrag in `shared/types.ts`, atomare Zerlegung in `packages/edge-worker/src/modules/mixChunker.ts`, TAR-Helper in `packages/edge-worker/src/utils/tarUtils.ts`, Multi-File-Paste im Userscript-HUD via `injectRepoMixParts`, `includePaths`-UI im HUD Drawer, Probe 12 verifiziert (`12/12 PASS`), 24/24 TypeScript-Dateien strikt `< 500` Zeilen.
 - [x] **Stufe 6.1 (Flash-Subagent / `#flash`): RepoMix 85k Character Limit & Atomic File Partitioning**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
-  - Ziel: `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, exakte Zeichen-Budgetierung in `mixChunker.ts`, atomare Trennung ohne Filesplits, hierarchischer Filetree (Part 1 vollständiger Baum bis 14k Chars, Folgeparts fokussierter Teilbaum), Skip-Marker `[SKIPPED: >100k chars for Gemini Chat limit]`, HUD `maxChunkCharsInput`, Probe 12 verifiziert (`12/12 PASS`), 24/24 TypeScript-Dateien strikt `< 500` Zeilen.
+  - Ziel: `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, exakte Zeichen-Budgetierung in `mixChunker.ts`, atomare Trennung ohne Filesplits, hierarchischer Filetree, Skip-Marker, HUD `maxChunkCharsInput`, Probe 12 verifiziert (`12/12 PASS`).
 - [x] **Stufe 6.2 (Flash-Subagent / `#flash #solve`): Gemini Web .txt Migration, 10-Parts Guardrail & .repomixignore.cf Support**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
-  - Ziel: Umstellung auf `.txt` und MIME `text/plain` (`mixChunker.ts`, `injector.ts`), `MAX_GEMINI_PARTS = 10` Guardrail, Python-Umgebungs-Ignorierlisten (`.venv`, `venv`, `__pycache__`) und dynamische Auswertung von `.repomixignore.cf` / `.repomixignore` in `mixer.ts` via `tarUtils.ts`. Rebuild von `gemini-bridge.user.js` und Smoke-Suite 12/12.
+  - Ziel: Umstellung auf `.txt` und MIME `text/plain` (`mixChunker.ts`, `injector.ts`), `MAX_GEMINI_PARTS = 10` Guardrail, Python-Umgebungs-Ignorierlisten und dynamische Auswertung von `.repomixignore.cf` / `.repomixignore` in `mixer.ts` via `tarUtils.ts`. Rebuild von `gemini-bridge.user.js` und Smoke-Suite 12/12.
 - [x] **Stufe 6.3 (Flash-Subagent / `#flash #solve`): Userscript HUD "Apply All" & "Clear Queue" (Sequential Fail-Fast)**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: Queue-Header mit "⚡ Apply All" und "🗑️ Clear" in `hudStylesAndDom.ts`, FIFO-Umkehrung `[...state.harvestedPatches].reverse()`, sequenzielle Ausführung mit Fail-Fast und Head-OID-Fortschreibung in `shadowHud.ts`, Auto-Pruning erfolgreicher Patches, Rebuild `gemini-bridge.user.js` und Einhaltung `< 500` Zeilen.
+- [x] **Stufe 6.4 (Option A / Direkt-Harmonisierung): Verfassungs-, Regelwerks- & Skill-Harmonisierung**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: Bereinigung verwaister Flat-Files in `.agents/skills/`; Schließung toter Links durch Erstellung von `.agents/rules/multi-ide-setup.md`; Synchronisation von `orchestrator-protocol.md` (3-Tier-Matrix), `edge-worker-architecture.md` (Stage 6.2 `.txt`-MIME & 10-Parts) und `userscript-shadow-hud.md` (Stage 6.3 FIFO Fail-Fast Queue); Harmonisierung von `AGENTS.md` (3 Pakete, Multi-Part Ingestion, Queue, `< 500` Zeilen). Verifikation mit 12/12 Smoke Probes, CLI- & Worker-Tests.
 
 ## Offene Entscheidungen / Blocker
-- Keine Blocker. Stage 6.3 erfolgreich abgeschlossen und verifiziert.
-
-
+- Keine Blocker. Verfassung, Regeln und Code sind zu 100 % synchron.

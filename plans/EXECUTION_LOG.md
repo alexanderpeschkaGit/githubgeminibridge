@@ -452,3 +452,34 @@
   - `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (`22/22` Assertions).
   - `node scripts/patches_and_tests/test-webhook-worker.mjs`: `PASS` (`18/18` Assertions).
 
+
+
+### [2026-10-20T11:22:00+02:00] | Master-Orchestrator | #plan: Boilerplate-Verfassungs- & Regelwerks-Harmonisierung
+- **Status:** `PLAN_DONE`
+- **Architektur-Entscheidung & Delta-Analyse:**
+  1. *Befund:* Der Codebase-Umbau (Stages 5 bis 6.3) ist vollständig funktional und getestet (3 Packages, 24/24 TS-Dateien < 500 Zeilen, 12/12 Smoke Probes, RepoMix 85k `.txt`-Chunking, Userscript "Apply All" FIFO Fail-Fast Queue).
+  2. *Lücken:* Die Verfassung `AGENTS.md` und weiterverweisende Regeln (`userscript-shadow-hud.md`, `edge-worker-architecture.md`, `orchestrator-protocol.md`) hinken hinterher (alte `.xml`-Formate, fehlende Queue-Dokumentation, veraltete 2-Stufen-Modellpolitik, toter Link zu `multi-ide-setup.md`, 7 verwaiste Flat-Files in `.agents/skills/`).
+  3. *Lösung & Roadmap:* 4-Phasen-Roadmap in `plans/04_BOILERPLATE_HARMONIZATION_WAVE_PLAN.md` erstellt. Gesamt-Komplexität: `4/10`.
+  4. *Modell-Routing:*
+     - Batch 1 (Skill-Hygiene / Löschung Flat-Files): `Score: 2/10` -> `FLASH_LITE`.
+     - Batch 2A (multi-ide-setup.md & orchestrator-protocol.md): `Score: 4/10` -> `FLASH`.
+     - Batch 2B (userscript-shadow-hud.md & edge-worker-architecture.md): `Score: 4/10` -> `FLASH`.
+     - Batch 3 (AGENTS.md Single Source of Truth): `Score: 6/10` -> `PRO` (Orchestrator).
+     - Batch 4 (End-to-End Verifikation & Baseline): `Score: 3/10` -> `FLASH`.
+
+
+### [2026-10-20T17:36:00+02:00] | Master-Orchestrator | Option A: Verfassungs-, Regelwerks- & Skill-Harmonisierung (Stufe 6.4)
+- **Status:** `DONE`
+- **Umgesetzte Maßnahmen:**
+  1. *Repo-Hygiene (.agents/skills/):* 7 verwaiste Flat-Files (`ask.md`, `delegate.md`, `exec.md`, `flash.md`, `grillme.md`, `refactor.md`, `review.md`) gelöscht. Alle 15 modernen Skill-Ordner (`*/SKILL.md`) sauber etabliert.
+  2. *multi-ide-setup.md (.agents/rules/):* Neu erstellt (Mode A Antigravity Multi-Model mit Live-Streams, Mode B Kimi Fixed-Model, Mode C Cursor/Cline Single-Agent). Toter Link in `exec-wave/SKILL.md` geschlossen.
+  3. *orchestrator-protocol.md:* 3-Tier-Modellmatrix (`flash_lite` [1–3], `flash` [4–6], `pro` [7–10]), Live-Stream-Links `conversation://` und Multi-IDE-Regeln verankert.
+  4. *edge-worker-architecture.md:* Stage 6.2 `.txt`-Migration (MIME `text/plain`), 10-Parts-Guardrail, dynamische `.repomixignore.cf`-Auswertung und 85k Chunker-Invarianten festgeschrieben.
+  5. *userscript-shadow-hud.md:* Stage 6.3 Queue-Controls ("⚡ Apply All", "🗑️ Clear Queue", FIFO-Umkehrung, Fail-Fast, Auto-Pruning) und Multi-Part `.txt`-Pasting dokumentiert.
+  6. *AGENTS.md:* Single Source of Truth auf 3 Pakete (`packages/edge-worker`, `packages/userscript-hud`, `packages/local-cli` + `shared/`), RepoMix Multi-Part `.txt`-Pasting und Queue-Management harmonisiert. Datei bleibt mit 74 Zeilen extrem schlank (< 500 Zeilen).
+- **Verifikation:**
+  - TypeScript-Check (`tsc --noEmit`) über alle 3 Pakete: `PASS` (0 Fehler).
+  - Smoke-Suite `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`12/12` Probes, 0/24 Quelldateien >= 500 Zeilen).
+  - CLI-Suite `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (`22/22` Assertions).
+  - Webhook-Suite `node scripts/patches_and_tests/test-webhook-worker.mjs`: `PASS` (`18/18` Assertions).
+  - `plans/STATE.md` auf Stufe 6.4 aktualisiert.
