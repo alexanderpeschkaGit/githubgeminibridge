@@ -1,0 +1,16 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^git --no-pager remote -v; gh api repos/:owner/:repo 2>\\$null \\| Select-Object -First 5$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^gh api repos/alexanderpeschkaGit/sikanda_projectinart_11-on-main/branches/preview --jq '\\{name: \\.name, sha: \\.commit\\.sha, date: \\.commit\\.commit\\.committer\\.date\\}'$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^gh api repos/alexanderpeschkaGit/sikanda_projectinart_11-on-main/branches/main --jq '\\{name: \\.name, sha: \\.commit\\.sha\\}'$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
