@@ -561,6 +561,68 @@ Fix Instructions:
     };
   }
 
+  // packages/userscript-hud/src/services/patchIdentity.ts
+  function canonicalize(value) {
+    if (Array.isArray(value)) {
+      return value.map((entry) => canonicalize(entry));
+    }
+    if (value && typeof value === "object") {
+      const record = value;
+      const sorted = {};
+      for (const key of Object.keys(record).sort()) {
+        const entry = record[key];
+        if (entry === void 0) continue;
+        sorted[key] = canonicalize(entry);
+      }
+      return sorted;
+    }
+    return value;
+  }
+  function computePatchSignature(mode, payload) {
+    return JSON.stringify([mode, payload.commitMessage, canonicalize(payload.patches)]);
+  }
+  function djb2Hash(input) {
+    let hash = 5381;
+    for (let index = 0; index < input.length; index++) {
+      hash = hash * 33 ^ input.charCodeAt(index);
+    }
+    return hash >>> 0;
+  }
+  function createStablePatchId(mode, payload) {
+    return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
+  }
+
+  // packages/userscript-hud/src/services/patchQueue.ts
+  var MAX_QUEUED_PATCHES = 20;
+  function isDuplicatePatch(queue, candidate) {
+    const signature = computePatchSignature(candidate.mode, candidate.payload);
+    return queue.some(
+      (existing) => existing.id === candidate.id || computePatchSignature(existing.mode, existing.payload) === signature
+    );
+  }
+  function enqueueHarvestedPatch(queue, patch) {
+    if (isDuplicatePatch(queue, patch)) return queue;
+    return [patch, ...queue].slice(0, MAX_QUEUED_PATCHES);
+  }
+  function removeHarvestedPatch(queue, patchId) {
+    return queue.filter((entry) => entry.id !== patchId);
+  }
+  function fifoQueue(queue) {
+    return [...queue].reverse();
+  }
+  async function runPatchQueue(queue, apply, onProgress) {
+    const ordered = fifoQueue(queue);
+    const total = ordered.length;
+    let applied = 0;
+    for (let index = 0; index < total; index++) {
+      const patch = ordered[index];
+      onProgress(patch, index, total);
+      if (!await apply(patch)) return { applied, total };
+      applied++;
+    }
+    return { applied, total };
+  }
+
   // packages/userscript-hud/src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
@@ -1218,7 +1280,7 @@ Fix Instructions:
           const patchReq = buildWorkerPatchRequest(config, state, patch.payload);
           const res = await requestWorkerPatch(config, patchReq);
           if (res.status === "COMMITTED") {
-            state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
+            state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
             const oidUpdates = advancePatchOidState(config, res);
             Object.assign(state, oidUpdates);
             if (oidUpdates.headOid) setStoredValue("head_oid", oidUpdates.headOid);
@@ -1265,7 +1327,7 @@ Fix Instructions:
             return false;
           }
           if (res.status === "NO_CHANGES_NEEDED") {
-            state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
+            state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
             const oidUpdates = advancePatchOidState(config, res);
             Object.assign(state, oidUpdates);
             if (oidUpdates.headOid) setStoredValue("head_oid", oidUpdates.headOid);
@@ -1293,7 +1355,7 @@ Fix Instructions:
             branch: config.branch
           };
           const res = await requestLegacyCommit(config, legacyReq);
-          state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
+          state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
           controller.updateState({
             status: "COMMITTED",
             statusMessage: `\u2705 Committed via legacy bridge: ${res?.commit?.oid ? res.commit.oid.slice(0, 7) : "OK"}`,
@@ -1317,24 +1379,20 @@ Fix Instructions:
     };
     dom.applyAllBtn.onclick = async () => {
       if (state.harvestedPatches.length === 0 || state.status === "PATCHING" || state.status === "MIXING") return;
-      const queue = [...state.harvestedPatches].reverse();
-      const total = queue.length;
-      let successCount = 0;
-      for (let i = 0; i < total; i++) {
-        const patch = queue[i];
-        controller.updateState({
-          status: "PATCHING",
-          statusMessage: `\u23F3 [${i + 1}/${total}] Applying patch: "${patch.commitMessage}"...`
-        });
-        const success = await handleApplyPatch(patch);
-        if (!success) {
-          return;
+      const { applied, total } = await runPatchQueue(
+        state.harvestedPatches,
+        handleApplyPatch,
+        (patch, index, totalCount) => {
+          controller.updateState({
+            status: "PATCHING",
+            statusMessage: `\u23F3 [${index + 1}/${totalCount}] Applying patch: "${patch.commitMessage}"...`
+          });
         }
-        successCount++;
-      }
+      );
+      if (applied < total) return;
       controller.updateState({
         status: "COMMITTED",
-        statusMessage: `\u{1F389} All ${successCount} patches successfully applied and committed!`
+        statusMessage: `\u{1F389} All ${applied} patches successfully applied and committed!`
       });
     };
     const controller = {
@@ -1347,13 +1405,10 @@ Fix Instructions:
       closePanel,
       handleApplyPatch,
       addHarvestedPatch: (patch) => {
-        if (!state.harvestedPatches.some((p) => p.id === patch.id)) {
-          state.harvestedPatches.unshift(patch);
-          if (state.harvestedPatches.length > 20) {
-            state.harvestedPatches.pop();
-          }
-          renderState();
-        }
+        const next = enqueueHarvestedPatch(state.harvestedPatches, patch);
+        if (next === state.harvestedPatches) return;
+        state.harvestedPatches = next;
+        renderState();
       }
     };
     renderState();
@@ -1485,11 +1540,13 @@ Fix Instructions:
       const codeEl = pre.querySelector("code") || pre;
       const codeText = (codeEl.textContent || "").trim();
       if (codeText.length < 15) return;
+      const scope = pre.closest("code-block") || pre.parentElement || pre;
+      if (scope.querySelector(".ggb-inline-btn")) return;
       let harvested = null;
       const v2Payload = parseV2PatchPayloadFromCode(codeText);
       if (v2Payload) {
         harvested = {
-          id: "patch-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7),
+          id: createStablePatchId("v2_json", v2Payload),
           mode: "v2_json",
           commitMessage: v2Payload.commitMessage,
           payload: v2Payload,
@@ -1499,9 +1556,10 @@ Fix Instructions:
         const detectedPath = extractPathFromCode(codeText, pre);
         const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || void 0);
         if (converted) {
+          const legacyMode = isSearchReplace(codeText) ? "v1_search_replace" : "v2_json";
           harvested = {
-            id: "patch-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7),
-            mode: isSearchReplace(codeText) ? "v1_search_replace" : "v2_json",
+            id: createStablePatchId(legacyMode, converted.payload),
+            mode: legacyMode,
             commitMessage: converted.payload.commitMessage,
             payload: converted.payload,
             legacyPayload: converted.legacyPayload,
@@ -1510,7 +1568,7 @@ Fix Instructions:
         }
       }
       if (!harvested) return;
-      onPatchHarvested(harvested);
+      const currentPatch = harvested;
       const btn = document.createElement("button");
       btn.className = "ggb-inline-btn";
       btn.style.cssText = `
@@ -1533,26 +1591,25 @@ Fix Instructions:
       transition: all 0.2s ease !important;
     `;
       btn.textContent = harvested.mode === "v2_json" ? "\u26A1 Push Patch (/api/patch)" : "\u{1F680} Push via Bridge";
-      const currentPatch = harvested;
       btn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
         onInlineApply(currentPatch);
       };
-      const codeHeader = pre.parentElement?.querySelector(
-        '.code-block-decoration, .code-header, [class*="header"]'
-      );
+      const codeHeader = Array.from(
+        scope.querySelectorAll('.code-block-decoration, .code-header, [class*="header"]')
+      ).find((el) => !pre.contains(el));
       if (codeHeader) {
         if (codeHeader.querySelector(".ggb-inline-btn")) return;
         codeHeader.appendChild(btn);
       } else {
-        if (pre.querySelector(".ggb-inline-btn")) return;
         pre.style.position = "relative";
         btn.style.position = "absolute";
         btn.style.top = "8px";
         btn.style.right = "40px";
         pre.appendChild(btn);
       }
+      onPatchHarvested(currentPatch);
     }
     function processCanvasCards() {
       const exportCandidateButtons = Array.from(

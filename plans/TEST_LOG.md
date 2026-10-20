@@ -309,3 +309,25 @@
   - `git diff --check`: `PASS` (Exit 0, nur CRLF-Hinweise).
 - **Hinweis:** Der Live-Endpunkt-Status ist eine Momentaufnahme des Laufs; er ist bewusst nicht Teil des Default-Gates.
 - **GESAMTSTATUS**: `PASS`
+
+### [2026-10-20T22:13:35+02:00] | Harvester Dedupe (Stable Patch Identity) Regression
+- `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+- `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler).
+- `node scripts/patches_and_tests/test-harvest-dedupe.mjs`: `PASS` (`Harvest dedupe: PASS`) — Identitätstests (Key-Reihenfolge, `commitMessage`, `path`, `search`/`replace`, Patch-Reihenfolge, `mode`) plus DOM-Shim-Szenarien: ein Block → genau eine Emission und ein `.ggb-inline-btn`; zweiter Scan und re-gerenderter Block mit bereits vorhandenem Button → keine weitere Emission; dritter Block mit anderem Payload → eigene Emission; Legacy-V1-SEARCH/REPLACE-IDs stabil über zwei Mounts.
+- `node scripts/patches_and_tests/test-v2-prompt-contract.mjs`: `PASS` (nutzt jetzt den gemeinsamen `harvester-modules.mjs`-Loader).
+- `node scripts/patches_and_tests/run-regressions.mjs`: `PASS` (7/7 lokale Suiten: `v2-prompt-contract`, `harvest-dedupe`, `target-branch-concurrency`, `recent-commits-opt-in`, `metadata-budget-hard-limit`, `local-cli`, `webhook-worker`; Live-Smoke weiterhin bewusst exkludiert).
+- `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; `packages/userscript-hud/dist/gemini-bridge.user.js` und Root `gemini-bridge.user.js` byte-identisch (SHA256 `A0263B43D0BF6E899B4160C64511841C94A511491BAE962DC570C30F6C31A9D0`, 65.405 Bytes).
+- Dateigrößen-Audit (Korrektur nach Queue-Dekomposition): 28 aktive TypeScript-Dateien, Maximum 495 Zeilen (`packages/userscript-hud/src/ui/shadowHud.ts`), 0 Dateien ≥ 500 Zeilen.
+- `git diff --check`: `PASS` (nur CRLF-Hinweise).
+- **GESAMTSTATUS**: `PASS`
+
+### [2026-10-20T22:29:00+02:00] | Harvester Dedupe Follow-up: Shadow-DOM-Queue-Dekomposition (`patchQueue.ts`)
+- **Anlass:** Die erste Umsetzung ließ `packages/userscript-hud/src/ui/shadowHud.ts` auf 505 Zeilen anwachsen und verletzte damit das `< 500`-Zeilen-Gesetz; die im Vorlauf protokollierte Zeilenangabe war falsch.
+- `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+- Neues Modul `packages/userscript-hud/src/services/patchQueue.ts` (56 Zeilen): `MAX_QUEUED_PATCHES`, `isDuplicatePatch`, `enqueueHarvestedPatch`, `removeHarvestedPatch`, `fifoQueue`, `runPatchQueue` (FIFO, Fail-Fast, Rückgabe `{ applied, total }`).
+- `shadowHud.ts` nutzt die Helfer an allen vier Stellen (Aufnahme, drei Pruning-Pfade, Apply-All) — Verhalten identisch, Datei jetzt 495 Zeilen.
+- `node scripts/patches_and_tests/test-harvest-dedupe.mjs`: `PASS` — zusätzlich Assertions für id-/Signatur-Dedupe, Queue-Deckel (20), FIFO-Reihenfolge, Pruning und Fail-Fast inkl. `{ applied, total }`.
+- `node scripts/patches_and_tests/run-regressions.mjs`: `PASS` (7/7).
+- Userscript-Build: `PASS`; dist/root byte-identisch (SHA256 `A0263B43…`, 65.405 Bytes).
+- Dateigrößen-Audit (Probe-Metrik `split('\n').length`): 28 Dateien, 0 ≥ 500, Maximum 495.
+- **GESAMTSTATUS**: `PASS`

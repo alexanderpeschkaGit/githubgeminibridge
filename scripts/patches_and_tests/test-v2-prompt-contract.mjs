@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { loadHarvesterModules, loadTypeScript } from './harvester-modules.mjs';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const require = createRequire(import.meta.url);
-const ts = require(path.join(ROOT_DIR, 'packages/edge-worker/node_modules/typescript/lib/typescript.js'));
+const ts = loadTypeScript(ROOT_DIR);
 
 function readEmbeddedInstructions() {
   const source = fs.readFileSync(
@@ -40,18 +39,7 @@ function readEmbeddedInstructions() {
 }
 
 async function loadHarvesterParser() {
-  const source = fs.readFileSync(
-    path.join(ROOT_DIR, 'packages/userscript-hud/src/dom/harvester.ts'),
-    'utf8'
-  );
-  const output = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ESNext,
-      target: ts.ScriptTarget.ES2020,
-    },
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(output).toString('base64')}`;
-  const harvester = await import(moduleUrl);
+  const harvester = await loadHarvesterModules(ROOT_DIR);
   return {
     parseV2PatchPayloadFromCode: harvester.parseV2PatchPayloadFromCode,
     convertLegacyBlocksToV2Payload: harvester.convertLegacyBlocksToV2Payload,

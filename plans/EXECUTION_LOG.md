@@ -568,3 +568,26 @@
   - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (14/14, including live `/health`).
   - Post-deploy `/health` probe: `PASS` (`version: 2.0.1`).
 - **Overall:** `PASS`; local checkpoint commit only, no `git push` (repository has no configured remote).
+
+### [2026-10-20T22:13:35+02:00] | Harvester Dedupe: Stable Patch Identity & Single-Emission Guarantee
+- **Status:** `DONE`
+- **Änderungen:**
+  1. Neues reines Modul `packages/userscript-hud/src/services/patchIdentity.ts` (`canonicalize`, `computePatchSignature`, `createStablePatchId`; djb2 → `patch-<hash36>`, keine DOM-Abhängigkeit).
+  2. `packages/userscript-hud/src/dom/harvester.ts`: Beide Harvest-Zweige (V2-JSON und V1-Konvertierung) verwenden `createStablePatchId` (kein `Date.now()`/`Math.random()` mehr); Button-/Header-Lookup ist auf `pre.closest('code-block') || pre.parentElement || pre` gescoppt, Header werden per `!pre.contains(el)` gefiltert, ein vorhandener `.ggb-inline-btn` im Scope bricht vor der Emission ab, und `onPatchHarvested` läuft erst nach dem tatsächlichen `appendChild`.
+  3. `packages/userscript-hud/src/ui/shadowHud.ts`: `addHarvestedPatch` verwirft Dubletten über `id` **oder** `computePatchSignature(...)`; FIFO/Apply-All, Clear-Queue und Commit-Pruning unverändert.
+  4. Neues Regressionsmodul `scripts/patches_and_tests/harvester-modules.mjs` (gemeinsamer TS-Transpile-/Data-URL-Loader für Harvester + relative Imports) und neue Suite `scripts/patches_and_tests/test-harvest-dedupe.mjs` (Identität pur + DOM-Shim-Szenarien); `test-v2-prompt-contract.mjs` nutzt denselben Loader.
+  5. `scripts/patches_and_tests/run-regressions.mjs`: neue Suite `harvest-dedupe` im Aggregat-Gate (jetzt 7 lokale Suiten).
+  6. Dokumentations-Sync: `.agents/rules/userscript-shadow-hud.md` (Content-Identität, Single-Emission, defensive Dedupe), `agents.md` (Dateiliste + P1-Zeile 5 „Content-Signature-Dedupe“).
+- **Validierung:** `tsc --noEmit` userscript HUD & edge worker `PASS`; `test-harvest-dedupe.mjs` `PASS`; `run-regressions.mjs` `PASS` (7/7); Userscript-Build + SHA256-Identität dist/root `PASS`; Dateigrößen-Audit ohne Datei ≥ 500 Zeilen.
+- **Overall:** `PASS`; kein `git push`, kein `wrangler deploy`.
+
+### [2026-10-20T22:29:00+02:00] | Harvester Dedupe Follow-up: Pflicht-Dekomposition der HUD-Queue
+- **Status:** `DONE`
+- **Anlass:** `packages/userscript-hud/src/ui/shadowHud.ts` wuchs durch die Dedupe-Änderung auf 505 Zeilen (>= 500) und verletzte das Dateigrößen-Gesetz; die vorherige Angabe „Maximum 458 Zeilen“ war falsch.
+- **Änderungen:**
+  1. Neues Modul `packages/userscript-hud/src/services/patchQueue.ts` (`MAX_QUEUED_PATCHES = 20`, `isDuplicatePatch`, `enqueueHarvestedPatch`, `removeHarvestedPatch`, `fifoQueue`, `runPatchQueue` mit Fail-Fast und `{ applied, total }`).
+  2. `shadowHud.ts` nutzt die Queue-Helfer an allen vier Stellen (Aufnahme, drei Pruning-Pfade, `⚡ Apply All`); Verhalten unverändert, Datei jetzt 495 Zeilen.
+  3. `harvester-modules.mjs` um `loadPatchQueueModules()` (generischer Entry-/Data-URL-Loader) erweitert; `test-harvest-dedupe.mjs` prüft zusätzlich Dedupe, Deckel, FIFO, Pruning und Fail-Fast der Queue.
+  4. Dokumentations-Sync: `userscript-shadow-hud.md` (Queue-Helfer statt Inline-Logik), `agents.md` (Modulliste um `patchQueue.ts`).
+- **Validierung:** `tsc --noEmit` HUD `PASS`; `test-harvest-dedupe.mjs` `PASS`; `run-regressions.mjs` `PASS` (7/7); Bundle neu gebaut und byte-identisch (SHA256 `A0263B43…`, 65.405 Bytes); Dateigrößen-Audit 28 Dateien / 0 ≥ 500 / Maximum 495.
+- **Overall:** `PASS`; kein `git push`, kein `wrangler deploy`.

@@ -2,8 +2,9 @@
 /**
  * Consolidated local regression gate.
  *
- * Runs the four review-fix regressions plus the local CLI and webhook suites
- * sequentially as child processes. The live-endpoint smoke suite is NOT part of
+ * Runs the local regression suites (prompt contract, harvest dedupe, target-branch
+ * concurrency, metadata budgets, local CLI and webhook) sequentially as child
+ * processes. The live-endpoint smoke suite is NOT part of
  * the default gate: it needs network access to the deployed worker, so it stays
  * an explicit invocation (`--include-smoke`) instead of silently degrading the
  * local result. When included, its JSON artifact is written to a throwaway file
@@ -30,6 +31,11 @@ const LOCAL_SUITES = [
     id: 'v2-prompt-contract',
     script: 'test-v2-prompt-contract.mjs',
     finding: 'V2 payload schema is executable (embedded + standalone prompts parsed by the harvester)',
+  },
+  {
+    id: 'harvest-dedupe',
+    script: 'test-harvest-dedupe.mjs',
+    finding: 'Content-derived patch ids: one queue entry per distinct patch, re-renders never duplicate',
   },
   {
     id: 'target-branch-concurrency',

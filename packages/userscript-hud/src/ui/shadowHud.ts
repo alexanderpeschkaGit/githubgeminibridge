@@ -23,6 +23,11 @@ import {
 } from '../services/selfHealing';
 import { advancePatchOidState, buildWorkerPatchRequest } from '../services/patchOidState';
 import {
+  enqueueHarvestedPatch,
+  removeHarvestedPatch,
+  runPatchQueue,
+} from '../services/patchQueue';
+import {
   HUD_STYLES,
   HUD_SHADOW_STYLES,
   createHudElement,
@@ -337,7 +342,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
         const res = await requestWorkerPatch(config, patchReq);
         if (res.status === 'COMMITTED') {
-          state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
+          state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
           const oidUpdates = advancePatchOidState(config, res);
           Object.assign(state, oidUpdates);
           if (oidUpdates.headOid) setStoredValue('head_oid', oidUpdates.headOid);
@@ -390,7 +395,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
         }
 
         if (res.status === 'NO_CHANGES_NEEDED') {
-          state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
+          state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
           const oidUpdates = advancePatchOidState(config, res);
           Object.assign(state, oidUpdates);
           if (oidUpdates.headOid) setStoredValue('head_oid', oidUpdates.headOid);
@@ -419,7 +424,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
           branch: config.branch,
         };
         const res = await requestLegacyCommit(config, legacyReq);
-        state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
+        state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
         controller.updateState({
           status: 'COMMITTED',
           statusMessage: `✅ Committed via legacy bridge: ${res?.commit?.oid ? res.commit.oid.slice(0, 7) : 'OK'}`,
@@ -447,29 +452,23 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   dom.applyAllBtn.onclick = async () => {
     if (state.harvestedPatches.length === 0 || state.status === 'PATCHING' || state.status === 'MIXING') return;
 
-    // FIFO: Reverse queue so oldest (chronologically first) is applied first!
-    const queue = [...state.harvestedPatches].reverse();
-    const total = queue.length;
-    let successCount = 0;
-
-    for (let i = 0; i < total; i++) {
-      const patch = queue[i];
-      controller.updateState({
-        status: 'PATCHING',
-        statusMessage: `⏳ [${i + 1}/${total}] Applying patch: "${patch.commitMessage}"...`,
-      });
-
-      const success = await handleApplyPatch(patch);
-      if (!success) {
-        // Fail-Fast: Hard stop on first error!
-        return;
+    const { applied, total } = await runPatchQueue(
+      state.harvestedPatches,
+      handleApplyPatch,
+      (patch, index, totalCount) => {
+        controller.updateState({
+          status: 'PATCHING',
+          statusMessage: `⏳ [${index + 1}/${totalCount}] Applying patch: "${patch.commitMessage}"...`,
+        });
       }
-      successCount++;
-    }
+    );
+
+    // Fail-fast: the failing patch already published its own error status.
+    if (applied < total) return;
 
     controller.updateState({
       status: 'COMMITTED',
-      statusMessage: `🎉 All ${successCount} patches successfully applied and committed!`,
+      statusMessage: `🎉 All ${applied} patches successfully applied and committed!`,
     });
   };
 
@@ -483,13 +482,10 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     closePanel,
     handleApplyPatch,
     addHarvestedPatch: (patch: HarvestedPatch) => {
-      if (!state.harvestedPatches.some((p) => p.id === patch.id)) {
-        state.harvestedPatches.unshift(patch);
-        if (state.harvestedPatches.length > 20) {
-          state.harvestedPatches.pop();
-        }
-        renderState();
-      }
+      const next = enqueueHarvestedPatch(state.harvestedPatches, patch);
+      if (next === state.harvestedPatches) return;
+      state.harvestedPatches = next;
+      renderState();
     },
   };
 

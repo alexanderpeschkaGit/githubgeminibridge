@@ -5,6 +5,7 @@ import type {
   CommitRequest,
   HarvestedPatch,
 } from '../types';
+import { createStablePatchId } from '../services/patchIdentity';
 
 /**
  * Extracts a file path hint from code comments or preceding sibling elements in the DOM.
@@ -191,13 +192,18 @@ export function startDomHarvester(
     const codeText = (codeEl.textContent || '').trim();
     if (codeText.length < 15) return;
 
+    // Button/header lookups stay inside this code block so a sibling header is never claimed.
+    const scope =
+      (pre.closest('code-block') as HTMLElement | null) || pre.parentElement || pre;
+    if (scope.querySelector('.ggb-inline-btn')) return;
+
     let harvested: HarvestedPatch | null = null;
 
     // Check for V2 JSON payload first
     const v2Payload = parseV2PatchPayloadFromCode(codeText);
     if (v2Payload) {
       harvested = {
-        id: 'patch-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+        id: createStablePatchId('v2_json', v2Payload),
         mode: 'v2_json',
         commitMessage: v2Payload.commitMessage,
         payload: v2Payload,
@@ -208,9 +214,12 @@ export function startDomHarvester(
       const detectedPath = extractPathFromCode(codeText, pre);
       const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || undefined);
       if (converted) {
+        const legacyMode: HarvestedPatch['mode'] = isSearchReplace(codeText)
+          ? 'v1_search_replace'
+          : 'v2_json';
         harvested = {
-          id: 'patch-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
-          mode: isSearchReplace(codeText) ? 'v1_search_replace' : 'v2_json',
+          id: createStablePatchId(legacyMode, converted.payload),
+          mode: legacyMode,
           commitMessage: converted.payload.commitMessage,
           payload: converted.payload,
           legacyPayload: converted.legacyPayload,
@@ -220,8 +229,7 @@ export function startDomHarvester(
     }
 
     if (!harvested) return;
-
-    onPatchHarvested(harvested);
+    const currentPatch = harvested;
 
     // Create Trusted-Types-safe inline action button
     const btn = document.createElement('button');
@@ -248,27 +256,28 @@ export function startDomHarvester(
     btn.textContent =
       harvested.mode === 'v2_json' ? '⚡ Push Patch (/api/patch)' : '🚀 Push via Bridge';
 
-    const currentPatch = harvested;
     btn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       onInlineApply(currentPatch);
     };
 
-    const codeHeader = pre.parentElement?.querySelector(
-      '.code-block-decoration, .code-header, [class*="header"]'
-    );
+    const codeHeader = Array.from(
+      scope.querySelectorAll('.code-block-decoration, .code-header, [class*="header"]')
+    ).find((el) => !pre.contains(el));
+
     if (codeHeader) {
       if (codeHeader.querySelector('.ggb-inline-btn')) return;
       codeHeader.appendChild(btn);
     } else {
-      if (pre.querySelector('.ggb-inline-btn')) return;
       pre.style.position = 'relative';
       btn.style.position = 'absolute';
       btn.style.top = '8px';
       btn.style.right = '40px';
       pre.appendChild(btn);
     }
+
+    onPatchHarvested(currentPatch);
   }
 
   function processCanvasCards() {
