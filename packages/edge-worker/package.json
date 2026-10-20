@@ -1,6 +1,6 @@
 {
   "name": "gemini-git-bridge",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Cloudflare Edge Orchestrator & GitHub GraphQL Bridge (Mixer, Patcher, Linter)",
   "type": "module",
   "main": "src/index.ts",

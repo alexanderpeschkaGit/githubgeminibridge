@@ -81,6 +81,7 @@ async function validateSyntaxInWorker(filePath, content) {
   if (oxcErrors) {
     return oxcErrors;
   }
+  const allowsJsx = ext === ".tsx" || ext === ".jsx" || ext === ".js" || ext === ".mjs" || ext === ".cjs";
   let currentLine = 1;
   let currentCol = 1;
   const bracketStack = [];
@@ -260,6 +261,12 @@ async function validateSyntaxInWorker(filePath, content) {
       continue;
     }
     if (ch === "/") {
+      if (allowsJsx && lastNonWhitespaceChar === "<") {
+        lastNonWhitespaceChar = ch;
+        i++;
+        currentCol++;
+        continue;
+      }
       const regexPreceders = "=([{:;,?!&|+-*^~<>%return\n";
       const isRegex = lastNonWhitespaceChar === "" || regexPreceders.includes(lastNonWhitespaceChar);
       if (isRegex) {
@@ -267,6 +274,15 @@ async function validateSyntaxInWorker(filePath, content) {
         inRegexCharClass = false;
         stringStartLine = currentLine;
         stringStartCol = currentCol;
+        i++;
+        currentCol++;
+        continue;
+      }
+    }
+    if (allowsJsx && (ch === "'" || ch === '"')) {
+      const prevChar = i > 0 ? content[i - 1] : "";
+      if (/[A-Za-z]/.test(prevChar) && /[A-Za-z]/.test(nextCh)) {
+        lastNonWhitespaceChar = ch;
         i++;
         currentCol++;
         continue;
@@ -619,6 +635,16 @@ function runBuiltinPreflightRules2(files, preflight) {
   }
   return errors;
 }
+function isInsertStyleBlockApplied(currentContent, block) {
+  return block.search.length > 0 && block.replace.length > 0 && block.replace.includes(block.search) && currentContent.includes(block.replace);
+}
+var MIN_ALREADY_APPLIED_REPLACE_CHARS = 8;
+function isAlreadyAppliedReplacement(currentContent, replace) {
+  if (replace.replace(/\s+/g, "").length < MIN_ALREADY_APPLIED_REPLACE_CHARS) {
+    return false;
+  }
+  return currentContent.includes(replace);
+}
 async function applyPatchesInMemory(patches, existingFiles, preflight, preflightHook = runPreflightLinter) {
   const additions = [];
   const deletions = [];
@@ -673,7 +699,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         errors.push({
           file: op.path,
           stage: "SEARCH_REPLACE",
-          message: "Target file does not exist on branch"
+          message: 'Target file does not exist at the patch base revision. Verify the path is repo-relative (no leading "/", "./" or backslashes) or use action "create" for a new file.'
         });
         continue;
       }
@@ -693,10 +719,13 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
           errors.push(...phErrors);
           hasError = true;
         }
+        if (isInsertStyleBlockApplied(currentContent, block)) {
+          continue;
+        }
         try {
           currentContent = applySearchReplace(currentContent, block.search, block.replace, op.path);
         } catch (err) {
-          if (block.replace.length > 0 && currentContent.includes(block.replace)) {
+          if (isAlreadyAppliedReplacement(currentContent, block.replace)) {
             continue;
           }
           errors.push({

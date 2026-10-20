@@ -136,6 +136,29 @@ export function isInsertStyleBlockApplied(
 }
 
 /**
+ * Minimum number of non-whitespace characters a replace-style replacement needs
+ * before it counts as proof of an earlier application. Without this floor a generic
+ * fragment ("x", "}", "return") that happens to exist anywhere in the file silently
+ * turned a failed search into `NO_CHANGES_NEEDED`; a specific replacement keeps the
+ * legitimate replay idempotent.
+ */
+export const MIN_ALREADY_APPLIED_REPLACE_CHARS = 8;
+
+/**
+ * Guards the replace-style idempotency shortcut used when a search block no longer
+ * resolves: only a specific replacement text proves the block was committed before.
+ */
+export function isAlreadyAppliedReplacement(
+  currentContent: string,
+  replace: string
+): boolean {
+  if (replace.replace(/\s+/g, '').length < MIN_ALREADY_APPLIED_REPLACE_CHARS) {
+    return false;
+  }
+  return currentContent.includes(replace);
+}
+
+/**
  * Pure in-memory patch processor.
  * Applies patches, validates placeholders, checks idempotency and executes preflight rules.
  */
@@ -243,11 +266,11 @@ export async function applyPatchesInMemory(
         try {
           currentContent = applySearchReplace(currentContent, block.search, block.replace, op.path);
         } catch (err: any) {
-          // Idempotency: if the replacement text is already fully present in the
-          // current content, this block was applied by an earlier commit. Treat it
-          // as a no-op instead of a SEARCH_REPLACE failure, so re-applying an
-          // already-committed patch yields NO_CHANGES_NEEDED rather than an error.
-          if (block.replace.length > 0 && currentContent.includes(block.replace)) {
+          // Idempotency: a replacement that is already present means this block was
+          // applied by an earlier commit, so re-applying yields NO_CHANGES_NEEDED
+          // instead of a SEARCH_REPLACE failure. Only a specific replacement counts
+          // as proof (see isAlreadyAppliedReplacement).
+          if (isAlreadyAppliedReplacement(currentContent, block.replace)) {
             continue;
           }
           errors.push({

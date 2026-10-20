@@ -748,3 +748,11 @@
 - **Tests:** neu `test-path-normalization.mjs` (12 Checks) und `test-jsx-syntax-scan.mjs`; neu `test-live-patch-e2e.mjs` (echte GitHub-API gegen `sikanda_projectinart_11`, read-only per Default, `--commit` nur auf Wegwerf-Branch + Cleanup); `harvester-modules.mjs` um `shared/repoPaths.ts` erweitert; `run-regressions.mjs` um `--include-live` ergaenzt.
 - **Validierung:** `tsc --noEmit` (Worker/HUD/CLI) `PASS`; `run-regressions.mjs --include-smoke --include-live` `PASS` (13/13 Suiten, `worker-smoke` 14/14, `live-patch-e2e` 9 Checks inkl. `COMMITTED` auf Wegwerf-Branch und unveraendertem `main`).
 - **Overall:** `DONE` (Code + Bundle). Naechster Schritt: `npx wrangler deploy` (Hard Stop, User-Freigabe) und Userscript-Update im Tampermonkey.
+
+### [2026-10-21T02:15:00+02:00] | Deploy `2.0.3` + Idempotenz-Marker (`2.0.4`) + Userscript-Release `2.0.8`
+- **Status:** `DONE`.
+- **Deploy:** `npx wrangler deploy` (User-Freigabe) — Worker `gemini-git-bridge`, Version ID `46fc94ad-d17d-49ca-8a06-47ec59b28490`; `GET /health` => `version 2.0.3`, `hasBridgeSecret/hasGithubToken true`.
+- **Push:** `origin/main` = `3b68cc6`; `https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js` liefert `@version 2.0.8` (Tampermonkey-Auto-Update greift).
+- **Aenderung (Folgefund aus der Live-Probe):** `patchInMemory.ts` wertete einen fehlgeschlagenen `search` als „bereits angewendet“, sobald der `replace`-Text irgendwo in der Datei vorkam — bei kurzen/generischen Ersetzungen (`x`, `}`, `return`) wurde daraus still `NO_CHANGES_NEEDED`. Neu: `isAlreadyAppliedReplacement` mit `MIN_ALREADY_APPLIED_REPLACE_CHARS = 8` (Nicht-Whitespace-Zeichen); Insert-Style-Blöcke behalten `isInsertStyleBlockApplied` unveraendert, damit Anker-Inserts nicht dupliziert werden.
+- **Tests:** `test-patch-idempotence.mjs` um drei Faelle erweitert (generischer Marker => `SEARCH_REPLACE`-Fehler, spezifischer Replay => No-op, Grenzwert/Whitespace-Verhalten). `run-regressions.mjs --include-smoke --include-live`: `PASS` (13/13). Worker-Quelle/`/health` auf `2.0.4` gebumpt, Worker- und CLI-Bundle neu gebaut.
+- **Overall:** `DONE` (deployt als `2.0.4`).

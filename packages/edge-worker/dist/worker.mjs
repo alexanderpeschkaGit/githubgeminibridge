@@ -910,6 +910,13 @@ function runBuiltinPreflightRules2(files, preflight) {
 function isInsertStyleBlockApplied(currentContent, block) {
   return block.search.length > 0 && block.replace.length > 0 && block.replace.includes(block.search) && currentContent.includes(block.replace);
 }
+var MIN_ALREADY_APPLIED_REPLACE_CHARS = 8;
+function isAlreadyAppliedReplacement(currentContent, replace) {
+  if (replace.replace(/\s+/g, "").length < MIN_ALREADY_APPLIED_REPLACE_CHARS) {
+    return false;
+  }
+  return currentContent.includes(replace);
+}
 async function applyPatchesInMemory(patches, existingFiles, preflight, preflightHook = runPreflightLinter) {
   const additions = [];
   const deletions = [];
@@ -990,7 +997,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         try {
           currentContent = applySearchReplace(currentContent, block.search, block.replace, op.path);
         } catch (err) {
-          if (block.replace.length > 0 && currentContent.includes(block.replace)) {
+          if (isAlreadyAppliedReplacement(currentContent, block.replace)) {
             continue;
           }
           errors.push({
@@ -2531,7 +2538,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "2.0.3",
+        version: "2.0.4",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))

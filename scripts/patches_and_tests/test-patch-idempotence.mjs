@@ -45,7 +45,8 @@ const build = await esbuild.build({
 });
 
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(build.outputFiles[0].text).toString('base64')}`;
-const { applyPatchesInMemory, isInsertStyleBlockApplied } = await import(moduleUrl);
+const { applyPatchesInMemory, isInsertStyleBlockApplied, isAlreadyAppliedReplacement, MIN_ALREADY_APPLIED_REPLACE_CHARS } =
+  await import(moduleUrl);
 
 const FILE = 'src/store/example.ts';
 const noLint = () => [];
@@ -139,4 +140,27 @@ const mixedContent = mixed.additions[0].content;
 assert.equal(count(mixedContent, SOCIAL_LINE), 1, 'already applied block is not duplicated');
 assert.equal(count(mixedContent, 'runSideEffect(data);'), 1, 'pending block is applied once');
 
-console.log('PASS: insert-style patches are idempotent and replace-style idempotency is preserved');
+// 5. A failed search whose replacement text merely coincides with existing content
+//    must be reported instead of being silently treated as "already applied".
+const ambiguous = ['const flag = true;', "const marker = 'x';", ''].join('\n');
+const ambiguousRun = await apply(ambiguous, [{ search: 'const missing = 1;', replace: 'x' }]);
+assert.equal(ambiguousRun.errors.length, 1, 'a generic replacement is not proof of an applied patch');
+assert.match(ambiguousRun.errors[0].message, /could not be resolved/i);
+assert.equal(ambiguousRun.hasEffectiveChanges, false);
+
+// 6. A specific replacement keeps the legitimate replay idempotent.
+const specificContent = ['if (ready) {', '  run();', '}', ''].join('\n');
+const specificReplay = await apply(specificContent, [{
+  search: ['if (ready) {', '  start();', '}'].join('\n'),
+  replace: ['if (ready) {', '  run();', '}'].join('\n'),
+}]);
+assert.equal(specificReplay.errors.length, 0, 'a committed replacement stays error-free');
+assert.equal(specificReplay.hasEffectiveChanges, false, 'a committed replacement stays a no-op');
+
+// 7. Boundary of the marker heuristic.
+assert.equal(MIN_ALREADY_APPLIED_REPLACE_CHARS, 8);
+assert.equal(isAlreadyAppliedReplacement('const x = 1;', 'x'), false, 'a one-character marker is not trusted');
+assert.equal(isAlreadyAppliedReplacement('const x = 1;', 'const x = 1;'), true, 'a full statement is trusted');
+assert.equal(isAlreadyAppliedReplacement('const x = 1;', '  con st  '), false, 'whitespace does not inflate the marker');
+
+console.log('PASS: insert-style patches are idempotent, replace-style idempotency needs a specific marker');

@@ -443,3 +443,10 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke --include-live`: `PASS` (13/13 Suiten; `worker-smoke` 14/14 inkl. Probe 10 Dateigroessen-Audit `< 500` Zeilen und Bundle-Identitaet).
 - `node packages/userscript-hud/scripts/build-userscript.mjs` / `node packages/edge-worker/scripts/build-worker.mjs`: `PASS`; Bundle `@version 2.0.8`, `dist` <=> Root byte-identisch; `src/update.ts` kommt im Bundle nicht mehr vor, `normalizeRepoPath`/`File path for patch` schon.
 - **GESAMTSTATUS:** `PASS` (Code + Bundles). **Nicht verifiziert:** Live-Verhalten des deployten Workers — Live laeuft weiterhin `2.0.2`, Deployment ist ein Hard Stop.
+### [2026-10-21T02:15:00+02:00] | Deploy-Verifikation `2.0.3` & Idempotenz-Marker `2.0.4`
+- Live `GET https://gemini-git-bridge.sikanda.workers.dev/health`: `{"status":"ok","version":"2.0.3","hasBridgeSecret":true,"hasGithubToken":true}` (Version ID `46fc94ad-d17d-49ca-8a06-47ec59b28490`).
+- `git ls-remote origin refs/heads/main` = `3b68cc6c8cfbfd3eef94bbad9e46799348ecc748`; `raw.githubusercontent.com/.../main/gemini-bridge.user.js` => `@version 2.0.8` (Auto-Update-Quelle aktuell).
+- `node scripts/patches_and_tests/test-patch-idempotence.mjs`: `PASS` — zusaetzlich: `replace = "x"` bei fehlendem `search` => genau 1 `SEARCH_REPLACE`-Fehler (kein stilles `NO_CHANGES_NEEDED`), spezifischer Replace-Replay => 0 Fehler und keine Aenderung, `MIN_ALREADY_APPLIED_REPLACE_CHARS === 8`, `isAlreadyAppliedReplacement('const x = 1;', 'x') === false`, reiner Whitespace-Marker zaehlt nicht.
+- `tsc --noEmit` (Worker/CLI): `PASS`; `node packages/edge-worker/scripts/build-worker.mjs` + `node packages/local-cli/scripts/build-cli.mjs`: `PASS`.
+- `node scripts/patches_and_tests/run-regressions.mjs --include-smoke --include-live`: `PASS` (13/13 Suiten, `worker-smoke` 14/14).
+- **GESAMTSTATUS:** `PASS`.
