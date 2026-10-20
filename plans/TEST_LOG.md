@@ -394,3 +394,13 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten, `worker-smoke` 14/14 Probes inkl. Modularitäts-Audit und Live-`/health`).
 - Dateigrößen: `patchInMemory.ts` 319 Zeilen (< 500).
 - **GESAMTSTATUS**: `PASS` (lokal; Live-Worker unverändert `2.0.1`, kein Deploy)
+
+### [2026-10-21T00:18:00+02:00] | Live-Deploy Worker `2.0.2` + Post-Deploy-Replay
+- `node packages/edge-worker/node_modules/typescript/bin/tsc --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler).
+- `node packages/edge-worker/scripts/build-worker.mjs`: `PASS`; `dist/worker.mjs` enthält `version: "2.0.2"`.
+- `npx wrangler deploy` (aus `packages/edge-worker`, User-Freigabe): `PASS` — Version ID `33374698-e8e9-4e81-a53a-755087ab07ad`, 89.37 KiB / gzip 20.94 KiB, Startup 2 ms.
+- Live `GET /health`: `PASS` — `version: 2.0.2`, `hasBridgeSecret: true`, `hasGithubToken: true`.
+- Live-Replay (`POST /api/patch`, derselbe insert-style Block, `targetBranch: bridge`, `expectedTargetHeadOid: e98e02c…`): `NO_CHANGES_NEEDED`, `newHeadOid = e98e02c003b245a6d713dea7a46f8787d783bb40`, `createdBranch: false` → **kein** zweiter Commit.
+- Read-only Gegenprobe: `branches/bridge` = `e98e02c…` (unverändert); Datei auf `bridge` enthält `set({ socialLinks: r2Data.socialLinks });` genau 1× (keine Duplikation).
+- `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten; `worker-smoke` 14/14 Probes inkl. Live-`/health` und Modularitäts-Audit).
+- **GESAMTSTATUS**: `PASS`

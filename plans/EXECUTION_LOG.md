@@ -674,4 +674,12 @@
 - **Validierung:** `tsc --noEmit` (worker) `PASS`; neue Suite `PASS`; Negativ-Nachweis: mit temporär neutralisiertem Guard schlägt die Suite fehl (`AssertionError: re-applying an insert-style patch must be a no-op`) ⇒ der Test deckt den Bug tatsächlich ab; `run-regressions.mjs --include-smoke` `PASS` (10/10, `worker-smoke` 14/14 inkl. Dateigrößen-Audit); `patchInMemory.ts` 319 Zeilen (< 500).
 - **Overall:** `DONE` (lokal). Der Live-Worker läuft weiterhin auf `2.0.1` **ohne** diesen Fix — `wrangler deploy` ist Hard Stop und wurde nicht ausgeführt.
 
+### [2026-10-21T00:18:00+02:00] | Live-Deploy Worker `2.0.2` (Idempotenz-Fix)
+- **Status:** `DONE`
+- **Freigabe:** Der User hat `wrangler deploy` in diesem Chat explizit erlaubt (Hard Stop damit aufgehoben).
+- **Aenderungen:** `packages/edge-worker/src/index.ts` (`version: '2.0.2'` im `/health`-Payload) und `packages/edge-worker/package.json`; Bundle `dist/worker.mjs` neu gebaut (enthält `version: "2.0.2"`).
+- **Deploy:** `npx wrangler deploy` aus `packages/edge-worker` → `PASS` (89.37 KiB / gzip 20.94 KiB, Startup 2 ms, Version ID `33374698-e8e9-4e81-a53a-755087ab07ad`).
+- **Post-Deploy-Verifikation:** `GET /health` → `version: 2.0.2`, `hasBridgeSecret: true`, `hasGithubToken: true`. Live-Replay desselben insert-style Patches gegen `bridge` (`expectedHeadOid = 65dbd85…`, `expectedTargetHeadOid = e98e02c…`) → `NO_CHANGES_NEEDED` mit `newHeadOid = e98e02c…`; `bridge`-HEAD unverändert, `set({ socialLinks: … })` genau 1× in der Datei. Der Fix wirkt also live, ohne einen zweiten Commit zu erzeugen.
+- **Overall:** `PASS`; kein `git push`.
+
 
