@@ -694,4 +694,15 @@
 - **Validierung:** `tsc --noEmit` (HUD) `PASS`; `test-hud-oid-scope.mjs` `PASS`; `run-regressions.mjs --include-smoke` `PASS` (10/10 Suiten).
 - **Overall:** `DONE`. **Wirksam erst nach Update im Tampermonkey** (kein Deploy nötig — Worker bleibt `2.0.2`).
 
+### [2026-10-21T00:43:00+02:00] | HUD `2.0.5`: Init-Fehler werden sichtbar statt stumm
+- **Status:** `DONE`
+- **Anlass:** Nach dem Update auf `2.0.4` und einem Reload meldete der User „kein HUD mehr“. Reproduktion im Automations-Browser (Bundle mit GM-Stubs injiziert) zeigte: der Mount ist intakt (`#gemini-edge-hud-root` vorhanden, Titel `v2.0.4`/`v2.0.5`, keine `pageerror`). Die 2.0.4-Änderung ist also nicht die Ursache — der Init-Pfad verschluckte Fehler aber vollständig (`mountShadowHud()` lief ohne `try/catch`, auch `loadHudConfig()` lag außerhalb).
+- **Aenderungen:**
+  1. Neues Modul `packages/userscript-hud/src/services/runtimeInfo.ts`: `getRunningScriptVersion()` (aus `GM_info.script.version`) und `reportHudInitFailure(error)`, das zusätzlich eine feste Fehlerbox `#gemini-edge-hud-init-error` in `document.body` rendert.
+  2. `packages/userscript-hud/src/index.ts`: `loadHudConfig()` **und** `mountShadowHud()` + Harvester-Start liegen jetzt in einem `try/catch`; Version wird beim Start und bei Erfolg geloggt. Ein Fehlschlag erzeugt sichtbaren Text statt „kein HUD“.
+  3. `shadowHud.ts` nutzt `getRunningScriptVersion()`; `hudDomTree.ts`-Fallbacktitel auf `⚡ Cloudflare Edge HUD` (ohne veraltetes „Stage 3“).
+  4. Userscript `2.0.5`, Bundle neu gebaut.
+- **Validierung (Browser, GM-Stubs):** Normalfall → `hud: true`, Titel `⚡ Cloudflare Edge HUD v2.0.5`, keine Fehler; erzwungener Fehler (`attachShadow` wirft) → Box `⚡ Gemini Edge HUD v2.0.5 failed to initialise: Error: forced shadow failure`. `tsc --noEmit` HUD `PASS`; `run-regressions --include-smoke` `PASS` (10/10).
+- **Overall:** `DONE`. Nächster Schritt für den User: 2.0.5 installieren, Tab neu laden; erscheint keine HUD, steht die Ursache künftig als rote Box bzw. als `[Gemini Edge HUD] …`-Log in der Konsole.
+
 

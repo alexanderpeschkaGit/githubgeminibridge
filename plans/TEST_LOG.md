@@ -411,3 +411,11 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; Bundle `@version 2.0.4`, `dist` ⇄ Root byte-identisch; enthält `runningVersion` (`GM_info.script.version`) und den Recovery-Hinweis `Stale snapshot OID discarded`.
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten, `worker-smoke` 14/14).
 - **GESAMTSTATUS**: `PASS` (wirksam nach Update im Tampermonkey; Worker unverändert `2.0.2`)
+
+### [2026-10-21T00:43:00+02:00] | HUD `2.0.5` (sichtbare Init-Fehler)
+- Browser-Reproduktion (Bundle per `page.addScriptTag` mit GM-Stubs, `about:blank`): Normalfall `#gemini-edge-hud-root` vorhanden, Titel `⚡ Cloudflare Edge HUD v2.0.5`, keine `pageerror` ⇒ die 2.0.4-Änderung bricht den Mount nicht.
+- Negativpfad: `Element.prototype.attachShadow` wirft ⇒ `#gemini-edge-hud-init-error` mit `⚡ Gemini Edge HUD v2.0.5 failed to initialise: Error: forced shadow failure` (vorher: stiller Abbruch, kein HUD).
+- `node packages/edge-worker/node_modules/typescript/bin/tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS`.
+- `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; Bundle `@version 2.0.5`, `dist` ⇄ Root identisch.
+- `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten, `worker-smoke` 14/14).
+- **GESAMTSTATUS**: `PASS`

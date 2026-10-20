@@ -31,7 +31,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   // Drawer Panel
   const panel = createHudElement('div', 'hud-panel');
   const header = createHudElement('div', 'hud-header');
-  const title = createHudElement('div', 'hud-title', '⚡ Cloudflare Edge HUD (Stage 3)');
+  const title = createHudElement('div', 'hud-title', '⚡ Cloudflare Edge HUD');
   const closeBtn = createHudElement('button', 'hud-close-btn', '×');
   closeBtn.title = 'Close Panel';
   header.appendChild(title);

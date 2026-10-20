@@ -1,6 +1,7 @@
 import { mountShadowHud, ShadowHudController } from './ui/shadowHud';
 import { startDomHarvester } from './dom/harvester';
 import { loadHudConfig } from './services/storage';
+import { getRunningScriptVersion, reportHudInitFailure } from './services/runtimeInfo';
 
 export * from './types';
 export * from './services/storage';
@@ -27,25 +28,32 @@ export function initGeminiEdgeHud(): ShadowHudController | null {
     return null;
   }
 
-  const cfg = loadHudConfig();
-  console.log('[Gemini Edge HUD] Initializing with config:', {
-    workerUrl: cfg.workerUrl,
-    repo: cfg.repo,
-    branch: cfg.branch,
-  });
+  const runningVersion = getRunningScriptVersion();
 
-  controllerInstance = mountShadowHud();
+  try {
+    const cfg = loadHudConfig();
+    console.log(`[Gemini Edge HUD] Initializing (script v${runningVersion || 'unknown'}) with config:`, {
+      workerUrl: cfg.workerUrl,
+      repo: cfg.repo,
+      branch: cfg.branch,
+    });
 
-  startDomHarvester(
-    (patch) => {
-      controllerInstance?.addHarvestedPatch(patch);
-    },
-    (patch) => {
-      controllerInstance?.handleApplyPatch(patch);
-    }
-  );
+    controllerInstance = mountShadowHud();
 
-  console.log('⚡ [Gemini Edge HUD] Successfully mounted in Shadow DOM.');
+    startDomHarvester(
+      (patch) => {
+        controllerInstance?.addHarvestedPatch(patch);
+      },
+      (patch) => {
+        controllerInstance?.handleApplyPatch(patch);
+      }
+    );
+  } catch (error) {
+    reportHudInitFailure(error);
+    return null;
+  }
+
+  console.log(`⚡ [Gemini Edge HUD] Successfully mounted v${runningVersion || 'unknown'} in Shadow DOM.`);
   return controllerInstance;
 }
 

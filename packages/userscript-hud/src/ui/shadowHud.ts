@@ -19,6 +19,7 @@ import {
   MAX_SELF_HEALING_RETRIES,
 } from '../services/selfHealing';
 import { buildWorkerPatchRequest, patchSnapshotRequiredMessage, resolveConflictOidReset } from '../services/patchOidState';
+import { getRunningScriptVersion } from '../services/runtimeInfo';
 import {
   applyPatchResponseOids,
   clearPatchOidState,
@@ -71,10 +72,8 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
   // Surfaces the actually executing script version: a stale Tampermonkey install is
   // otherwise indistinguishable from a logic bug when diagnosing HUD behaviour.
-  const runningVersion = typeof GM_info !== 'undefined'
-    ? GM_info?.script?.version || GM_info?.script?.versionString || ''
-    : '';
-  if (runningVersion) {
+  const runningVersion = getRunningScriptVersion();
+  if (runningVersion && dom.title) {
     dom.title.textContent = `⚡ Cloudflare Edge HUD v${runningVersion}`;
   }
 

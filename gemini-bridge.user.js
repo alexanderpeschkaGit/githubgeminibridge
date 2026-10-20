@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.4
+// @version      2.0.5
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -585,6 +585,40 @@ Fix Instructions:
     };
   }
 
+  // packages/userscript-hud/src/services/runtimeInfo.ts
+  var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
+  function getRunningScriptVersion() {
+    if (typeof GM_info === "undefined" || !GM_info || !GM_info.script) {
+      return "";
+    }
+    return GM_info.script.version || GM_info.script.versionString || "";
+  }
+  function reportHudInitFailure(error) {
+    console.error("[Gemini Edge HUD] Initialisation failed:", error);
+    if (typeof document === "undefined" || !document.body) return;
+    if (document.getElementById(INIT_FAILURE_ID)) return;
+    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    const version = getRunningScriptVersion();
+    const box = document.createElement("div");
+    box.id = INIT_FAILURE_ID;
+    box.textContent = `\u26A1 Gemini Edge HUD${version ? ` v${version}` : ""} failed to initialise: ${message}`;
+    box.style.cssText = [
+      "position:fixed",
+      "right:16px",
+      "bottom:16px",
+      "z-index:2147483647",
+      "max-width:460px",
+      "padding:10px 14px",
+      "border-radius:8px",
+      "background:#7f1d1d",
+      "color:#fff",
+      "font:12px/1.5 system-ui,sans-serif",
+      "box-shadow:0 6px 24px rgba(0,0,0,.45)",
+      "white-space:pre-wrap"
+    ].join(";");
+    document.body.appendChild(box);
+  }
+
   // packages/userscript-hud/src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
@@ -986,7 +1020,7 @@ Fix Instructions:
     shadowRoot.appendChild(trigger);
     const panel = createHudElement("div", "hud-panel");
     const header = createHudElement("div", "hud-header");
-    const title = createHudElement("div", "hud-title", "\u26A1 Cloudflare Edge HUD (Stage 3)");
+    const title = createHudElement("div", "hud-title", "\u26A1 Cloudflare Edge HUD");
     const closeBtn = createHudElement("button", "hud-close-btn", "\xD7");
     closeBtn.title = "Close Panel";
     header.appendChild(title);
@@ -1150,8 +1184,8 @@ Fix Instructions:
       harvestedPatches: []
     };
     const dom = buildHudDomTree(config, state);
-    const runningVersion = typeof GM_info !== "undefined" ? GM_info?.script?.version || GM_info?.script?.versionString || "" : "";
-    if (runningVersion) {
+    const runningVersion = getRunningScriptVersion();
+    if (runningVersion && dom.title) {
       dom.title.textContent = `\u26A1 Cloudflare Edge HUD v${runningVersion}`;
     }
     function resetPatchOidState(reason) {
@@ -1811,22 +1845,28 @@ Fix Instructions:
     if (window.top !== window.self) {
       return null;
     }
-    const cfg = loadHudConfig();
-    console.log("[Gemini Edge HUD] Initializing with config:", {
-      workerUrl: cfg.workerUrl,
-      repo: cfg.repo,
-      branch: cfg.branch
-    });
-    controllerInstance = mountShadowHud();
-    startDomHarvester(
-      (patch) => {
-        controllerInstance?.addHarvestedPatch(patch);
-      },
-      (patch) => {
-        controllerInstance?.handleApplyPatch(patch);
-      }
-    );
-    console.log("\u26A1 [Gemini Edge HUD] Successfully mounted in Shadow DOM.");
+    const runningVersion = getRunningScriptVersion();
+    try {
+      const cfg = loadHudConfig();
+      console.log(`[Gemini Edge HUD] Initializing (script v${runningVersion || "unknown"}) with config:`, {
+        workerUrl: cfg.workerUrl,
+        repo: cfg.repo,
+        branch: cfg.branch
+      });
+      controllerInstance = mountShadowHud();
+      startDomHarvester(
+        (patch) => {
+          controllerInstance?.addHarvestedPatch(patch);
+        },
+        (patch) => {
+          controllerInstance?.handleApplyPatch(patch);
+        }
+      );
+    } catch (error) {
+      reportHudInitFailure(error);
+      return null;
+    }
+    console.log(`\u26A1 [Gemini Edge HUD] Successfully mounted v${runningVersion || "unknown"} in Shadow DOM.`);
     return controllerInstance;
   }
   if (typeof window !== "undefined" && typeof document !== "undefined") {
