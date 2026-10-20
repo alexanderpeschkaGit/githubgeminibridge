@@ -718,3 +718,15 @@
   5. Regressionen: `test-hud-oid-scope.mjs` um die Branch-Head-Helfer und `requestBranchHead`-Fetch-Stubs erweitert; `test-recent-commits-opt-in.mjs` prueft den Handler jetzt in `hudConfigBindings.ts`.
 - **Validierung:** `tsc --noEmit` (HUD) `PASS`; Browser-E2E mit GM-Stubs (frischer Storage, `…-on-main`/`preview`, Target `bridge`): `/graphql` -> HEAD `aaaa…`, `/api/patch` mit `expectedHeadOid=aaaa…`, Status `? Committed to bridge`, Source-OID unveraendert, Target-OID `bbbb…` + `target_head_branch=bridge` persistiert; Negativpfad (`ref: null`) => Fehler mit Grund, Patch bleibt in der Queue; `run-regressions.mjs --include-smoke` `PASS` (10/10 Suiten, `worker-smoke` 14/14).
 - **Overall:** `DONE`. Wirksam nach Update im Tampermonkey; Worker bleibt `2.0.2` (kein Deploy noetig).
+
+### [2026-10-21T01:25:00+02:00] | HUD `2.0.7`: Secret-Härtung vor Public-Release + Tampermonkey Auto-Update
+- **Status:** `DONE`
+- **Anlass:** Der Repo-Push in das private `alexanderpeschkaGit/githubgeminibridge` zeigte, dass `DEFAULT_HUD_CONFIG.workerSecret` das **live** `WORKER_SECRET` enthielt (verifiziert: mit dem Wert antwortet `/graphql` autorisiert, ohne `401`). Ein oeffentliches Repo haette damit jedem den Zugriff auf den Worker inkl. dessen `GITHUB_PAT` erlaubt.
+- **Aenderungen:**
+  1. `wrangler secret put WORKER_SECRET --name gemini-git-bridge`: neues 32-Byte-Zufalls-Secret gesetzt (Cloudflare, User-Freigabe). Verifiziert: neues Secret => `POST /graphql` `HTTP 200` (`viewer.login = alexanderpeschkaGit`), altes Secret => `HTTP 401` (**widerrufen**).
+  2. `packages/userscript-hud/src/services/storage.ts`: `DEFAULT_HUD_CONFIG.workerSecret` = `''` (kein gebuendeltes Credential mehr); `shadowHud.ts` zeigt bei leerem Secret „Set your Worker Secret (WORKER_SECRET) in the panel before using the bridge."
+  3. Banner in `build-userscript.mjs`: `@downloadURL`/`@updateURL` auf `https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js`; Userscript `2.0.7`.
+  4. `worker-smoke.mjs`: Secret-Fixture durch einen Platzhalter ersetzt (kein Credential mehr in Testcode).
+  5. Regelwerk `userscript-shadow-hud.md` um „Kein gebuendeltes Secret" und Auto-Update ergaenzt.
+- **Validierung:** `tsc --noEmit` (HUD) `PASS`; Bundle enthaelt den alten Secret-Wert `0`x; `run-regressions.mjs --include-smoke` `PASS` (10/10).
+- **Overall:** `DONE`. Das alte Secret ist widerrufen; verbleibende Vorkommen in `repmixBridge.txt`/`_v1_backup` sind historisch und wertlos.

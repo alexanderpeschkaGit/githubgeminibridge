@@ -217,7 +217,7 @@ async function main() {
     const patRegex = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
     const testPatBlocked = patRegex.test('ghp_abcdefghijklmnopqrstuvwxyz1234567890');
     const testGithubPatBlocked = patRegex.test('github_pat_11AAAAAAA0123456789abcdefghijklmnopqrstuvwxyz');
-    const testSecretAllowed = !patRegex.test('fc1bec3f781b59dee2e576650460f417269fd44d3b0e39d77ae18480c270524f');
+    const testSecretAllowed = !patRegex.test('test-worker-secret-placeholder-value');
 
     // Verify built bundle contains required Tampermonkey grants & Shadow-DOM mount
     const rootScriptContent = fs.readFileSync(path.join(ROOT_DIR, 'gemini-bridge.user.js'), 'utf-8');

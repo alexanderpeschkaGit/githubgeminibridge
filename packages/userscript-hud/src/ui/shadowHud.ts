@@ -67,7 +67,9 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     ...loadPatchOidState(config),
     lastMixStats: null,
     status: 'IDLE',
-    statusMessage: 'Ready. Load Repo Mix or commit patches.',
+    statusMessage: config.workerSecret
+      ? 'Ready. Load Repo Mix or commit patches.'
+      : 'Set your Worker Secret (WORKER_SECRET) in the panel before using the bridge.',
     retryCount: 0,
     lastErrors: [],
     harvestedPatches: [],

@@ -426,3 +426,10 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten; `worker-smoke` 14/14 inkl. Probe 10 Dateigroessen-Audit `0` Dateien >= 500 Zeilen und Bundle-Identitaet).
 - `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; Bundle `@version 2.0.6`, `dist` <=> Root byte-identisch.
 - **GESAMTSTATUS**: `PASS` (wirksam nach Update im Tampermonkey; Worker unveraendert `2.0.2`)
+
+### [2026-10-21T01:25:00+02:00] | HUD `2.0.7` (Secret-Haertung & Auto-Update-Banner)
+- Live-Auth-Probe: neues `WORKER_SECRET` => `POST https://gemini-git-bridge.sikanda.workers.dev/graphql` `HTTP 200` (`viewer.login = alexanderpeschkaGit`); altes Secret => `HTTP 401` (widerrufen).
+- `node packages/edge-worker/node_modules/typescript/bin/tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS`.
+- `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; Bundle `@version 2.0.7` mit `@downloadURL`/`@updateURL`; Vorkommen des alten Secrets im Bundle: `0`.
+- `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten, `worker-smoke` 14/14).
+- **GESAMTSTATUS**: `PASS` (Worker-Konfiguration geaendert; kein Code-Deploy noetig)

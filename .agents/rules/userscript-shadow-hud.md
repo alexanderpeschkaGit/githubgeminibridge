@@ -18,6 +18,8 @@ description: "Apply this rule whenever working on packages/userscript-hud/ or ge
 2. **Strikte Secret-Trennung:**
    - Im Userscript (`GM_setValue` / `localStorage`) darf **niemals** ein GitHub Personal Access Token (`GITHUB_PAT` / `GITHUB_TOKEN`) gespeichert werden.
    - Es werden ausschließlich die Worker-URL (`https://gemini-git-bridge.sikanda.workers.dev`), das `WORKER_SECRET` (bzw. `BRIDGE_SECRET`), das Ziel-Repository (`owner/repo`) und der Ziel-Branch gespeichert.
+   - **Kein gebündeltes Secret:** `DEFAULT_HUD_CONFIG.workerSecret` ist leer. Das `WORKER_SECRET` wird einmalig im HUD-Panel eingegeben und landet nur im GM-Storage — niemals im Bundle oder Repository. Ein mitgeliefertes Default-Secret würde bei jedem Release mitveröffentlicht und erlaubt Dritten den Zugriff auf den Worker (und damit auf den dort hinterlegten `GITHUB_PAT`). Bei leerem Secret zeigt der HUD-Status explizit „Set your Worker Secret …“.
+   - **Auto-Update:** Das Bundle trägt `@downloadURL`/`@updateURL` auf die `raw.githubusercontent.com`-URL des öffentlichen Repos (`alexanderpeschkaGit/githubgeminibridge`, Branch `main`). Tampermonkey vergleicht `@version`; ein Push einer neuen Version genügt für das Update.
 3. **CSP-Bypass via `GM_xmlhttpRequest`:**
    - Da `gemini.google.com` und `aistudio.google.com` strikte Content Security Policies (`connect-src`) erzwingen, müssen sämtliche HTTP-Aufrufe zum Cloudflare Worker über `GM_xmlhttpRequest` (bzw. `GM.xmlHttpRequest`) mit `@connect *.workers.dev` erfolgen – niemals über ungekapseltes Browser-`fetch()`.
 

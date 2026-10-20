@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.6
+// @version      2.0.7
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -14,6 +14,8 @@
 // @noframes
 // @connect      gemini-git-bridge.sikanda.workers.dev
 // @connect      *.workers.dev
+// @downloadURL  https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js
+// @updateURL    https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -99,7 +101,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   }
   var DEFAULT_HUD_CONFIG = {
     workerUrl: "https://gemini-git-bridge.sikanda.workers.dev",
-    workerSecret: "fc1bec3f781b59dee2e576650460f417269fd44d3b0e39d77ae18480c270524f",
+    // No bundled credential: the WORKER_SECRET is entered once in the HUD panel and kept
+    // in GM storage. Shipping it in the userscript would publish it with every release.
+    workerSecret: "",
     repo: "alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0",
     branch: "preview",
     targetBranch: "",
@@ -1301,7 +1305,7 @@ Fix Instructions:
       ...loadPatchOidState(config),
       lastMixStats: null,
       status: "IDLE",
-      statusMessage: "Ready. Load Repo Mix or commit patches.",
+      statusMessage: config.workerSecret ? "Ready. Load Repo Mix or commit patches." : "Set your Worker Secret (WORKER_SECRET) in the panel before using the bridge.",
       retryCount: 0,
       lastErrors: [],
       harvestedPatches: []

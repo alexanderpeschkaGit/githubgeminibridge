@@ -72,7 +72,9 @@ export function setStoredValue(key: string, value: string): void {
 
 export const DEFAULT_HUD_CONFIG: HudConfig = {
   workerUrl: 'https://gemini-git-bridge.sikanda.workers.dev',
-  workerSecret: 'fc1bec3f781b59dee2e576650460f417269fd44d3b0e39d77ae18480c270524f',
+  // No bundled credential: the WORKER_SECRET is entered once in the HUD panel and kept
+  // in GM storage. Shipping it in the userscript would publish it with every release.
+  workerSecret: '',
   repo: 'alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0',
   branch: 'preview',
   targetBranch: '',

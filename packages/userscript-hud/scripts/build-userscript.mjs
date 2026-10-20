@@ -20,7 +20,7 @@ try {
 const USERSCRIPT_BANNER = `// ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.6
+// @version      2.0.7
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -33,6 +33,8 @@ const USERSCRIPT_BANNER = `// ==UserScript==
 // @noframes
 // @connect      gemini-git-bridge.sikanda.workers.dev
 // @connect      *.workers.dev
+// @downloadURL  https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js
+// @updateURL    https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
