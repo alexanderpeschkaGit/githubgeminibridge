@@ -67,16 +67,22 @@ async function main() {
     };
   }));
 
-  // Probe 3: GitHub GraphQL Batch-Read & Single-File Commit Helpers Check
-  results.push(await runProbe(3, 'GitHub Connector V2 Extensions (Batch-Read & Single-File Commit)', async () => {
+  // Probe 3: GitHub GraphQL Batch-Read, Single-File Commit & Branch Ref Helpers Check
+  results.push(await runProbe(3, 'GitHub Connector V2 Extensions (Batch-Read, Single Commit & Branch Ref)', async () => {
     const githubPath = path.join(ROOT_DIR, 'packages/edge-worker/src/utils/github.ts');
+    const typesPath = path.join(ROOT_DIR, 'shared/types.ts');
     const content = fs.readFileSync(githubPath, 'utf-8');
+    const typesContent = fs.readFileSync(typesPath, 'utf-8');
     const hasBatchRead = content.includes('export async function fetchMultipleFilesViaGraphQL');
     const hasSingleCommit = content.includes('export async function commitSingleFileViaGraphQL');
+    const hasCreateBranchRef = content.includes('export async function createBranchRef');
+    const hasTargetBranchInTypes = typesContent.includes('targetBranch?: string') && typesContent.includes('createBranchIfNeeded?: boolean');
     return {
-      pass: hasBatchRead && hasSingleCommit,
+      pass: hasBatchRead && hasSingleCommit && hasCreateBranchRef && hasTargetBranchInTypes,
       hasBatchRead,
-      hasSingleCommit
+      hasSingleCommit,
+      hasCreateBranchRef,
+      hasTargetBranchInTypes
     };
   }));
 
@@ -657,6 +663,144 @@ async function main() {
       functionalBudgetPass,
       guardrailPass,
       ignorePass
+    };
+  }));
+
+  // Probe 13: Volatile Files Detection & Recent Commits in RepoMix
+  results.push(await runProbe(13, 'Volatile Files Detection & Recent Commits in RepoMix', async () => {
+    const recentCommitsPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/recentCommits.ts');
+    const mixerPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixer.ts');
+    const chunkerPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixChunker.ts');
+    const rootUserScriptPath = path.join(ROOT_DIR, 'gemini-bridge.user.js');
+
+    const filesExist = [recentCommitsPath, mixerPath, chunkerPath, rootUserScriptPath].every((p) => fs.existsSync(p));
+    if (!filesExist) return { pass: false, error: 'Required files missing for Probe 13' };
+
+    const recentCommitsContent = fs.readFileSync(recentCommitsPath, 'utf-8');
+    const mixerContent = fs.readFileSync(mixerPath, 'utf-8');
+    const chunkerContent = fs.readFileSync(chunkerPath, 'utf-8');
+    const rootUserScript = fs.readFileSync(rootUserScriptPath, 'utf-8');
+
+    // 1. Verify recentCommits.ts exports
+    const hasFetchFn = recentCommitsContent.includes('export async function fetchRecentCommitsAndVolatileFiles');
+    const hasFormatXml = recentCommitsContent.includes('export function formatRecentCommitsXml');
+    const hasEscapeXml = recentCommitsContent.includes('export function escapeXml');
+
+    // 2. Functional XML generation test
+    function testFormatXml(commits, volatileFiles) {
+      function esc(s) {
+        return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+      }
+      if (!commits || commits.length === 0) return '';
+      const lines = ['<recent_commits>'];
+      for (const c of commits) {
+        lines.push(`  <commit hash="${esc(c.hash)}" date="${esc(c.date)}" author="${esc(c.author)}">`);
+        lines.push(`    <title>${esc(c.title)}</title>`);
+        if (c.files.length > 0) {
+          lines.push('    <files>');
+          for (const f of c.files) {
+            lines.push(`      <file path="${esc(f.path)}" status="${esc(f.status)}" />`);
+          }
+          lines.push('    </files>');
+        }
+        lines.push('  </commit>');
+      }
+      lines.push('</recent_commits>');
+      if (volatileFiles && volatileFiles.length > 0) {
+        lines.push('<volatile_files>');
+        for (const v of volatileFiles) {
+          lines.push(`  <file path="${esc(v.path)}" touchCount="${v.touchCount}" latestStatus="${esc(v.latestStatus)}" />`);
+        }
+        lines.push('</volatile_files>');
+      }
+      return lines.join('\n');
+    }
+
+    const sampleCommits = [
+      { hash: 'abcd123', date: '2026-10-20', author: 'Dev', title: 'feat: add x', files: [{ path: 'src/a.ts', status: 'modified' }] }
+    ];
+    const sampleVolatile = [{ path: 'src/a.ts', touchCount: 2, latestStatus: 'modified' }];
+    const xml = testFormatXml(sampleCommits, sampleVolatile);
+    const xmlValid = xml.includes('<recent_commits>') && xml.includes('feat: add x') &&
+                     xml.includes('<volatile_files>') && xml.includes('touchCount="2"');
+
+    // 3. Verify mixer.ts wiring
+    const mixerImportsRecent = mixerContent.includes("from './recentCommits'") && mixerContent.includes('fetchRecentCommitsAndVolatileFiles');
+    const mixerPassesTextToChunker = mixerContent.includes('recentCommitsText') && mixerContent.includes('recentCommitsCount');
+    const mixerOptInOnly = mixerContent.includes('req.includeRecentCommits === true') &&
+      !mixerContent.includes('req.includeRecentCommits !== false');
+
+    // 4. Verify HUD storage defaults to opt-out with a one-time migration
+    const storagePath = path.join(ROOT_DIR, 'packages/userscript-hud/src/services/storage.ts');
+    const storageContent = fs.existsSync(storagePath) ? fs.readFileSync(storagePath, 'utf-8') : '';
+    const hudDefaultOff = storageContent.includes('includeRecentCommits: false') &&
+      storageContent.includes("getStoredValue('include_recent_commits', 'false')");
+    const hudMigration = storageContent.includes('recent_commits_opt_in_migration_v1') &&
+      storageContent.includes('migrateRecentCommitsOptIn');
+
+    // 5. Verify mixChunker.ts caps metadata before partitioning and validates the hard ceiling
+    const chunkerHasInputProp = chunkerContent.includes('recentCommitsText?: string');
+    const chunkerCapsMetadata = chunkerContent.includes('export function capRecentCommitsText') &&
+      chunkerContent.includes('MAX_RECENT_COMMITS_CHARS') &&
+      chunkerContent.includes('RECENT_COMMITS_TRUNCATION_MARKER');
+    const chunkerUsesCappedMetadata = chunkerContent.includes('cappedRecentCommitsText.length + 1') &&
+      chunkerContent.includes('cappedRecentCommitsText.length;') &&
+      !/recentCommitsText:\s*input\.recentCommitsText/.test(chunkerContent);
+    const chunkerEnforcesHardLimit = chunkerContent.includes('xml.length > HARD_GEMINI_CHAR_LIMIT') &&
+      chunkerContent.includes('[SKIPPED: exceeds 100k part limit]');
+
+    // 6. Verify Userscript bundle wiring
+    const bundleHasRecentCommitsCheck = rootUserScript.includes('recentCommitsCheck') && rootUserScript.includes('includeRecentCommits');
+
+    const pass = hasFetchFn && hasFormatXml && hasEscapeXml && xmlValid &&
+                 mixerImportsRecent && mixerPassesTextToChunker && mixerOptInOnly &&
+                 hudDefaultOff && hudMigration &&
+                 chunkerHasInputProp && chunkerCapsMetadata && chunkerUsesCappedMetadata &&
+                 chunkerEnforcesHardLimit &&
+                 bundleHasRecentCommitsCheck;
+
+    return {
+      pass,
+      hasFetchFn,
+      hasFormatXml,
+      hasEscapeXml,
+      xmlValid,
+      mixerImportsRecent,
+      mixerPassesTextToChunker,
+      mixerOptInOnly,
+      hudDefaultOff,
+      hudMigration,
+      chunkerHasInputProp,
+      chunkerCapsMetadata,
+      chunkerUsesCappedMetadata,
+      chunkerEnforcesHardLimit,
+      bundleHasRecentCommitsCheck
+    };
+  }));
+
+  // Probe 14: Target-Branch Snapshot and Independent Source/Target OID Contracts
+  results.push(await runProbe(14, 'Target-Branch Snapshot and Independent OID Contracts', async () => {
+    const patcher = fs.readFileSync(path.join(ROOT_DIR, 'packages/edge-worker/src/modules/patcher.ts'), 'utf-8');
+    const types = fs.readFileSync(path.join(ROOT_DIR, 'shared/types.ts'), 'utf-8');
+    const hudState = fs.readFileSync(path.join(ROOT_DIR, 'packages/userscript-hud/src/services/patchOidState.ts'), 'utf-8');
+    const sourceFreshness = patcher.includes('sourceInfo.headOid !== req.expectedHeadOid');
+    const targetSnapshotRead = patcher.includes('fetchMultipleFilesViaGraphQL(owner, repo, commitExpectedHeadOid, allTargetPaths');
+    const exactTargetCommit = patcher.includes('commitExpectedHeadOid = targetInfo.headOid') &&
+      patcher.includes('commitBranch,\n      commitExpectedHeadOid,');
+    const notFoundIsSpecific = patcher.includes('err instanceof BranchNotFoundError');
+    const separateTargetOidContract = types.includes('expectedTargetHeadOid?: string');
+    const independentHudOids = hudState.includes('expectedTargetHeadOid: targetOidIsCurrent') &&
+      hudState.includes('targetHeadOid: response.newHeadOid');
+    const pass = sourceFreshness && targetSnapshotRead && exactTargetCommit &&
+      notFoundIsSpecific && separateTargetOidContract && independentHudOids;
+    return {
+      pass,
+      sourceFreshness,
+      targetSnapshotRead,
+      exactTargetCommit,
+      notFoundIsSpecific,
+      separateTargetOidContract,
+      independentHudOids
     };
   }));
 

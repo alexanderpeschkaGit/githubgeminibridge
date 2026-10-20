@@ -251,12 +251,61 @@
   - **Userscript Bundle-Integrität:** `dist/gemini-bridge.user.js` und Root `gemini-bridge.user.js` sind byte-identisch neu gebaut und synchronisiert (55.4 KB).
 - **GESAMTSTATUS**: `PASS`
 
+### [2026-10-20T18:38:30+02:00] | Stage 6.5: Volatile Files Detection & Recent Commits in RepoMix
+- **Command**:
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/edge-worker/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/local-cli/tsconfig.json`
+  - `node packages/userscript-hud/scripts/build-userscript.mjs`
+  - `node scripts/patches_and_tests/worker-smoke.mjs`
+  - `node scripts/patches_and_tests/test-local-cli.mjs`
+  - `node scripts/patches_and_tests/test-webhook-worker.mjs`
+- **Ergebnis**: `PASS` (`13/13` Probes bestanden, `22/22` CLI Assertions, `18/18` Webhook Assertions).
+- **Geprüfte Features & Invarianten**:
+  - **Shared Types:** `MixRequest.includeRecentCommits`, `MixRequest.recentCommitsCount`, `MixResponse.stats.recentCommitsCount`, `MixResponse.stats.volatileFilesCount`.
+  - **Module `recentCommits.ts`:** Paralleler GitHub REST API Fetch für bis zu 5 Commits (`/commits` & `/commits/{sha}`), Aggregation von `volatileFiles` (nach Touch-Count und Aktualität sortiert), strukturierte XML-Generierung (`<recent_commits>` und `<volatile_files>`) mit XML-Escaping und Graceful Fallback bei Fehlern.
+  - **Budget-Sicherheit in `mixChunker.ts`:** Einrechnung des `recentCommitsText` in `part1BaseOverhead` und `totalRawChars`. Part 1 Overhead wird präzise adaptiert, wodurch das 85k-Zeichen-Budget niemals überschritten wird. Folgeparts 2..N enthalten keine redundanten Commits.
+  - **Mixer Integration (`mixer.ts`):** Nahtloser Aufruf von `fetchRecentCommitsAndVolatileFiles` vor `buildChunkedMixXml`. Rückgabe der Statistiken in `MixResponse.stats`.
+  - **Userscript Shadow-DOM HUD:** Checkbox `🕒 Volatile Dateien & Letzte Commits` im Drawer (`hudStylesAndDom.ts`, 467 Zeilen); Konfigurationspersistenz (`storage.ts`); Status-Meldungs-Erweiterung (`shadowHud.ts`, 476 Zeilen); Rebuild und Synchronisation von `gemini-bridge.user.js` (58.3 KB).
+  - **Probe 10 Modularitäts-Audit:** 25/25 aktive TypeScript-Quelldateien strikt `< 500` Zeilen (`overLimitZone.length === 0`).
+  - **Probe 13 Suite-Erweiterung:** Volatile Files & Recent Commits Contracts erfolgreich bestanden (`PASS`).
+- **GESAMTSTATUS**: `PASS`
 
+### [2026-10-20T18:46:00+02:00] | Stufe 7: Target Branch Support & Atomic Branch Creation
+- **Command**:
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/edge-worker/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`
+  - `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/local-cli/tsconfig.json`
+  - `node packages/userscript-hud/scripts/build-userscript.mjs`
+  - `node scripts/patches_and_tests/worker-smoke.mjs`
+  - `node scripts/patches_and_tests/test-local-cli.mjs`
+  - `node scripts/patches_and_tests/test-webhook-worker.mjs`
+- **Ergebnis**: `PASS` (`13/13` Probes bestanden, `22/22` CLI Assertions, `18/18` Webhook Assertions).
+- **Geprüfte Features & Invarianten**:
+  - **API-Verträge in `shared/types.ts`:** `WorkerPatchRequest.targetBranch`, `WorkerPatchRequest.createBranchIfNeeded`, `WorkerPatchResponse.targetBranch`, `WorkerPatchResponse.createdBranch`, `WorkerPatchResponse.pullRequestUrl`.
+  - **GitHub Connector in `github.ts` (467 Zeilen):** `getBranchHeadOid` fragt zusätzlich `repository.id` ab; `createBranchRef` erzeugt neue Git-Refs atomar via GraphQL `createRef` Mutation mit automatischem REST-Fallback.
+  - **Patcher Pipeline in `patcher.ts` (412 Zeilen):** Concurrency Check auf Basisbranch (`req.branch`) gegen `req.expectedHeadOid`; wenn `targetBranch !== branch`, Prüfung auf Existenz, automatische Ref-Erstellung an `expectedHeadOid` und atomarer Commit auf dem Zielbranch; Generierung von `pullRequestUrl`.
+  - **Userscript Shadow-DOM HUD:** Eingabefeld `Target Branch (optional)` im Drawer (`hudStylesAndDom.ts`, 479 Zeilen); Persistenz via `storage.ts` (162 Zeilen); Übergabe im Patch-Request und PR-Link-Anzeige (`shadowHud.ts`, 486 Zeilen); Rebuild von `gemini-bridge.user.js` (58.5 KB).
+  - **Probe 10 Modularitäts-Audit:** 25/25 aktive TypeScript-Quelldateien strikt `< 500` Zeilen (`overLimitZone.length === 0`).
+- **GESAMTSTATUS**: `PASS`
 
+### [2026-10-20T19:35:17+02:00] | PRO Step 2: Target Branch Snapshot Concurrency & HUD OID Lifecycle
+- Edge Worker and userscript HUD TypeScript checks: `PASS` (0 errors).
+- `node scripts/patches_and_tests/test-target-branch-concurrency.mjs`: `PASS` (9 behavioral groups: existing target-only content, stale target token, missing-branch creation from validated source, concurrent creation, source/API lookup failures, malformed target OID, stale source, no-op response, post-read target race, and FIFO/source-vs-target OID continuation/failure behavior).
+- `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (14/14 probes, including live /health, modularity audit, bundle identity, and target-branch contract probe).
+- Userscript build: `PASS`; root and dist bundles byte-identical (62,489 bytes).
+- `git diff --check`: `PASS`.
 
-
-
-
-
-
-
+### [2026-10-20T20:48:15+02:00] | Review-Fix Wave (Steps 1–5): Consolidated Regression Gate, Documentation Drift & Protocol Sync
+- **Commands & Ergebnisse**:
+  - `node scripts/patches_and_tests/run-regressions.mjs`: `PASS` (6/6 lokale Suiten: `v2-prompt-contract`, `target-branch-concurrency`, `recent-commits-opt-in`, `metadata-budget-hard-limit`, `local-cli`, `webhook-worker`). Der Runner meldet ausdrücklich, dass die Live-Endpoint-Smoke-Suite im Default-Gate bewusst nicht läuft.
+  - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (7/7); Probe 5 (Live `/health` auf `https://gemini-git-bridge.sikanda.workers.dev`) war zum Laufzeitpunkt erreichbar.
+  - Negativ-/Wahrheitsprüfung: `TEST_BASE_URL=http://127.0.0.1:9 node scripts/patches_and_tests/run-regressions.mjs --include-smoke` → `FAIL` (6/7, Exit-Code `1`, nur `worker-smoke`/Probe 5 fehlgeschlagen). Damit ist der aggregierte Non-Zero-Exit belegt und ein nicht erreichbarer Live-Endpunkt kann keinen lokalen PASS vortäuschen.
+  - Einzelsuiten (identisch zum Runner-Ergebnis): `test-v2-prompt-contract.mjs` `PASS` (inkl. ausführbarer `convertLegacyBlocksToV2Payload`-Konvertierung des V1-SEARCH/REPLACE-Fallbacks); `test-target-branch-concurrency.mjs` `PASS` (9 Verhaltensgruppen); `test-recent-commits-opt-in.mjs` `PASS` (8 Gruppen inkl. einmaliger Migration); `test-metadata-budget-hard-limit.mjs` `PASS` (8 Gruppen, u. a. `maxChunkChars=500000` → auf `100000` geklemmt mit 4 Parts und 10-Parts-Deckel bei 62101 Zeichen); `test-local-cli.mjs` `PASS` (22/22); `test-webhook-worker.mjs` `PASS` (18/18).
+  - `$env:OUTPUT_FILE='scripts/patches_and_tests/.smoke-baseline.step5.json'; node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (14/14; Scratch-Datei danach entfernt). `worker-baseline.json` blieb unverändert (SHA256 vor/nach `69AE26F019168F2157347C7F6722B22BF17C784E25A8AC811AADABFD8E138ACE`).
+  - TypeScript: `node packages/local-cli/node_modules/typescript/lib/tsc.js --noEmit -p packages/edge-worker/tsconfig.json` `PASS` (0 Fehler); analog `packages/userscript-hud` und `packages/local-cli` `PASS`.
+  - Userscript-Bundle: kein Rebuild nötig (keine HUD-Quelländerung in diesem Schritt); `packages/userscript-hud/dist/gemini-bridge.user.js` und Root `gemini-bridge.user.js` byte-identisch (SHA256 `BA045C7877E08E0A997A477DC886A1F769E4D301ABE6934A408BEA8EC819A6B8`, 63.400 Bytes).
+  - Dateigrößen-Audit: 28 aktive TypeScript-Dateien, Maximum 498 Zeilen (`packages/userscript-hud/src/ui/shadowHud.ts`), **0** Dateien ≥ 500 Zeilen.
+  - `git diff --check`: `PASS` (Exit 0, nur CRLF-Hinweise).
+- **Hinweis:** Der Live-Endpunkt-Status ist eine Momentaufnahme des Laufs; er ist bewusst nicht Teil des Default-Gates.
+- **GESAMTSTATUS**: `PASS`

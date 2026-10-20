@@ -4,9 +4,9 @@
 > **Crash- & Quota-Recovery:** Bei Neustart eines Chats oder Subagenten zuerst diese Datei und die letzten 25 Zeilen von `plans/EXECUTION_LOG.md` sowie `plans/TEST_LOG.md` lesen!
 
 ## Aktuelle Phase
-- **Aktive Stufe:** **Stufe 6.4 (Verfassungs-, Regelwerks- & Skill-Harmonisierung)** erfolgreich abgeschlossen.
+- **Aktive Stufe:** **Stufe 7.2 (Review-Fix-Welle Steps 1–5: konsolidiertes Regressions-Gate, Dokumentations-Drift & Protokoll-Sync)** erfolgreich abgeschlossen.
 - **Modell-Politik:** 3-Tier-Modellmatrix: Vorab-Gesamtplanung auf **Argon High / Medium (`pro`/`inherit`)**; Ausführung mit Flash-First: Tier 1 (`flash_lite` [1–3]), Tier 2 (`flash` [4–6]), Tier 3 (`pro` [7–10]).
-- **Letztes Update:** 2026-10-20T17:36:00+02:00 (Stufe 6.4 Abschluss: Verfassung `AGENTS.md`, `.agents/rules/` und `.agents/skills/` synchronisiert mit Stage 6.3 Codebase; alle Probes 12/12 PASS).
+- **Letztes Update:** 2026-10-20T20:48:15+02:00 (Stufe 7.2 abgeschlossen: `run-regressions.mjs` als einheitliches lokales Gate, V2-Schema/Target-Snapshot/Opt-In-Commits/100k-Deckel dokumentarisch geschlossen; Runner 6/6 lokal bzw. 7/7 mit Live-Smoke, Type-Checks PASS, 28/28 TS-Dateien < 500 Zeilen, `git diff --check` PASS).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**
@@ -61,6 +61,21 @@
 - [x] **Stufe 6.4 (Option A / Direkt-Harmonisierung): Verfassungs-, Regelwerks- & Skill-Harmonisierung**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: Bereinigung verwaister Flat-Files in `.agents/skills/`; Schließung toter Links durch Erstellung von `.agents/rules/multi-ide-setup.md`; Synchronisation von `orchestrator-protocol.md` (3-Tier-Matrix), `edge-worker-architecture.md` (Stage 6.2 `.txt`-MIME & 10-Parts) und `userscript-shadow-hud.md` (Stage 6.3 FIFO Fail-Fast Queue); Harmonisierung von `AGENTS.md` (3 Pakete, Multi-Part Ingestion, Queue, `< 500` Zeilen). Verifikation mit 12/12 Smoke Probes, CLI- & Worker-Tests.
+- [x] **Stufe 6.5 (Flash-Subagent / `#flash #exec`): Volatile Files Detection & Recent Commits in RepoMix**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: `includeRecentCommits` & `recentCommitsCount` in `shared/types.ts` (`MixRequest` & `MixResponse.stats`); neues Modul `packages/edge-worker/src/modules/recentCommits.ts` (paralleler GitHub REST Fetch für bis zu 5 Commits, Volatile-Files Aggregation nach Touch-Count/Aktualität, XML-Generierung); Integration in `mixChunker.ts` (dynamischer Part 1 Overhead & Budget-Absicherung) und `mixer.ts`; Userscript HUD Checkbox `🕒 Volatile Dateien & Letzte Commits` & Rebuild `gemini-bridge.user.js`; Erweiterung Smoke-Suite um Probe 13 (`13/13 PASS`), Probe 10 verifiziert (0/25 Dateien >= 500 Zeilen).
+- [x] **Stufe 7 (Flash-Subagent / `#flash #exec`): Target Branch Support & Atomic Branch Creation**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: `targetBranch` & `createBranchIfNeeded` in `WorkerPatchRequest`, `targetBranch`, `createdBranch` und `pullRequestUrl` in `WorkerPatchResponse`; GraphQL `createRef` & REST Fallback in `packages/edge-worker/src/utils/github.ts` (`createBranchRef`); Concurrency Check auf Basisbranch und atomare Abspaltung an `expectedHeadOid` in `patcher.ts`; Userscript HUD UI Input `Target Branch (optional)` & Status-PR-Links; Userscript Rebuild; Regelwerks-Sync; Einhaltung Dateigrößen-Gesetz (25/25 Quelldateien < 500 Zeilen) und Smoke-Suite 13/13 PASS.
+
+- [x] **Stufe 7.1 (PRO Step 2): Safe Existing Target Branches & FIFO Target OID Lifecycle**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: Source-Frische erhalten; bestehende Zielbranches per exakt gelesener Target-Commit-OID patchen und atomar gegen diese Revision committen; nur eindeutigen Branch-Not-Found als fehlend behandeln; konkurrierende Ref-Erstellung auflösen; Source- und Target-OIDs im HUD getrennt fortschreiben; funktionale Worker-/HUD-Regressionen, 14/14 Smoke-Probes und Bundle-Identität verifizieren.
+
+- [x] **Stufe 7.2 (Review-Fix-Welle Steps 1–5): Konsolidiertes Regressions-Gate, Dokumentations-Drift & Protokoll-Sync**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Ziel: Die vier Review-Fixes (V2-Payload-Schema, sichere bestehende Target-Branches mit getrennten Source-/Target-OIDs, Recent-Commits strikt opt-in mit einmaliger Migration, gedeckelte Metadaten + absoluter 100k-Part-Deckel) plus CLI- und Webhook-Suiten in einem einzigen Runner (`scripts/patches_and_tests/run-regressions.mjs`) mit wahrheitsgemäßem Aggregat-Exit bündeln; Live-Smoke bleibt explizit (`--include-smoke`) außerhalb des Default-Gates. Dokumentations-Drift in `agents.md`, `edge-worker-architecture.md` und `REPOMIX_INSTRUCTIONS.md` (legacy V2-Schema) geschlossen. Verifikation: Runner 6/6 lokal, 7/7 mit Live-Smoke, Negative-Pfad Exit 1, Type-Checks PASS, 28/28 TS-Dateien < 500 Zeilen, Bundle-Identität, `git diff --check` PASS.
 
 ## Offene Entscheidungen / Blocker
-- Keine Blocker. Verfassung, Regeln und Code sind zu 100 % synchron.
+- **Plan Step 6 (finale Validierung & Checkpoint-Commit)** steht noch aus und wurde in dieser Welle bewusst nicht ausgeführt (kein Commit/Push/Deploy).
+- Keine technischen Blocker. Target Branch Snapshot Concurrency, getrennte FIFO OID-Fortschreibung, Recent-Commits-Opt-In und der absolute 100k-Deckel sind vollständig integriert und verifiziert.

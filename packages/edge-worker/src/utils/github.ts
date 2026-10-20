@@ -3,6 +3,13 @@ import { utf8ToBase64 } from './encoding';
 
 const GITHUB_GRAPHQL_ENDPOINT = 'https://api.github.com/graphql';
 
+export class BranchNotFoundError extends Error {
+  constructor(owner: string, repo: string, branch: string) {
+    super(`Branch "${branch}" was not found in repository "${owner}/${repo}".`);
+    this.name = 'BranchNotFoundError';
+  }
+}
+
 /**
  * Splits "owner/repo" into { owner, repo }.
  */
@@ -60,24 +67,15 @@ export async function getBranchHeadOid(
   repo: string,
   branch: string,
   token: string
-): Promise<{ headOid: string; resolvedBranch: string }> {
+): Promise<{ headOid: string; resolvedBranch: string; repositoryId?: string }> {
   const qualifiedBranch = branch.startsWith('refs/heads/') ? branch : `refs/heads/${branch}`;
 
   const query = `
     query GetBranchHead($owner: String!, $repo: String!, $branch: String!) {
       repository(owner: $owner, name: $repo) {
-        ref(qualifiedName: $branch) {
-          name
-          target {
-            oid
-          }
-        }
-        defaultBranchRef {
-          name
-          target {
-            oid
-          }
-        }
+        id
+        ref(qualifiedName: $branch) { name target { oid } }
+        defaultBranchRef { name target { oid } }
       }
     }
   `;
@@ -90,21 +88,65 @@ export async function getBranchHeadOid(
   }
 
   if (repository.ref?.target?.oid) {
-    return {
-      headOid: repository.ref.target.oid,
-      resolvedBranch: repository.ref.name
-    };
+    return { headOid: repository.ref.target.oid, resolvedBranch: repository.ref.name, repositoryId: repository.id };
   }
 
-  // If specific branch not found, but branch was default/empty or fallback
   if (!branch && repository.defaultBranchRef?.target?.oid) {
-    return {
-      headOid: repository.defaultBranchRef.target.oid,
-      resolvedBranch: repository.defaultBranchRef.name
-    };
+    return { headOid: repository.defaultBranchRef.target.oid, resolvedBranch: repository.defaultBranchRef.name, repositoryId: repository.id };
   }
 
-  throw new Error(`Branch "${branch}" (or "${qualifiedBranch}") not found in repository "${owner}/${repo}".`);
+  throw new BranchNotFoundError(owner, repo, branch || qualifiedBranch);
+}
+
+/**
+ * Creates a new Git ref (branch) pointing to a specific commit OID.
+ */
+export async function createBranchRef(
+  owner: string,
+  repo: string,
+  branchName: string,
+  oid: string,
+  token: string,
+  repositoryId?: string
+): Promise<{ refName: string; oid: string }> {
+  const cleanBranch = branchName.replace(/^refs\/heads\//, '');
+  const qualifiedName = `refs/heads/${cleanBranch}`;
+
+  // 1. Try GraphQL createRef mutation if repositoryId is known
+  if (repositoryId) {
+    const mutation = `
+      mutation CreateRef($input: CreateRefInput!) {
+        createRef(input: $input) { ref { name target { oid } } }
+      }
+    `;
+    try {
+      const data = await executeGraphQL<any>(mutation, { input: { repositoryId, name: qualifiedName, oid } }, token);
+      const ref = data?.createRef?.ref;
+      if (ref?.name) return { refName: ref.name, oid: ref.target?.oid || oid };
+    } catch {
+      // Fall through to REST if GraphQL fails
+    }
+  }
+
+  // 2. REST API fallback
+  const restUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs`;
+  const res = await fetch(restUrl, {
+    method: 'POST',
+    headers: {
+      'User-Agent': 'Cloudflare-Worker-gemini-git-bridge',
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ ref: qualifiedName, sha: oid })
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Failed to create branch "${cleanBranch}" on "${owner}/${repo}": HTTP ${res.status} - ${errText}`);
+  }
+
+  const json: any = await res.json();
+  return { refName: json.ref, oid: json.object?.sha || oid };
 }
 
 /**

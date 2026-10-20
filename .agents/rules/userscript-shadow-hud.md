@@ -32,7 +32,7 @@ description: "Apply this rule whenever working on packages/userscript-hud/ or ge
 2. **DOM-Injector (`src/dom/injector.ts`):**
    - **Kontext-Upload (Multi-Part `.txt`-Chunks):** Konstruiere `File`-Objekte für Multi-Part `repo-mix.part1.txt`, `repo-mix.part2.txt`, … (MIME `text/plain` zur Vermeidung von XML-Parsing-Bugs) via `injectRepoMixParts`, verpacke sie gemeinsam in ein `DataTransfer`-Objekt und dispatche ein synthetisches `ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })` auf das aktive Eingabefeld (`div[contenteditable="true"]` bzw. `textarea`). Gemini / AI Studio erzeugt dadurch saubere Datei-Chips nebeneinander.
    - **Scope-Filter & Chunk-Größe (`includePaths`, `maxChunkChars`):** Im HUD-Drawer (`hudStylesAndDom.ts`) können optional ein kommagetrennter Subpfad-Filter (`src/, packages/edge-worker/`) sowie das Zeichenbudget `maxChunkChars` (Standard: 85.000, unterhalb des 100k-Gemini-Limits) konfiguriert werden, die an `MixRequest` übergeben werden.
-   - **Prompt-Text-Injektion:** Nutze `document.execCommand('insertText', false, promptText)` bzw. native `InputEvent`-Dispatches auf dem fokussierten Editor-Element, damit der interne State von Gemini/AI Studio die Eingabe zuverlässig registriert.
+   - **Prompt-Text-Injektion:** Nutze `document.execCommand('insertText', false, promptText)` bzw. native `InputEvent`-Dispatches auf dem fokussierten Editor-Element, damit der interne State von Gemini/AI Studio die Eingabe zuverlässig registriert. Siehe auch [REPOMIX_INSTRUCTIONS.md](../../REPOMIX_INSTRUCTIONS.md) als Referenz für Prompt-Leitplanken.
 3. **DOM-Harvester (`src/dom/harvester.ts`):**
    - Überwache neu generierte LLM-Antwortblöcke per `MutationObserver` (mit Debounce/Streaming-Completion-Erkennung).
    - Extrahiere sowohl strukturierte V2 `GeminiPatchPayload`-JSON-Codeblöcke als auch klassische `<<<<<<< SEARCH ... >>>>>>> REPLACE`-Blöcke (V1-Fallback aus `_v1_backup/gemini-bridge.user.js` inkl. automatischer Konvertierung in `GeminiPatchPayload`).
@@ -42,17 +42,19 @@ description: "Apply this rule whenever working on packages/userscript-hud/ or ge
      - `🗑️ Clear` (`hud-btn-secondary`)
    - **FIFO-Abarbeitung:** Da neu geerntete Patches per `unshift` an den Anfang gelegt werden, kehrt `handleApplyAllPatches` die Liste chronologisch um (`[...state.harvestedPatches].reverse()`), um die Patches in der Reihenfolge ihrer Erzeugung anzuwenden.
    - **Fail-Fast & Concurrency-Schutz:** Bricht sofort ab, sobald ein Patch fehlschlägt (`PREFLIGHT_FAILED`, `GIT_CONFLICT` oder `ERROR`), damit Folge-Patches nicht auf inkonsistenten Commits aufbauen.
-   - **State-Pruning:** Erfolgreich committete oder idempotente Patches (`COMMITTED`, `NO_CHANGES_NEEDED`) werden nach jedem Schritt automatisch aus `state.harvestedPatches` entfernt; die OID-Kette (`headOid`) wird atomar fortgeschrieben.
+   - **State-Pruning:** Erfolgreich committete oder idempotente Patches (`COMMITTED`, `NO_CHANGES_NEEDED`) werden nach jedem Schritt automatisch aus `state.harvestedPatches` entfernt; bei Fehlern bleiben Queue und OIDs unverändert.
 5. **Storage & Secret Guardrail (`src/services/storage.ts`):**
    - Striktes Verbot von GitHub PATs via `sanitizeNoGithubPat` (Hard Guardrail `P1`).
    - Abwärtskompatible V1-Schlüssel via `getStoredValue` / `setStoredValue` (`gemini_bridge_` Fallback).
-   - Konfiguration über `loadHudConfig` und `saveHudConfig` (`HudConfig`).
+   - Konfiguration über `loadHudConfig` und `saveHudConfig` (`HudConfig`), inklusive optionalem `targetBranch` für isoliertes Committen auf neue/abweichende Zielbranches.
+   - `includeRecentCommits` ist standardmäßig `false` (Checkbox „🕒 Volatile Dateien & Letzte Commits“ bleibt verfügbar). Ein einmaliger Migrationsmarker (`recent_commits_opt_in_migration_v1`) setzt ein legacy gespeichertes `"true"` genau einmal auf `false`; ein späteres explizites Opt-In bleibt danach dauerhaft erhalten. Fehlgeschlagene Migrationen werden geloggt und beim nächsten Laden erneut versucht.
 6. **Worker Client & CSP-Bypass (`src/services/workerClient.ts`):**
    - Kapselung aller Worker-Aufrufe über `gmRequestJson` (`GM_xmlhttpRequest` / `GM.xmlHttpRequest` mit `fetch`-Fallback).
    - Endpunkte: `checkWorkerHealth` (`GET /health`), `requestRepoMix` (`POST /api/mix`), `requestWorkerPatch` (`POST /api/patch`), `requestLegacyCommit` (`POST /push`).
-7. **Optimistic Concurrency (`headOid` State-Machine) & Self-Healing Loop (`src/services/selfHealing.ts`):**
-   - Speichere die von `/api/mix` gelieferte 40-stellige `headOid` im HUD-State (`mountShadowHud`).
-   - Nach jedem erfolgreichen `/api/patch`-Commit (`status === "COMMITTED"`) aktualisiere `headOid` sofort auf `response.newHeadOid` und setze `retryCount = 0`, ohne das Repository neu mixen zu müssen.
+7. **Optimistic Concurrency (getrennte Source-/Target-OIDs) & Self-Healing Loop (`src/services/selfHealing.ts`):**
+   - Speichere die von `/api/mix` gelieferte 40-stellige Source-`headOid` im HUD-State. Halte den zuletzt bestätigten `targetHeadOid` zusätzlich zum zugehörigen `targetHeadBranch`; Zielbranch-Wechsel invalidieren nur diese Target-OID.
+   - Sende für den Source-Branch `expectedHeadOid`; bei einem bekannten abweichenden Zielbranch sende dessen OID separat als `expectedTargetHeadOid`. FIFO-Folgepatches verwenden nach Erfolg oder `NO_CHANGES_NEEDED` die vom Worker gelieferte Target-OID und verändern die Source-OID nicht.
+   - Aktualisiere OIDs und entferne Queue-Einträge ausschließlich bei `COMMITTED`/`NO_CHANGES_NEEDED`; `PREFLIGHT_FAILED`, `GIT_CONFLICT` und `ERROR` dürfen weder Source-/Target-OIDs fortschreiben noch erfolgreiche Patches prune’n. Setze bei Commit den Retry-Zähler zurück und zeige Targetbranch sowie Compare-/PR-Link (`pullRequestUrl`) an.
    - Bei `status === "PREFLIGHT_FAILED"` und aktiviertem Auto-Pilot injiziere automatisch einen strukturierten `#solve`-Korrektur-Prompt mit der aggregierten `errors: LinterError[]`-Liste (maximal `retryCount < 3`, danach automatischer Stopp und User-Hinweis).
 8. **Build-Pipeline (`packages/userscript-hud/scripts/build-userscript.mjs`):**
    - Bündelt TypeScript-Quellcode (`src/index.ts`) via `esbuild` in ein valides Tampermonkey-Userscript mit allen Grants (`@grant GM_xmlhttpRequest`, `@grant GM_setValue`, etc.).

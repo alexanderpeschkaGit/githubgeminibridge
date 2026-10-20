@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.0
+// @version      2.0.1
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -102,19 +102,45 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     workerSecret: "fc1bec3f781b59dee2e576650460f417269fd44d3b0e39d77ae18480c270524f",
     repo: "alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0",
     branch: "preview",
+    targetBranch: "",
     includePaths: [],
     autoPilot: false,
     persistToGitHub: false,
-    maxChunkChars: 85e3
+    maxChunkChars: 85e3,
+    includeRecentCommits: false
   };
+  var RECENT_COMMITS_MIGRATION_KEY = "recent_commits_opt_in_migration_v1";
+  function migrateRecentCommitsOptIn() {
+    if (getStoredValue(RECENT_COMMITS_MIGRATION_KEY, "") === "true") {
+      return;
+    }
+    if (getStoredValue("include_recent_commits", "") === "true") {
+      setStoredValue("include_recent_commits", "false");
+      if (getStoredValue("include_recent_commits", "") === "true") {
+        console.warn(
+          "[Gemini Bridge Storage] Could not migrate legacy include_recent_commits=true to false; retrying on next load."
+        );
+        return;
+      }
+    }
+    setStoredValue(RECENT_COMMITS_MIGRATION_KEY, "true");
+    if (getStoredValue(RECENT_COMMITS_MIGRATION_KEY, "") !== "true") {
+      console.warn(
+        "[Gemini Bridge Storage] Could not persist the recent-commits migration marker; migration will retry on next load."
+      );
+    }
+  }
   function loadHudConfig() {
+    migrateRecentCommitsOptIn();
     const workerUrl = getStoredValue("worker_url", DEFAULT_HUD_CONFIG.workerUrl);
     const workerSecret = getStoredValue("worker_secret", DEFAULT_HUD_CONFIG.workerSecret);
     const repo = sanitizeRepo(getStoredValue("owner_repo", DEFAULT_HUD_CONFIG.repo));
     const branch = getStoredValue("branch", DEFAULT_HUD_CONFIG.branch);
+    const targetBranch = getStoredValue("target_branch", DEFAULT_HUD_CONFIG.targetBranch || "");
     const autoPilotStr = getStoredValue("auto_pilot", "false");
     const persistStr = getStoredValue("persist_to_github", "false");
     const includePathsStr = getStoredValue("include_paths", "");
+    const includeRecentCommitsStr = getStoredValue("include_recent_commits", "false");
     let includePaths = [];
     if (includePathsStr) {
       try {
@@ -132,10 +158,12 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       workerSecret,
       repo,
       branch,
+      targetBranch,
       includePaths,
       autoPilot: autoPilotStr === "true",
       persistToGitHub: persistStr === "true",
-      maxChunkChars
+      maxChunkChars,
+      includeRecentCommits: includeRecentCommitsStr === "true"
     };
   }
   function saveHudConfig(cfg) {
@@ -153,6 +181,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     if (cfg.branch !== void 0) {
       setStoredValue("branch", sanitizeNoGithubPat(updated.branch, "branch"));
     }
+    if (cfg.targetBranch !== void 0) {
+      setStoredValue("target_branch", sanitizeNoGithubPat(updated.targetBranch || "", "targetBranch"));
+    }
     if (cfg.autoPilot !== void 0) {
       setStoredValue("auto_pilot", updated.autoPilot ? "true" : "false");
     }
@@ -164,6 +195,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
     if (cfg.maxChunkChars !== void 0) {
       setStoredValue("max_chunk_chars", String(updated.maxChunkChars));
+    }
+    if (cfg.includeRecentCommits !== void 0) {
+      setStoredValue("include_recent_commits", updated.includeRecentCommits ? "true" : "false");
     }
     return updated;
   }
@@ -267,7 +301,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       maxChunkChars: req?.maxChunkChars ?? cfg.maxChunkChars,
       maxChunkBytes: req?.maxChunkBytes,
       maxChunkTokens: req?.maxChunkTokens,
-      splitOutput: req?.splitOutput
+      splitOutput: req?.splitOutput,
+      includeRecentCommits: req?.includeRecentCommits ?? cfg.includeRecentCommits
     };
     return gmRequestJson(url, "POST", cfg.workerSecret, payload);
   }
@@ -489,6 +524,40 @@ Fix Instructions:
       nextRetryCount: evalResult.nextRetryCount,
       prompt,
       reason: evalResult.reason
+    };
+  }
+
+  // packages/userscript-hud/src/services/patchOidState.ts
+  function normalizeBranch(branch) {
+    return branch.trim().replace(/^refs\/heads\//, "");
+  }
+  function buildWorkerPatchRequest(config, state, payload) {
+    const targetBranch = config.targetBranch?.trim() || void 0;
+    const isDistinctTarget = !!targetBranch && normalizeBranch(targetBranch) !== normalizeBranch(config.branch);
+    const targetOidIsCurrent = isDistinctTarget && normalizeBranch(state.targetHeadBranch) === normalizeBranch(targetBranch) && /^[0-9a-f]{40}$/i.test(state.targetHeadOid);
+    return {
+      repo: config.repo,
+      branch: config.branch,
+      expectedHeadOid: state.headOid,
+      payload,
+      targetBranch,
+      expectedTargetHeadOid: targetOidIsCurrent ? state.targetHeadOid || void 0 : void 0
+    };
+  }
+  function advancePatchOidState(config, response) {
+    if (response.status !== "COMMITTED" && response.status !== "NO_CHANGES_NEEDED" || !response.newHeadOid) {
+      return {};
+    }
+    const configuredTarget = config.targetBranch?.trim();
+    const targetIsDistinct = !!configuredTarget && normalizeBranch(configuredTarget) !== normalizeBranch(config.branch);
+    if (targetIsDistinct && !response.targetBranch) return {};
+    const effectiveBranch = normalizeBranch(response.targetBranch || config.branch);
+    if (effectiveBranch === normalizeBranch(config.branch)) {
+      return { headOid: response.newHeadOid };
+    }
+    return {
+      targetHeadOid: response.newHeadOid,
+      targetHeadBranch: effectiveBranch
     };
   }
 
@@ -777,6 +846,14 @@ Fix Instructions:
     branchRow.appendChild(branchLabel);
     branchRow.appendChild(branchInput);
     body.appendChild(branchRow);
+    const targetBranchRow = createHudElement("div", "hud-form-row");
+    const targetBranchLabel = createHudElement("span", "hud-label", "Target Branch (optional)");
+    const targetBranchInput = createHudElement("input", "hud-input");
+    targetBranchInput.placeholder = "Same as mix branch (or e.g. preview, feature/...)";
+    targetBranchInput.value = config.targetBranch || "";
+    targetBranchRow.appendChild(targetBranchLabel);
+    targetBranchRow.appendChild(targetBranchInput);
+    body.appendChild(targetBranchRow);
     const pathsRow = createHudElement("div", "hud-form-row");
     const pathsLabel = createHudElement("span", "hud-label", "Include Paths (comma-separated, optional)");
     const includePathsInput = createHudElement("input", "hud-input");
@@ -829,6 +906,17 @@ Fix Instructions:
     optRow.appendChild(autoPilotLabel);
     optRow.appendChild(retryIndicator);
     body.appendChild(optRow);
+    const commitsRow = createHudElement("div");
+    commitsRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-top: 4px;";
+    const recentCommitsLabel = createHudElement("label", "hud-toggle-label");
+    const recentCommitsCheck = createHudElement("input");
+    recentCommitsCheck.type = "checkbox";
+    recentCommitsCheck.checked = config.includeRecentCommits === true;
+    const recentCommitsText = createHudElement("span", void 0, "\u{1F552} Volatile Dateien & Letzte Commits");
+    recentCommitsLabel.appendChild(recentCommitsCheck);
+    recentCommitsLabel.appendChild(recentCommitsText);
+    commitsRow.appendChild(recentCommitsLabel);
+    body.appendChild(commitsRow);
     const queueHeaderRow = createHudElement("div");
     queueHeaderRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-top: 4px;";
     const queueLabel = createHudElement("span", "hud-label", "Harvested Patches");
@@ -861,12 +949,14 @@ Fix Instructions:
       closeBtn,
       repoInput,
       branchInput,
+      targetBranchInput,
       secretInput,
       includePathsInput,
       maxChunkCharsInput,
       oidBadge,
       mixBtn,
       autoPilotCheck,
+      recentCommitsCheck,
       retryIndicator,
       applyAllBtn,
       clearQueueBtn,
@@ -882,8 +972,13 @@ Fix Instructions:
       throw new Error("mountShadowHud requires a DOM environment");
     }
     const config = loadHudConfig();
+    const configuredTargetBranch = config.targetBranch?.trim() || "";
+    const storedTargetBranch = getStoredValue("target_head_branch", "");
+    const matchesStoredTarget = storedTargetBranch.replace(/^refs\/heads\//, "") === configuredTargetBranch.replace(/^refs\/heads\//, "");
     const state = {
       headOid: getStoredValue("head_oid", ""),
+      targetHeadOid: matchesStoredTarget ? getStoredValue("target_head_oid", "") : "",
+      targetHeadBranch: matchesStoredTarget ? storedTargetBranch : "",
       lastMixStats: null,
       status: "IDLE",
       statusMessage: "Ready. Load Repo Mix or commit patches.",
@@ -903,7 +998,15 @@ Fix Instructions:
         dom.oidBadge.style.color = "#94a3b8";
       }
       dom.retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
-      dom.statusBox.className = `hud-status-box ${state.status === "ERROR" || state.status === "PREFLIGHT_FAILED" || state.status === "GIT_CONFLICT" ? "error" : state.status === "COMMITTED" ? "success" : state.status === "MIXING" || state.status === "PATCHING" ? "info" : "idle"}`;
+      const statusClasses = {
+        ERROR: "error",
+        PREFLIGHT_FAILED: "error",
+        GIT_CONFLICT: "error",
+        COMMITTED: "success",
+        MIXING: "info",
+        PATCHING: "info"
+      };
+      dom.statusBox.className = `hud-status-box ${statusClasses[state.status] || "idle"}`;
       dom.statusBox.textContent = "";
       const mainMsg = createHudElement("div", void 0, state.statusMessage);
       dom.statusBox.appendChild(mainMsg);
@@ -997,6 +1100,21 @@ Fix Instructions:
         dom.branchInput.value = config.branch;
       }
     };
+    dom.targetBranchInput.onchange = () => {
+      try {
+        const sanitized = sanitizeNoGithubPat(dom.targetBranchInput.value.trim(), "targetBranch");
+        config.targetBranch = sanitized;
+        state.targetHeadOid = "";
+        state.targetHeadBranch = "";
+        setStoredValue("target_head_oid", "");
+        setStoredValue("target_head_branch", "");
+        saveHudConfig({ targetBranch: sanitized });
+        renderState();
+      } catch (e) {
+        alert(e.message);
+        dom.targetBranchInput.value = config.targetBranch || "";
+      }
+    };
     dom.includePathsInput.onchange = () => {
       try {
         const raw = dom.includePathsInput.value.trim();
@@ -1034,6 +1152,10 @@ Fix Instructions:
       config.autoPilot = dom.autoPilotCheck.checked;
       saveHudConfig({ autoPilot: config.autoPilot });
     };
+    dom.recentCommitsCheck.onchange = () => {
+      config.includeRecentCommits = dom.recentCommitsCheck.checked;
+      saveHudConfig({ includeRecentCommits: config.includeRecentCommits });
+    };
     dom.mixBtn.onclick = async () => {
       try {
         dom.mixBtn.disabled = true;
@@ -1048,6 +1170,7 @@ Fix Instructions:
           state.lastMixStats = res.stats;
           setStoredValue("head_oid", res.headOid);
           let injected = false;
+          const metaCommits = res.stats.recentCommitsCount ? ` (incl. ${res.stats.recentCommitsCount} recent commits, ${res.stats.volatileFilesCount ?? 0} volatile files)` : "";
           if (res.parts && res.parts.length > 1) {
             const partBreakdown = res.parts.map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`).join(", ");
             injected = injectRepoMixParts(
@@ -1055,14 +1178,14 @@ Fix Instructions:
             );
             controller.updateState({
               status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
             });
           } else {
             injected = injectRepoMixFile(res.xmlContent);
             const charLen = res.stats.charCount ?? res.xmlContent.length;
             controller.updateState({
               status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
             });
           }
         } else {
@@ -1092,22 +1215,22 @@ Fix Instructions:
       });
       try {
         if (state.headOid) {
-          const patchReq = {
-            repo: config.repo,
-            branch: config.branch,
-            expectedHeadOid: state.headOid,
-            payload: patch.payload
-          };
+          const patchReq = buildWorkerPatchRequest(config, state, patch.payload);
           const res = await requestWorkerPatch(config, patchReq);
           if (res.status === "COMMITTED") {
             state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
-            if (res.newHeadOid) {
-              state.headOid = res.newHeadOid;
-              setStoredValue("head_oid", res.newHeadOid);
+            const oidUpdates = advancePatchOidState(config, res);
+            Object.assign(state, oidUpdates);
+            if (oidUpdates.headOid) setStoredValue("head_oid", oidUpdates.headOid);
+            if (oidUpdates.targetHeadOid) {
+              setStoredValue("target_head_oid", oidUpdates.targetHeadOid);
+              setStoredValue("target_head_branch", oidUpdates.targetHeadBranch || "");
             }
+            const branchLabel = res.targetBranch || config.branch;
+            const prMsg = res.pullRequestUrl ? ` | \u{1F517} PR: ${res.pullRequestUrl}` : "";
             controller.updateState({
               status: "COMMITTED",
-              statusMessage: `\u2705 Committed: ${res.newHeadOid ? res.newHeadOid.slice(0, 7) : ""} (${patch.commitMessage})`,
+              statusMessage: `\u2705 Committed to ${branchLabel}: ${res.newHeadOid ? res.newHeadOid.slice(0, 7) : "OK"} (${patch.commitMessage})${prMsg}`,
               retryCount: 0,
               lastErrors: []
             });
@@ -1143,6 +1266,13 @@ Fix Instructions:
           }
           if (res.status === "NO_CHANGES_NEEDED") {
             state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
+            const oidUpdates = advancePatchOidState(config, res);
+            Object.assign(state, oidUpdates);
+            if (oidUpdates.headOid) setStoredValue("head_oid", oidUpdates.headOid);
+            if (oidUpdates.targetHeadOid) {
+              setStoredValue("target_head_oid", oidUpdates.targetHeadOid);
+              setStoredValue("target_head_branch", oidUpdates.targetHeadBranch || "");
+            }
             controller.updateState({
               status: "IDLE",
               statusMessage: `\u2139\uFE0F No changes needed (idempotent patch).`

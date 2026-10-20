@@ -2,7 +2,6 @@ import type {
   HudConfig,
   HudState,
   HarvestedPatch,
-  WorkerPatchRequest,
 } from '../types';
 import {
   loadHudConfig,
@@ -22,6 +21,7 @@ import {
   buildSelfHealingPrompt,
   MAX_SELF_HEALING_RETRIES,
 } from '../services/selfHealing';
+import { advancePatchOidState, buildWorkerPatchRequest } from '../services/patchOidState';
 import {
   HUD_STYLES,
   HUD_SHADOW_STYLES,
@@ -53,8 +53,16 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   }
 
   const config = loadHudConfig();
+  const configuredTargetBranch = config.targetBranch?.trim() || '';
+  const storedTargetBranch = getStoredValue('target_head_branch', '');
+  const matchesStoredTarget = storedTargetBranch.replace(/^refs\/heads\//, '') ===
+    configuredTargetBranch.replace(/^refs\/heads\//, '');
   const state: HudState = {
     headOid: getStoredValue('head_oid', ''),
+    targetHeadOid: matchesStoredTarget
+      ? getStoredValue('target_head_oid', '')
+      : '',
+    targetHeadBranch: matchesStoredTarget ? storedTargetBranch : '',
     lastMixStats: null,
     status: 'IDLE',
     statusMessage: 'Ready. Load Repo Mix or commit patches.',
@@ -80,15 +88,11 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
     dom.retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
 
-    dom.statusBox.className = `hud-status-box ${
-      state.status === 'ERROR' || state.status === 'PREFLIGHT_FAILED' || state.status === 'GIT_CONFLICT'
-        ? 'error'
-        : state.status === 'COMMITTED'
-        ? 'success'
-        : state.status === 'MIXING' || state.status === 'PATCHING'
-        ? 'info'
-        : 'idle'
-    }`;
+    const statusClasses: Record<string, string> = {
+      ERROR: 'error', PREFLIGHT_FAILED: 'error', GIT_CONFLICT: 'error',
+      COMMITTED: 'success', MIXING: 'info', PATCHING: 'info'
+    };
+    dom.statusBox.className = `hud-status-box ${statusClasses[state.status] || 'idle'}`;
 
     // Render status and any linter errors cleanly without innerHTML
     dom.statusBox.textContent = '';
@@ -125,7 +129,6 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       dom.statusBox.appendChild(healBtn);
     }
 
-    // Update Apply All and Clear buttons
     const patchCount = state.harvestedPatches.length;
     const isBusy = state.status === 'PATCHING' || state.status === 'MIXING';
     dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
@@ -177,7 +180,6 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   };
   dom.closeBtn.onclick = closePanel;
 
-  // Input persistence
   dom.repoInput.onchange = () => {
     try {
       const sanitized = sanitizeNoGithubPat(dom.repoInput.value.trim(), 'repo');
@@ -197,6 +199,22 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     } catch (e: any) {
       alert(e.message);
       dom.branchInput.value = config.branch;
+    }
+  };
+
+  dom.targetBranchInput.onchange = () => {
+    try {
+      const sanitized = sanitizeNoGithubPat(dom.targetBranchInput.value.trim(), 'targetBranch');
+      config.targetBranch = sanitized;
+      state.targetHeadOid = '';
+      state.targetHeadBranch = '';
+      setStoredValue('target_head_oid', '');
+      setStoredValue('target_head_branch', '');
+      saveHudConfig({ targetBranch: sanitized });
+      renderState();
+    } catch (e: any) {
+      alert(e.message);
+      dom.targetBranchInput.value = config.targetBranch || '';
     }
   };
 
@@ -241,7 +259,11 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     saveHudConfig({ autoPilot: config.autoPilot });
   };
 
-  // Mix Repo Action
+  dom.recentCommitsCheck.onchange = () => {
+    config.includeRecentCommits = dom.recentCommitsCheck.checked;
+    saveHudConfig({ includeRecentCommits: config.includeRecentCommits });
+  };
+
   dom.mixBtn.onclick = async () => {
     try {
       dom.mixBtn.disabled = true;
@@ -258,6 +280,10 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
         setStoredValue('head_oid', res.headOid);
 
         let injected = false;
+        const metaCommits = res.stats.recentCommitsCount
+          ? ` (incl. ${res.stats.recentCommitsCount} recent commits, ${res.stats.volatileFilesCount ?? 0} volatile files)`
+          : '';
+
         if (res.parts && res.parts.length > 1) {
           const partBreakdown = res.parts
             .map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`)
@@ -267,14 +293,14 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
           );
           controller.updateState({
             status: 'IDLE',
-            statusMessage: `✅ Loaded ${res.parts.length} parts (${res.stats.fileCount} files, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
+            statusMessage: `✅ Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
           });
         } else {
           injected = injectRepoMixFile(res.xmlContent);
           const charLen = res.stats.charCount ?? res.xmlContent.length;
           controller.updateState({
             status: 'IDLE',
-            statusMessage: `✅ Loaded ${res.stats.fileCount} files (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
+            statusMessage: `✅ Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}`,
           });
         }
       } else {
@@ -294,7 +320,6 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     }
   };
 
-  // Apply Patch Action
   const handleApplyPatch = async (patch: HarvestedPatch): Promise<boolean> => {
     if (onApplyPatchCustom) {
       return onApplyPatchCustom(patch);
@@ -308,23 +333,23 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
     try {
       if (state.headOid) {
-        const patchReq: WorkerPatchRequest = {
-          repo: config.repo,
-          branch: config.branch,
-          expectedHeadOid: state.headOid,
-          payload: patch.payload,
-        };
+        const patchReq = buildWorkerPatchRequest(config, state, patch.payload);
 
         const res = await requestWorkerPatch(config, patchReq);
         if (res.status === 'COMMITTED') {
           state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
-          if (res.newHeadOid) {
-            state.headOid = res.newHeadOid;
-            setStoredValue('head_oid', res.newHeadOid);
+          const oidUpdates = advancePatchOidState(config, res);
+          Object.assign(state, oidUpdates);
+          if (oidUpdates.headOid) setStoredValue('head_oid', oidUpdates.headOid);
+          if (oidUpdates.targetHeadOid) {
+            setStoredValue('target_head_oid', oidUpdates.targetHeadOid);
+            setStoredValue('target_head_branch', oidUpdates.targetHeadBranch || '');
           }
+          const branchLabel = res.targetBranch || config.branch;
+          const prMsg = res.pullRequestUrl ? ` | 🔗 PR: ${res.pullRequestUrl}` : '';
           controller.updateState({
             status: 'COMMITTED',
-            statusMessage: `✅ Committed: ${res.newHeadOid ? res.newHeadOid.slice(0, 7) : ''} (${patch.commitMessage})`,
+            statusMessage: `✅ Committed to ${branchLabel}: ${res.newHeadOid ? res.newHeadOid.slice(0, 7) : 'OK'} (${patch.commitMessage})${prMsg}`,
             retryCount: 0,
             lastErrors: [],
           });
@@ -366,6 +391,13 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
         if (res.status === 'NO_CHANGES_NEEDED') {
           state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== patch.id);
+          const oidUpdates = advancePatchOidState(config, res);
+          Object.assign(state, oidUpdates);
+          if (oidUpdates.headOid) setStoredValue('head_oid', oidUpdates.headOid);
+          if (oidUpdates.targetHeadOid) {
+            setStoredValue('target_head_oid', oidUpdates.targetHeadOid);
+            setStoredValue('target_head_branch', oidUpdates.targetHeadBranch || '');
+          }
           controller.updateState({
             status: 'IDLE',
             statusMessage: `ℹ️ No changes needed (idempotent patch).`,

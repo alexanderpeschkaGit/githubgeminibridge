@@ -1,57 +1,118 @@
 # ==============================================================================
-# GEMINI PROMPT TEMPLATE - GEMINI-TO-GITHUB BRIDGE
+# GEMINI PROMPT TEMPLATES & QUICK SNIPPETS - GEMINI-TO-GITHUB BRIDGE
 # Datei: gemini_prompt_instructions.txt
-# Hinweis: Diese Datei dient als Kopiervorlage für Google Gemini / AI Studio
-#          und wird von AI-Assistenten nicht automatisch in den Kontext geladen.
 # ==============================================================================
 
---- [DEUTSCHE VERSION (Copy & Paste in Gemini System Instructions / Prompt)] ---
+# ------------------------------------------------------------------------------
+# 1. SCHNELLE EINZEILER FÜR DEN CHAT (ZERO CONTEXT-BLOAT)
+# ------------------------------------------------------------------------------
+# Diese Einzeiler kannst du einfach an das Ende deiner Prompt-Anfrage hängen,
+# ohne jedes Mal lange Schemas oder Beispiele mitkopieren zu müssen:
+
+# [Empfehlung: Atomares Multi-File JSON]
+Gib Änderungen ausschließlich als V2 Patch-JSON mit commitMessage und patches im GeminiPatchPayload-Schema aus. Worker-Request-Felder gehören nicht in dieses JSON.
+
+# [Alternative: Klassisches Search/Replace]
+Gib die Änderung als SEARCH/REPLACE Block mit // filepath: an.
+
+# [English Quick Triggers]
+Output changes strictly as V2 Patch-JSON using commitMessage and patches from the GeminiPatchPayload schema. Do not include worker request fields.
+Output changes as SEARCH/REPLACE blocks with // filepath: headers.
+
+
+# ------------------------------------------------------------------------------
+# 2. DEUTSCHE VOLLVERSION (Für Gemini System Instructions / Prompt-Presets)
+# ------------------------------------------------------------------------------
 
 Wenn du Code änderst oder neue Dateien erstellst, beachte strikt folgende Regeln für die GitHub-Bridge:
 
-1. DATEIPFAD:
-   Gib in der allerersten Zeile jedes Code-Blocks immer den relativen Dateipfad an:
-   // filepath: pfad/zur/datei.ts (oder # filepath: pfad/script.py für Python)
+REGEL 1: FORMAT-AUSWAHL
+Verwende bevorzugt das strukturierte V2 Patch-JSON nach dem GeminiPatchPayload-Vertrag.
+Das klassische V1 SEARCH/REPLACE-Blockformat ist ein separater Fallback und keine V2-JSON-Variante.
 
-2. TEILÄNDERUNGEN (Search/Replace):
-   Wenn du nur Teile einer bestehenden Datei änderst, verwende exakt dieses Format:
-   // filepath: pfad/zur/datei.ts
-   <<<<<<< SEARCH
-   exakter_alter_code_aus_dem_repo
-   =======
-   neuer_ersetzter_code
-   >>>>>>> REPLACE
+--- FORMAT A: V2 PATCH-JSON (EMPFOHLEN) ---
+Gib die Antwort als valides JSON in einem JSON-Codeblock aus:
+```json
+{
+  "commitMessage": "feat: kurze Beschreibung der Änderung",
+  "patches": [
+    {
+      "path": "relativer/pfad/zur/datei.ts",
+      "action": "modify",
+      "blocks": [
+        {
+          "search": "export const oldValue = 1;",
+          "replace": "export const newValue = 2;"
+        }
+      ]
+    },
+    {
+      "path": "relativer/pfad/zu/neuer_datei.ts",
+      "action": "create",
+      "fullContent": "export const helper = () => true;\n"
+    },
+    {
+      "path": "relativer/pfad/zu/alter_datei.ts",
+      "action": "delete"
+    }
+  ]
+}
+```
 
-3. NEUE ODER VOLLSTÄNDIGE DATEIEN:
-   Gib den kompletten Dateiinhalt an, beginnend mit der Dateipfad-Zeile:
-   // filepath: pfad/zur/neuen_datei.ts
-   // Vollständiger Code ohne Kürzungen
+Für `modify` enthält `blocks` ein oder mehrere Paare aus exakt im Repository vorkommendem `search` und dem vollständigen `replace`. Für `create` ist `fullContent` der vollständige neue Dateiinhalt; `delete` benötigt keine Inhaltsfelder. `branch` und `expectedHeadOid` sind Worker-Request-Felder und gehören nicht in den Payload.
 
-4. STRIKTE GUARDRAIL (KEINE PLATZHALTER):
-   Verwende NIEMALS Platzhalter wie "// ... existing code ...", "/* ... rest of code ... */" oder "# ... remaining code". Der Server lehnt solche Commits automatisch ab, um Datenverlust zu verhindern. Wenn du nicht die ganze Datei schreiben willst, nutze immer Search/Replace!
+--- FORMAT B: V1 SEARCH/REPLACE (SEPARATER FALLBACK) ---
+Für den klassischen V1-Fallback nutze das separate SEARCH/REPLACE-Blockformat mit einem `// filepath: ...`-Header und den etablierten SEARCH-, Trenn- und REPLACE-Markern. Dieses Format ist kein JSON und keine V2-JSON-Variante.
+
+--- STRIKTE GUARDRAIL (KEINE PLATZHALTER) ---
+Verwende NIEMALS Platzhalter wie "// ... existing code ...", "/* ... rest of code ... */" oder "# ... remaining code".
+Der Server lehnt solche Commits automatisch mit "400 Bad Request" ab, um versehentlichen Datenverlust zu verhindern. Wenn du nicht die gesamte Datei ausgeben willst, verwende immer Search/Replace!
 
 
---- [ENGLISH VERSION (Copy & Paste for Gemini System Instructions / Prompt)] ---
+# ------------------------------------------------------------------------------
+# 3. ENGLISH FULL VERSION (For Gemini System Instructions / Prompt Presets)
+# ------------------------------------------------------------------------------
 
-When modifying code or creating new files, strictly adhere to the following rules for the GitHub Bridge:
+When modifying code or creating new files, strictly adhere to these rules for the GitHub Bridge:
 
-1. FILEPATH:
-   Always specify the relative file path on the very first line of each code block:
-   // filepath: path/to/file.ts (or # filepath: path/to/script.py for Python)
+RULE 1: FORMAT SELECTION
+Prefer V2 Patch-JSON following the GeminiPatchPayload contract.
+The classic V1 SEARCH/REPLACE block format is a separate fallback, not a V2 JSON variant.
 
-2. PARTIAL MODIFICATIONS (Search/Replace):
-   When modifying parts of an existing file, always use exact search/replace blocks:
-   // filepath: path/to/file.ts
-   <<<<<<< SEARCH
-   exact_existing_code_from_repo
-   =======
-   new_replacement_code
-   >>>>>>> REPLACE
+--- FORMAT A: V2 PATCH-JSON (RECOMMENDED) ---
+Output the patch as valid JSON within a JSON code block:
+```json
+{
+  "commitMessage": "feat: brief description of the change",
+  "patches": [
+    {
+      "path": "relative/path/to/file.ts",
+      "action": "modify",
+      "blocks": [
+        {
+          "search": "export const oldValue = 1;",
+          "replace": "export const newValue = 2;"
+        }
+      ]
+    },
+    {
+      "path": "relative/path/to/new_file.ts",
+      "action": "create",
+      "fullContent": "export const helper = () => true;\n"
+    },
+    {
+      "path": "relative/path/to/deprecated_file.ts",
+      "action": "delete"
+    }
+  ]
+}
+```
 
-3. NEW OR FULL REPLACEMENT FILES:
-   Provide the full file content starting with the filepath comment:
-   // filepath: path/to/new_file.ts
-   // Complete code without truncations
+For `modify`, `blocks` contains one or more exact `search` strings from the repository and their complete `replace` strings. For `create`, `fullContent` is the complete new file; `delete` requires no content fields. Keep `branch` and `expectedHeadOid` outside this payload because they belong to the worker request.
 
-4. STRICT GUARDRAIL (NO PLACEHOLDERS):
-   NEVER use comments like "// ... existing code ...", "/* ... rest of code ... */", or "# ... remaining code". Commits with placeholders are automatically rejected by the edge worker to prevent data loss. If you don't want to output the whole file, use search/replace instead!
+--- FORMAT B: V1 SEARCH/REPLACE (SEPARATE FALLBACK) ---
+For the classic V1 fallback, use the separate SEARCH/REPLACE block format with a `// filepath: ...` header and the established SEARCH, separator, and REPLACE markers. This format is not JSON and is not a V2 JSON variant.
+
+--- STRICT GUARDRAIL (NO PLACEHOLDERS) ---
+NEVER use comments like "// ... existing code ...", "/* ... rest of code ... */", or "# ... remaining code".
+The edge worker automatically rejects commits with placeholders (400 Bad Request) to prevent irreversible code loss. If you do not want to output the entire file, always use Search/Replace!

@@ -6,10 +6,12 @@ export interface HudConfig {
   workerSecret: string;
   repo: string;
   branch: string;
+  targetBranch?: string;
   includePaths: string[];
   autoPilot: boolean;
   persistToGitHub: boolean;
   maxChunkChars: number;
+  includeRecentCommits: boolean;
 }
 
 export interface HarvestedPatch {
@@ -31,8 +33,16 @@ export type HudStatus =
   | 'ERROR';
 
 export interface HudState {
+  /** Source branch OID returned by /api/mix; never overwritten by target-only commits. */
   headOid: string;
-  lastMixStats: { fileCount: number; estimatedTokens: number } | null;
+  targetHeadOid: string;
+  targetHeadBranch: string;
+  lastMixStats: {
+    fileCount: number;
+    estimatedTokens: number;
+    recentCommitsCount?: number;
+    volatileFilesCount?: number;
+  } | null;
   status: HudStatus;
   statusMessage: string;
   retryCount: number;

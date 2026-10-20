@@ -245,12 +245,14 @@ export interface HudDomElements {
   closeBtn: HTMLButtonElement;
   repoInput: HTMLInputElement;
   branchInput: HTMLInputElement;
+  targetBranchInput: HTMLInputElement;
   secretInput: HTMLInputElement;
   includePathsInput: HTMLInputElement;
   maxChunkCharsInput: HTMLInputElement;
   oidBadge: HTMLDivElement;
   mixBtn: HTMLButtonElement;
   autoPilotCheck: HTMLInputElement;
+  recentCommitsCheck: HTMLInputElement;
   retryIndicator: HTMLSpanElement;
   applyAllBtn: HTMLButtonElement;
   clearQueueBtn: HTMLButtonElement;
@@ -328,6 +330,16 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   branchRow.appendChild(branchInput);
   body.appendChild(branchRow);
 
+  // Target Branch Row (Optional, for writing to a different or new branch)
+  const targetBranchRow = createHudElement('div', 'hud-form-row');
+  const targetBranchLabel = createHudElement('span', 'hud-label', 'Target Branch (optional)');
+  const targetBranchInput = createHudElement('input', 'hud-input');
+  targetBranchInput.placeholder = 'Same as mix branch (or e.g. preview, feature/...)';
+  targetBranchInput.value = config.targetBranch || '';
+  targetBranchRow.appendChild(targetBranchLabel);
+  targetBranchRow.appendChild(targetBranchInput);
+  body.appendChild(targetBranchRow);
+
   // Include Paths Row (Scope Filter for large repos)
   const pathsRow = createHudElement('div', 'hud-form-row');
   const pathsLabel = createHudElement('span', 'hud-label', 'Include Paths (comma-separated, optional)');
@@ -393,6 +405,19 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   optRow.appendChild(retryIndicator);
   body.appendChild(optRow);
 
+  // Commits & Volatile Files Row
+  const commitsRow = createHudElement('div');
+  commitsRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-top: 4px;';
+  const recentCommitsLabel = createHudElement('label', 'hud-toggle-label');
+  const recentCommitsCheck = createHudElement('input');
+  recentCommitsCheck.type = 'checkbox';
+  recentCommitsCheck.checked = config.includeRecentCommits === true;
+  const recentCommitsText = createHudElement('span', undefined, '🕒 Volatile Dateien & Letzte Commits');
+  recentCommitsLabel.appendChild(recentCommitsCheck);
+  recentCommitsLabel.appendChild(recentCommitsText);
+  commitsRow.appendChild(recentCommitsLabel);
+  body.appendChild(commitsRow);
+
   // Patch Queue Header Row
   const queueHeaderRow = createHudElement('div');
   queueHeaderRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-top: 4px;';
@@ -435,12 +460,14 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     closeBtn,
     repoInput,
     branchInput,
+    targetBranchInput,
     secretInput,
     includePathsInput,
     maxChunkCharsInput,
     oidBadge,
     mixBtn,
     autoPilotCheck,
+    recentCommitsCheck,
     retryIndicator,
     applyAllBtn,
     clearQueueBtn,

@@ -365,6 +365,8 @@
   - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (12/12 Probes).
   - `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (22/22 Assertions).
   - `node scripts/patches_and_tests/test-webhook-worker.mjs`: `PASS` (18/18 Assertions).
+
+
   - TypeScript Typecheck über alle 3 Packages: `PASS` (0 Fehler).
   - Working tree: clean.
 
@@ -483,3 +485,73 @@
   - CLI-Suite `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (`22/22` Assertions).
   - Webhook-Suite `node scripts/patches_and_tests/test-webhook-worker.mjs`: `PASS` (`18/18` Assertions).
   - `plans/STATE.md` auf Stufe 6.4 aktualisiert.
+
+### [2026-10-20T18:34:00+02:00] | Master-Orchestrator | Volatile Files Detection & Recent Commits in RepoMix
+- **Status:** `START`
+- **Aktion:** Delegierte Ausführung der Volatile-Files- und Recent-Commits-Unterstützung via Flash-Subagent gemäß Artifact-Plan.
+- **Ziel:** Paralleler REST-Fetch, Volatile-Files-Aggregation, XML-Generierung, 85k-Budget-Overhead-Einrechnung in Part 1, Userscript-HUD Drawer Checkbox, Probe 13 & Smoke-Suite (13/13), strikte Einhaltung < 500 Zeilen über alle 25 TS-Quelldateien.
+
+### [2026-10-20T18:38:30+02:00] | Flash-Subagent | Volatile Files Detection & Recent Commits in RepoMix
+- **Status:** `DONE`
+- **Umgesetzte Maßnahmen:**
+  1. *shared/types.ts:* `includeRecentCommits?: boolean` & `recentCommitsCount?: number` in `MixRequest` ergänzt; `recentCommitsCount?: number` & `volatileFilesCount?: number` in `MixResponse.stats` aufgenommen.
+  2. *recentCommits.ts (packages/edge-worker/src/modules/):* Neu erstellt (216 Zeilen). Paralleler Fetch via GitHub REST API (`/commits` & `/commits/{sha}`, max. 4 Subrequests), Volatile-Files Aggregation nach Touch-Count und Aktualität, strukturierte XML-Generierung (`<recent_commits>` und `<volatile_files>`). Graceful Fallback bei API-Fehlern.
+  3. *mixChunker.ts & mixer.ts:* `recentCommitsText` in `buildChunkedMixXml` eingebunden; exakte Einrechnung in `part1BaseOverhead` (Budget-Sicherheit für Part 1) und `totalRawChars`; Folgeparts 2..N bleiben schlank; `mixer.ts` auf 485 Zeilen gehalten (< 500 Zeilen).
+  4. *packages/userscript-hud:* `HudConfig.includeRecentCommits` in `types.ts`, `storage.ts` (Standard: `true`), `workerClient.ts`, Checkbox `🕒 Volatile Dateien & Letzte Commits` in `hudStylesAndDom.ts` (467 Zeilen) und Event-Wiring & Status-Meldungs-Erweiterung in `shadowHud.ts` (476 Zeilen).
+  5. *Userscript Bundle:* Rebuild mit `build-userscript.mjs` (58.3 KB) und Synchronisation nach Root `gemini-bridge.user.js`.
+  6. *worker-smoke.mjs:* Probe 13 hinzugefügt; Probe 10 verifiziert: 25/25 TypeScript-Quelldateien strikt < 500 Zeilen.
+- **Verifikation:**
+  - `tsc --noEmit` über alle 3 Packages (`userscript-hud`, `edge-worker`, `local-cli`): `PASS` (0 Fehler).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`13/13` Probes bestanden, **0/25** TypeScript-Dateien >= 500 Zeilen).
+  - `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (`22/22` Assertions).
+  - `node scripts/patches_and_tests/test-webhook-worker.mjs`: `PASS` (`18/18` Assertions).
+
+### [2026-10-20T18:46:00+02:00] | Flash-Subagent | Stufe 7: Target Branch Support & Atomic Branch Creation
+- **Status:** `DONE`
+- **Umgesetzte Maßnahmen:**
+  1. *shared/types.ts & userscript-hud/src/types.ts:* `targetBranch?: string` und `createBranchIfNeeded?: boolean` in `WorkerPatchRequest` ergänzt; `targetBranch`, `createdBranch` und `pullRequestUrl` in `WorkerPatchResponse` integriert; `HudConfig.targetBranch` typisiert.
+  2. *github.ts (packages/edge-worker/src/utils/):* `getBranchHeadOid` um `repository.id` im GraphQL-Query und im Rückgabetyp erweitert; `createBranchRef` mit atomarem GraphQL `createRef` und REST API Fallback implementiert. `github.ts` bleibt mit 467 Zeilen strikt < 500 Zeilen.
+  3. *patcher.ts (packages/edge-worker/src/modules/):* In `handlePatchRequest` Concurrency Check strikt auf dem Basisbranch gegen `expectedHeadOid` verankert; bei abweichendem `targetBranch` automatische Ref-Erstellung via `createBranchRef` an `expectedHeadOid` ausgeführt; atomarer Commit auf `commitBranch`; Response liefert `targetBranch`, `createdBranch` und GitHub Compare/PR-Link (`pullRequestUrl`). `patcher.ts` bleibt mit 412 Zeilen strikt < 500 Zeilen.
+  4. *packages/userscript-hud:* `storage.ts` um `targetBranch` erweitert (inkl. `sanitizeNoGithubPat`); `hudStylesAndDom.ts` um Eingabefeld `Target Branch (optional)` unter der Branch-Zeile erweitert (479 Zeilen); `shadowHud.ts` um `targetBranchInput.onchange`, `targetBranch` im Patch-Request und PR-Link in der Status-Message erweitert (486 Zeilen).
+  5. *Userscript Bundle:* Rebuild mit `build-userscript.mjs` (58.5 KB) und Synchronisation nach Root `gemini-bridge.user.js`.
+  6. *worker-smoke.mjs:* Probe 3 um `createBranchRef` und `targetBranch`-Vertragscheck erweitert; Probe 10 bestätigt: 25/25 TypeScript-Quelldateien strikt < 500 Zeilen.
+  7. *Regelwerks-Sync:* `edge-worker-architecture.md`, `userscript-shadow-hud.md` und `AGENTS.md` um Target-Branch- und Atomic-Branch-Creation-Invarianten aktualisiert.
+- **Verifikation:**
+  - `tsc --noEmit` über alle 3 Packages (`edge-worker`, `userscript-hud`, `local-cli`): `PASS` (0 Fehler).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (`13/13` Probes, 0/25 Quelldateien >= 500 Zeilen).
+  - `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (`22/22` Assertions).
+  - `node scripts/patches_and_tests/test-webhook-worker.mjs`: `PASS` (`18/18` Assertions).
+
+### [2026-10-20T19:35:17+02:00] | PRO Step 2: Safe Existing Target Branches & FIFO Target OID Lifecycle
+- **Status:** `DONE`
+- **Implemented:**
+  1. Preserved source HEAD freshness validation. Existing target branches are resolved before file reads; files are read from the captured target commit OID, and the atomic commit expects the same OID.
+  2. Target races return `GIT_CONFLICT`. Only `BranchNotFoundError` means a missing branch; new branches start at the validated source OID. Concurrent ref creation is re-resolved and applied against the resulting branch snapshot.
+  3. Added `expectedTargetHeadOid`; commit and no-op responses return the effective target HEAD and branch.
+  4. HUD keeps source `headOid` independent from `targetHeadOid`/`targetHeadBranch`. FIFO follow-ups send the confirmed target OID; failures change neither OIDs nor queue pruning.
+  5. Added functional regressions and smoke probe 14; synchronized architecture, HUD, and root invariants; rebuilt the userscript.
+- **Validation:**
+  - Edge Worker and userscript HUD TypeScript checks: `PASS`.
+  - `node scripts/patches_and_tests/test-target-branch-concurrency.mjs`: `PASS` (9 behavioral groups).
+  - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (14/14; live /health PASS).
+  - Userscript build: `PASS`; dist and root bundles byte-identical (62,489 bytes).
+  - All active TypeScript files < 500 lines; `git diff --check`: `PASS`.
+- **Overall:** `PASS`; no commits, pushes, or deployments.
+
+### [2026-10-20T20:48:15+02:00] | Review-Fix Wave Steps 1–5: V2 Contract, Safe Target Branches, Opt-In Commits, Budget Ceiling & Regression Gate
+- **Status:** `DONE`
+- **Implemented:**
+  1. *Step 1 – V2 prompt contract:* The harvester's V2 schema (`commitMessage` + `patches[{ action, blocks | fullContent }]`) is exercised functionally; the embedded `DEFAULT_MIX_INSTRUCTIONS` and the standalone `gemini_prompt_instructions.txt` examples parse to the identical payload object. The V1 fallback is now proven executable too: `convertLegacyBlocksToV2Payload` turns a real SEARCH/REPLACE block into a `modify` operation with verbatim search/replace pairs instead of only being asserted as prompt text.
+  2. *Step 2 – Safe existing target branches (confirmed user decision):* Source freshness remains bound to `expectedHeadOid`; existing target refs are read from, and committed against, their captured snapshot OID; only a specific branch-not-found creates a ref at the validated source OID; target races yield `GIT_CONFLICT`; `expectedTargetHeadOid` keeps source and target tokens independent.
+  3. *Step 3 – Recent commits opt-in (confirmed user decision):* `includeRecentCommits` defaults to `false` and omitted/false performs zero GitHub metadata calls. The HUD's one-time migration marker `recent_commits_opt_in_migration_v1` resets a legacy stored `true` exactly once, while a later explicit opt-in is preserved.
+  4. *Step 4 – Metadata budget & absolute ceiling:* `capRecentCommitsText` / `MAX_RECENT_COMMITS_CHARS = 8_000` cap Part 1 metadata with a visible truncation marker; `HARD_GEMINI_CHAR_LIMIT = 100_000` cannot be raised by `maxChunkChars`/`maxChunkBytes`/`maxChunkTokens`; over-limit parts are resolved deterministically (metadata trim → drop metadata → drop whole files) and never returned as success.
+  5. *Step 5 – Consolidated regression runner:* `scripts/patches_and_tests/run-regressions.mjs` runs the four review regressions plus the local CLI and webhook suites sequentially as child processes, prints a compact PASS/FAIL table, and propagates a non-zero exit if any suite fails. The network-dependent smoke suite is deliberately excluded from the default gate (`--include-smoke` opts in, `--skip-smoke` acknowledges the skip, `--help` documents both); when included, its artifact is redirected and removed so `worker-baseline.json` is never rewritten.
+  6. *Documentation drift closed:* `agents.md` (opt-in recent commits, absolute 100k ceiling with capped metadata, target-snapshot OID separation in mix flow and P1 matrix), `.agents/rules/edge-worker-architecture.md` (`/api/mix` and `/api/patch` request contracts incl. `expectedTargetHeadOid` and existing-target semantics), `REPOMIX_INSTRUCTIONS.md` (legacy `branch`/`expectedHeadOid`/`message`/`files`/`type`/`search` schema replaced by the canonical `commitMessage`/`patches` schema, plus the opt-in metadata note). No duplicate rule restatements were added to `userscript-shadow-hud.md`; it already stated the corrected opt-in and OID contracts.
+- **Validation:**
+  - `node scripts/patches_and_tests/run-regressions.mjs`: `PASS` (6/6).
+  - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (7/7; live `/health` reachable during the run).
+  - Failure path verified with an unreachable `TEST_BASE_URL`: aggregate `FAIL`, exit code `1` (no silent pass).
+  - Edge Worker, userscript HUD and local CLI TypeScript checks: `PASS` (0 errors).
+  - `worker-smoke.mjs`: `PASS` (14/14) with redirected `OUTPUT_FILE`; `worker-baseline.json` byte-unchanged.
+  - Userscript dist/root bundles byte-identical (63,400 bytes); 28/28 active TypeScript files < 500 lines (max 498); `git diff --check`: `PASS`.
+- **Overall:** `PASS`; no commits, pushes, or deployments. Plan Step 6 (final validation/checkpoint) intentionally left to the parent.

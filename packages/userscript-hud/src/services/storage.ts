@@ -75,20 +75,56 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
   workerSecret: 'fc1bec3f781b59dee2e576650460f417269fd44d3b0e39d77ae18480c270524f',
   repo: 'alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0',
   branch: 'preview',
+  targetBranch: '',
   includePaths: [],
   autoPilot: false,
   persistToGitHub: false,
   maxChunkChars: 85000,
+  includeRecentCommits: false,
 };
 
+const RECENT_COMMITS_MIGRATION_KEY = 'recent_commits_opt_in_migration_v1';
+
+/**
+ * One-time migration from the former default-on behavior.
+ * A legacy stored "true" is reset to false exactly once; afterwards an explicit
+ * user opt-in is preserved because the migration marker is already set.
+ */
+function migrateRecentCommitsOptIn(): void {
+  if (getStoredValue(RECENT_COMMITS_MIGRATION_KEY, '') === 'true') {
+    return;
+  }
+
+  if (getStoredValue('include_recent_commits', '') === 'true') {
+    setStoredValue('include_recent_commits', 'false');
+    if (getStoredValue('include_recent_commits', '') === 'true') {
+      console.warn(
+        '[Gemini Bridge Storage] Could not migrate legacy include_recent_commits=true to false; retrying on next load.'
+      );
+      return;
+    }
+  }
+
+  setStoredValue(RECENT_COMMITS_MIGRATION_KEY, 'true');
+  if (getStoredValue(RECENT_COMMITS_MIGRATION_KEY, '') !== 'true') {
+    console.warn(
+      '[Gemini Bridge Storage] Could not persist the recent-commits migration marker; migration will retry on next load.'
+    );
+  }
+}
+
 export function loadHudConfig(): HudConfig {
+  migrateRecentCommitsOptIn();
+
   const workerUrl = getStoredValue('worker_url', DEFAULT_HUD_CONFIG.workerUrl);
   const workerSecret = getStoredValue('worker_secret', DEFAULT_HUD_CONFIG.workerSecret);
   const repo = sanitizeRepo(getStoredValue('owner_repo', DEFAULT_HUD_CONFIG.repo));
   const branch = getStoredValue('branch', DEFAULT_HUD_CONFIG.branch);
+  const targetBranch = getStoredValue('target_branch', DEFAULT_HUD_CONFIG.targetBranch || '');
   const autoPilotStr = getStoredValue('auto_pilot', 'false');
   const persistStr = getStoredValue('persist_to_github', 'false');
   const includePathsStr = getStoredValue('include_paths', '');
+  const includeRecentCommitsStr = getStoredValue('include_recent_commits', 'false');
 
   let includePaths: string[] = [];
   if (includePathsStr) {
@@ -109,10 +145,12 @@ export function loadHudConfig(): HudConfig {
     workerSecret,
     repo,
     branch,
+    targetBranch,
     includePaths,
     autoPilot: autoPilotStr === 'true',
     persistToGitHub: persistStr === 'true',
     maxChunkChars,
+    includeRecentCommits: includeRecentCommitsStr === 'true',
   };
 }
 
@@ -132,6 +170,9 @@ export function saveHudConfig(cfg: Partial<HudConfig>): HudConfig {
   if (cfg.branch !== undefined) {
     setStoredValue('branch', sanitizeNoGithubPat(updated.branch, 'branch'));
   }
+  if (cfg.targetBranch !== undefined) {
+    setStoredValue('target_branch', sanitizeNoGithubPat(updated.targetBranch || '', 'targetBranch'));
+  }
   if (cfg.autoPilot !== undefined) {
     setStoredValue('auto_pilot', updated.autoPilot ? 'true' : 'false');
   }
@@ -143,6 +184,9 @@ export function saveHudConfig(cfg: Partial<HudConfig>): HudConfig {
   }
   if (cfg.maxChunkChars !== undefined) {
     setStoredValue('max_chunk_chars', String(updated.maxChunkChars));
+  }
+  if (cfg.includeRecentCommits !== undefined) {
+    setStoredValue('include_recent_commits', updated.includeRecentCommits ? 'true' : 'false');
   }
 
   return updated;

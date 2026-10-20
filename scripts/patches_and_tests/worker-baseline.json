@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-10-20T15:36:21.965Z",
+  "timestamp": "2026-10-20T19:04:46.905Z",
   "overallStatus": "PASS",
-  "passedCount": 12,
-  "totalProbes": 12,
+  "passedCount": 14,
+  "totalProbes": 14,
   "results": [
     {
       "id": 1,
@@ -21,10 +21,12 @@
     },
     {
       "id": 3,
-      "name": "GitHub Connector V2 Extensions (Batch-Read & Single-File Commit)",
+      "name": "GitHub Connector V2 Extensions (Batch-Read, Single Commit & Branch Ref)",
       "pass": true,
       "hasBatchRead": true,
-      "hasSingleCommit": true
+      "hasSingleCommit": true,
+      "hasCreateBranchRef": true,
+      "hasTargetBranchInTypes": true
     },
     {
       "id": 4,
@@ -104,19 +106,23 @@
       "id": 10,
       "name": "File-Size Modularity Audit (<500 lines) & End-to-End Artifact Completeness",
       "pass": true,
-      "totalTsFilesAudited": 24,
-      "warningZoneFilesCount": 8,
+      "totalTsFilesAudited": 26,
+      "warningZoneFilesCount": 9,
       "overLimitFilesCount": 0,
       "bundleByteIdentical": true,
-      "bundleSize": 56758,
+      "bundleSize": 63400,
       "warningZone": [
         {
+          "file": "packages/edge-worker/src/modules/mixChunker.ts",
+          "lines": 452
+        },
+        {
           "file": "packages/edge-worker/src/modules/mixer.ts",
-          "lines": 473
+          "lines": 485
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 366
+          "lines": 417
         },
         {
           "file": "packages/edge-worker/src/modules/syntaxScanner.ts",
@@ -128,7 +134,7 @@
         },
         {
           "file": "packages/edge-worker/src/utils/github.ts",
-          "lines": 432
+          "lines": 474
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
@@ -136,11 +142,11 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 452
+          "lines": 479
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 467
+          "lines": 499
         }
       ],
       "overLimitZone": [],
@@ -155,19 +161,23 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
-          "lines": 278
+          "lines": 452
         },
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
-          "lines": 473
+          "lines": 485
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 366
+          "lines": 417
         },
         {
           "file": "packages/edge-worker/src/modules/patchInMemory.ts",
           "lines": 290
+        },
+        {
+          "file": "packages/edge-worker/src/modules/recentCommits.ts",
+          "lines": 216
         },
         {
           "file": "packages/edge-worker/src/modules/syntaxScanner.ts",
@@ -187,11 +197,11 @@
         },
         {
           "file": "packages/edge-worker/src/utils/github.ts",
-          "lines": 432
+          "lines": 474
         },
         {
           "file": "packages/edge-worker/src/utils/tarUtils.ts",
-          "lines": 113
+          "lines": 131
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
@@ -206,28 +216,32 @@
           "lines": 60
         },
         {
+          "file": "packages/userscript-hud/src/services/patchOidState.ts",
+          "lines": 58
+        },
+        {
           "file": "packages/userscript-hud/src/services/selfHealing.ts",
           "lines": 156
         },
         {
           "file": "packages/userscript-hud/src/services/storage.ts",
-          "lines": 150
+          "lines": 194
         },
         {
           "file": "packages/userscript-hud/src/services/workerClient.ts",
-          "lines": 155
+          "lines": 156
         },
         {
           "file": "packages/userscript-hud/src/types.ts",
-          "lines": 96
+          "lines": 106
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 452
+          "lines": 479
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 467
+          "lines": 499
         },
         {
           "file": "packages/local-cli/src/cli.ts",
@@ -278,6 +292,36 @@
       "functionalBudgetPass": true,
       "guardrailPass": true,
       "ignorePass": true
+    },
+    {
+      "id": 13,
+      "name": "Volatile Files Detection & Recent Commits in RepoMix",
+      "pass": true,
+      "hasFetchFn": true,
+      "hasFormatXml": true,
+      "hasEscapeXml": true,
+      "xmlValid": true,
+      "mixerImportsRecent": true,
+      "mixerPassesTextToChunker": true,
+      "mixerOptInOnly": true,
+      "hudDefaultOff": true,
+      "hudMigration": true,
+      "chunkerHasInputProp": true,
+      "chunkerCapsMetadata": true,
+      "chunkerUsesCappedMetadata": true,
+      "chunkerEnforcesHardLimit": true,
+      "bundleHasRecentCommitsCheck": true
+    },
+    {
+      "id": 14,
+      "name": "Target-Branch Snapshot and Independent OID Contracts",
+      "pass": true,
+      "sourceFreshness": true,
+      "targetSnapshotRead": true,
+      "exactTargetCommit": true,
+      "notFoundIsSpecific": true,
+      "separateTargetOidContract": true,
+      "independentHudOids": true
     }
   ]
 }

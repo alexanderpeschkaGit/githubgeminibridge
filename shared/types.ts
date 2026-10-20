@@ -34,6 +34,8 @@ export interface MixRequest {
   maxChunkBytes?: number;    // Maximale Byte-Größe pro Part (Standard: 512_000 ~500 KB)
   maxChunkTokens?: number;   // Maximale geschätzte Tokens pro Part (Standard: 125_000)
   splitOutput?: boolean;     // Ob Chunking aktiviert werden soll (Standard: true wenn Budget überschritten)
+  includeRecentCommits?: boolean; // Opt-in (default: false): fetch & include recent commit metadata and volatile file summaries
+  recentCommitsCount?: number;   // Number of recent commits to analyze (default: 3, max: 5)
 }
 
 export interface MixResponse {
@@ -46,6 +48,8 @@ export interface MixResponse {
     fileCount: number;
     estimatedTokens: number;
     charCount?: number;
+    recentCommitsCount?: number;
+    volatileFilesCount?: number;
   };
   persistedCommitOid?: string; // Falls persistToGitHub === true ausgeführt wurde
   errorMessage?: string;       // Fehlerbeschreibung bei status === "ERROR"
@@ -80,6 +84,9 @@ export interface WorkerPatchRequest {
   branch: string;
   expectedHeadOid: string;     // 40-stelliger Git-SHA für Optimistic Concurrency Control
   payload: GeminiPatchPayload;
+  targetBranch?: string;          // Optional: abweichender Zielbranch (z.B. "feature/xyz" oder "gemini/patch-1")
+  expectedTargetHeadOid?: string; // Optionaler, vom Source-OID getrennter Target-Branch Concurrency-Token
+  createBranchIfNeeded?: boolean; // Default true: legt targetBranch an, falls nicht vorhanden
 }
 
 export interface LinterError {
@@ -93,10 +100,13 @@ export interface LinterError {
 
 export interface WorkerPatchResponse {
   status: "COMMITTED" | "PREFLIGHT_FAILED" | "GIT_CONFLICT" | "NO_CHANGES_NEEDED" | "ERROR";
-  newHeadOid?: string;         // Neuer 40-stelliger Commit-SHA nach erfolgreichem Commit
+  newHeadOid?: string;         // Effektiver Branch-HEAD nach Commit/No-op; Fehler-OIDs dienen nur Diagnose
   commitUrl?: string;
   errors?: LinterError[];      // Aggregierte Fehlerliste für Auto-Retry in Gemini
   errorMessage?: string;
+  targetBranch?: string;          // Der tatsächlich verwendete Zielbranch
+  createdBranch?: boolean;        // True, falls der Branch frisch erzeugt wurde
+  pullRequestUrl?: string;        // GitHub Compare/PR-Link (z.B. https://github.com/owner/repo/compare/base...target?expand=1)
 }
 
 // ==========================================

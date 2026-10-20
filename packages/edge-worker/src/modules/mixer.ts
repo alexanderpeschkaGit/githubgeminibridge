@@ -1,7 +1,17 @@
 import type { MixRequest, MixResponse } from '../types';
 import { parseRepoOwner, getBranchHeadOid, commitSingleFileViaGraphQL } from '../utils/github';
-import { concatBuffers, parseAsciiString, parseOctal, parseIgnoreLines, matchesIgnorePattern } from '../utils/tarUtils';
+import {
+  concatBuffers,
+  parseAsciiString,
+  parseOctal,
+  parseIgnoreLines,
+  matchesIgnorePattern,
+  DEFAULT_IGNORED_DIR_NAMES,
+  DEFAULT_IGNORED_FILES,
+  DEFAULT_IGNORED_EXTENSIONS,
+} from '../utils/tarUtils';
 import { buildChunkedMixXml } from './mixChunker';
+import { fetchRecentCommitsAndVolatileFiles } from './recentCommits';
 
 /**
  * Escapes any occurrences of "]]>" inside file content as "]]]]><![CDATA[>"
@@ -42,25 +52,17 @@ export function shouldSkipTarEntry(
   const segments = normalized.split('/');
   const filename = segments[segments.length - 1];
 
-  // 3. Ignored directory paths
-  const ignoredDirNames = new Set([
-    '.git', 'node_modules', 'dist', 'build', '.wrangler', '.turbo', '.next',
-    'coverage', '_v1_backup', 'backup_unused', '.venv', 'venv', 'env',
-    '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.ipynb_checkpoints'
-  ]);
-
+  // 3. Ignored directory paths (e.g. .venv, node_modules, dist, .git via DEFAULT_IGNORED_DIR_NAMES)
   for (let i = 0; i < segments.length - 1; i++) {
     const seg = segments[i];
-    if (ignoredDirNames.has(seg) || seg.startsWith('repomix_')) {
+    if (DEFAULT_IGNORED_DIR_NAMES.has(seg) || seg.startsWith('repomix_')) {
       return { skip: true, reason: 'IGNORED_PATH' };
     }
   }
 
   // 4. Ignored lockfiles, bundle outputs and temporary artifacts
-  const ignoredFiles = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb']);
-
   if (
-    ignoredFiles.has(filename) ||
+    DEFAULT_IGNORED_FILES.has(filename) ||
     filename.endsWith('.bundle') ||
     filename.startsWith('repomix-output') ||
     /.*-bundle.*\.txt$/i.test(filename)
@@ -69,16 +71,8 @@ export function shouldSkipTarEntry(
   }
 
   // 5. Ignored binary, media and archive extensions
-  const ignoredExtensions = new Set([
-    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.svg',
-    '.mp4', '.webm', '.mov', '.mp3', '.wav', '.ogg',
-    '.woff', '.woff2', '.ttf', '.eot',
-    '.pdf', '.zip', '.tar', '.gz', '.7z',
-    '.wasm', '.exe', '.dll', '.so', '.dylib', '.pyc'
-  ]);
-
   const extMatch = filename.match(/\.[a-zA-Z0-9]+$/);
-  if (extMatch && ignoredExtensions.has(extMatch[0].toLowerCase())) {
+  if (extMatch && DEFAULT_IGNORED_EXTENSIONS.has(extMatch[0].toLowerCase())) {
     return { skip: true, reason: 'IGNORED_PATH' };
   }
 
@@ -105,18 +99,8 @@ export function shouldSkipTarEntry(
  * Extracts a 40-character lowercase hexadecimal SHA from a PAX header payload or comment field.
  */
 export function extractHeadOidFromPaxHeader(paxText: string): string | null {
-  // Standard git tarball PAX global header: "52 comment=7b20464295e26ecb00996fc108eb39d675e0b6be\n"
-  const match = paxText.match(/(?:^|\n)(?:\d+\s+)?comment=([0-9a-fA-F]{40})(?:\r?\n|$)/);
-  if (match) {
-    return match[1].toLowerCase();
-  }
-
-  const directMatch = paxText.match(/\b([0-9a-fA-F]{40})\b/);
-  if (directMatch) {
-    return directMatch[1].toLowerCase();
-  }
-
-  return null;
+  const match = paxText.match(/(?:^|\n)(?:\d+\s+)?comment=([0-9a-fA-F]{40})(?:\r?\n|$)/) || paxText.match(/\b([0-9a-fA-F]{40})\b/);
+  return match ? match[1].toLowerCase() : null;
 }
 
 
@@ -417,6 +401,27 @@ export async function handleMixRequest(
     }
   }
 
+  // Fetch recent commits & volatile files only on explicit opt-in (default: false)
+  let recentCommitsText = '';
+  let recentCommitsCount = 0;
+  let volatileFilesCount = 0;
+  if (req.includeRecentCommits === true) {
+    try {
+      const commitsResult = await fetchRecentCommitsAndVolatileFiles(
+        owner,
+        repo,
+        resolvedBranch,
+        githubToken,
+        req.recentCommitsCount || 3
+      );
+      recentCommitsText = commitsResult.xmlContent;
+      recentCommitsCount = commitsResult.commits.length;
+      volatileFilesCount = commitsResult.volatileFiles.length;
+    } catch {
+      // Graceful fallback
+    }
+  }
+
   // Partition files and build structured XML representation(s)
   const mixResult = buildChunkedMixXml({
     owner,
@@ -425,6 +430,7 @@ export async function handleMixRequest(
     headOid,
     fileTreeEntries,
     files,
+    recentCommitsText,
     maxChunkChars: req.maxChunkChars,
     maxChunkBytes: req.maxChunkBytes,
     maxChunkTokens: req.maxChunkTokens,
@@ -454,7 +460,10 @@ export async function handleMixRequest(
         xmlContent: mixResult.xmlContent,
         parts: mixResult.parts,
         isChunked: mixResult.isChunked,
-        stats: mixResult.stats,
+        stats: {
+          ...mixResult.stats,
+          ...(recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {})
+        },
         errorMessage: `Failed to persist repo-mix.xml snapshot to GitHub: ${err.message}`
       };
     }
@@ -466,7 +475,10 @@ export async function handleMixRequest(
     xmlContent: mixResult.xmlContent,
     parts: mixResult.parts,
     isChunked: mixResult.isChunked,
-    stats: mixResult.stats,
+    stats: {
+      ...mixResult.stats,
+      ...(recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {})
+    },
     ...(persistedCommitOid ? { persistedCommitOid } : {})
   };
 }

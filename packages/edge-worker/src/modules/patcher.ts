@@ -10,7 +10,9 @@ import type {
 import { utf8ToBase64 } from '../utils/encoding';
 import {
   parseRepoOwner,
+  BranchNotFoundError,
   getBranchHeadOid,
+  createBranchRef,
   fetchMultipleFilesViaGraphQL,
   createCommitOnBranch
 } from '../utils/github';
@@ -196,112 +198,161 @@ export async function handlePatchRequest(
     };
   }
 
-  const requestedBranch = req.branch.trim();
-
-  // 1. Concurrency Check: verify branch HEAD matches expectedHeadOid
-  let currentHeadOid = '';
-  let resolvedBranch = requestedBranch;
-  try {
-    const branchInfo = await getBranchHeadOid(owner, repo, requestedBranch, githubToken);
-    currentHeadOid = branchInfo.headOid;
-    resolvedBranch = branchInfo.resolvedBranch;
-  } catch (err: any) {
-    return {
-      status: 'ERROR',
-      errorMessage: `Failed to resolve branch "${requestedBranch}": ${err.message}`
-    };
+  const baseBranch = req.branch.trim();
+  const effectiveTargetBranch = (req.targetBranch || req.branch).trim();
+  const normalizeBranch = (branch: string) => branch.replace(/^refs\/heads\//, '');
+  const isDistinctTarget = normalizeBranch(effectiveTargetBranch) !== normalizeBranch(baseBranch);
+  if (
+    req.expectedTargetHeadOid !== undefined &&
+    (typeof req.expectedTargetHeadOid !== 'string' || !/^[0-9a-f]{40}$/i.test(req.expectedTargetHeadOid))
+  ) {
+    return { status: 'ERROR', errorMessage: 'expectedTargetHeadOid must be a 40-character Git commit OID.' };
   }
 
-  if (currentHeadOid !== req.expectedHeadOid) {
+  // Verify the source snapshot even when the patch will be committed elsewhere.
+  let sourceInfo;
+  try {
+    sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
+  } catch (err: any) {
+    return { status: 'ERROR', errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+  }
+  if (sourceInfo.headOid !== req.expectedHeadOid) {
     return {
       status: 'GIT_CONFLICT',
-      newHeadOid: currentHeadOid,
-      errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${resolvedBranch}" is at "${currentHeadOid}". Fetch the latest repo-mix.xml and retry.`
+      newHeadOid: sourceInfo.headOid,
+      errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
     };
   }
 
-  // 2. Batch-read all target files in 1 Subrequest via GraphQL
+  // Resolve/create the actual commit branch before reading any files.
+  let targetInfo = sourceInfo;
+  let createdBranch = false;
+  if (isDistinctTarget) {
+    try {
+      targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+    } catch (err: any) {
+      if (!(err instanceof BranchNotFoundError)) {
+        return { status: 'ERROR', errorMessage: `Failed to resolve target branch "${effectiveTargetBranch}": ${err.message}` };
+      }
+      if (req.expectedTargetHeadOid) {
+        return {
+          status: 'GIT_CONFLICT',
+          errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${req.expectedTargetHeadOid}".`
+        };
+      }
+      if (req.createBranchIfNeeded === false) {
+        return {
+          status: 'ERROR',
+          errorMessage: `Target branch "${effectiveTargetBranch}" does not exist and createBranchIfNeeded is false.`
+        };
+      }
+
+      try {
+        await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
+        createdBranch = true;
+      } catch (createErr: any) {
+        // A concurrent creator may win after the initial not-found lookup. Only
+        // continue if a fresh lookup confirms that the branch now exists.
+        try {
+          targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+        } catch (resolveErr: any) {
+          return {
+            status: 'ERROR',
+            errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
+          };
+        }
+      }
+      if (createdBranch) {
+        try {
+          targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+        } catch (resolveErr: any) {
+          return {
+            status: 'ERROR',
+            errorMessage: `Target branch "${effectiveTargetBranch}" was created but could not be resolved: ${resolveErr.message}`
+          };
+        }
+      }
+    }
+
+    if (req.expectedTargetHeadOid && targetInfo.headOid !== req.expectedTargetHeadOid) {
+      return {
+        status: 'GIT_CONFLICT',
+        newHeadOid: targetInfo.headOid,
+        targetBranch: targetInfo.resolvedBranch,
+        errorMessage: `Expected target HEAD "${req.expectedTargetHeadOid}" but branch "${targetInfo.resolvedBranch}" is at "${targetInfo.headOid}".`
+      };
+    }
+  }
+
+  const commitBranch = targetInfo.resolvedBranch;
+  const commitExpectedHeadOid = targetInfo.headOid;
+
+  // Apply patches to the exact branch snapshot that will receive the commit.
   const allTargetPaths = Array.from(new Set(req.payload.patches.map((p) => p.path)));
   let existingFiles: Record<string, string | null> = {};
   try {
-    existingFiles = await fetchMultipleFilesViaGraphQL(owner, repo, resolvedBranch, allTargetPaths, githubToken);
+    existingFiles = await fetchMultipleFilesViaGraphQL(owner, repo, commitExpectedHeadOid, allTargetPaths, githubToken);
   } catch (err: any) {
-    return {
-      status: 'ERROR',
-      errorMessage: `Batch fetch failed for target files: ${err.message}`
-    };
+    return { status: 'ERROR', errorMessage: `Batch fetch failed for target files: ${err.message}` };
   }
 
-  // 3. Apply Patches in Memory
   const patchResult = await applyPatchesInMemory(
     req.payload.patches,
     existingFiles,
     req.payload.preflight,
     preflightHook
   );
-
-  // If preflight or search/replace errors occurred, collect and return all without committing
   if (patchResult.errors.length > 0) {
-    return {
-      status: 'PREFLIGHT_FAILED',
-      errors: patchResult.errors
-    };
+    return { status: 'PREFLIGHT_FAILED', errors: patchResult.errors };
   }
-
-  // 4. Idempotency Check: if no effective changes, return NO_CHANGES_NEEDED
   if (!patchResult.hasEffectiveChanges) {
     return {
       status: 'NO_CHANGES_NEEDED',
-      newHeadOid: currentHeadOid
+      newHeadOid: commitExpectedHeadOid,
+      targetBranch: commitBranch,
+      createdBranch
     };
   }
 
-  // 5. Encode additions to base64 for GraphQL createCommitOnBranch
   const encodedAdditions = patchResult.additions.map((a) => ({
     path: a.path,
     contents: utf8ToBase64(a.content)
   }));
 
-  // 6. Execute atomic commit via createCommitOnBranch
   try {
     const commitResult = await createCommitOnBranch(
       owner,
       repo,
-      resolvedBranch,
-      req.expectedHeadOid,
+      commitBranch,
+      commitExpectedHeadOid,
       req.payload.commitMessage || 'chore: apply patches via gemini-git-bridge',
       encodedAdditions,
       patchResult.deletions,
       githubToken
     );
-
+    const compareUrl = `https://github.com/${owner}/${repo}/compare/${sourceInfo.resolvedBranch}...${commitBranch}?expand=1`;
     return {
       status: 'COMMITTED',
       newHeadOid: commitResult.oid,
-      commitUrl: commitResult.url
+      commitUrl: commitResult.url,
+      targetBranch: commitBranch,
+      createdBranch,
+      pullRequestUrl: isDistinctTarget ? compareUrl : undefined
     };
   } catch (err: any) {
     const errMsg = err.message || '';
-    if (
-      errMsg.includes('expectedHeadOid') ||
-      errMsg.includes('conflict') ||
-      errMsg.includes('stale') ||
-      errMsg.includes('HEAD')
-    ) {
-      const latestHead = await getBranchHeadOid(owner, repo, resolvedBranch, githubToken).catch(() => ({
-        headOid: currentHeadOid
+    if (/expectedHeadOid|conflict|stale|HEAD/i.test(errMsg)) {
+      const latestHead = await getBranchHeadOid(owner, repo, commitBranch, githubToken).catch(() => ({
+        headOid: commitExpectedHeadOid
       }));
       return {
         status: 'GIT_CONFLICT',
         newHeadOid: latestHead.headOid,
+        targetBranch: commitBranch,
         errorMessage: errMsg
       };
     }
-
-    return {
-      status: 'ERROR',
-      errorMessage: `Commit execution failed: ${errMsg}`
-    };
+    return { status: 'ERROR', errorMessage: `Commit execution failed: ${errMsg}` };
   }
 }
 

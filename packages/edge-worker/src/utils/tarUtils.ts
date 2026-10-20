@@ -110,3 +110,21 @@ export function matchesIgnorePattern(relPath: string, patterns: string[]): boole
 
   return false;
 }
+
+export const DEFAULT_IGNORED_DIR_NAMES = new Set([
+  '.git', 'node_modules', 'dist', 'build', '.wrangler', '.turbo', '.next',
+  'coverage', '_v1_backup', 'backup_unused', '.venv', 'venv', 'env',
+  '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.ipynb_checkpoints'
+]);
+
+export const DEFAULT_IGNORED_FILES = new Set([
+  'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb'
+]);
+
+export const DEFAULT_IGNORED_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.svg',
+  '.mp4', '.webm', '.mov', '.mp3', '.wav', '.ogg',
+  '.woff', '.woff2', '.ttf', '.eot',
+  '.pdf', '.zip', '.tar', '.gz', '.7z',
+  '.wasm', '.exe', '.dll', '.so', '.dylib', '.pyc'
+]);

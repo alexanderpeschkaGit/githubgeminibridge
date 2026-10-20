@@ -132,6 +132,7 @@ export async function requestRepoMix(
     maxChunkBytes: req?.maxChunkBytes,
     maxChunkTokens: req?.maxChunkTokens,
     splitOutput: req?.splitOutput,
+    includeRecentCommits: req?.includeRecentCommits ?? cfg.includeRecentCommits,
   };
   return gmRequestJson<MixResponse>(url, 'POST', cfg.workerSecret, payload);
 }
