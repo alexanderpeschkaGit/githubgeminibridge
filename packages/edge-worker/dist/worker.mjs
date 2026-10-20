@@ -864,6 +864,9 @@ function runBuiltinPreflightRules2(files, preflight) {
   }
   return errors;
 }
+function isInsertStyleBlockApplied(currentContent, block) {
+  return block.search.length > 0 && block.replace.length > 0 && block.replace.includes(block.search) && currentContent.includes(block.replace);
+}
 async function applyPatchesInMemory(patches, existingFiles, preflight, preflightHook = runPreflightLinter) {
   const additions = [];
   const deletions = [];
@@ -937,6 +940,9 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         if (phErrors.length > 0) {
           errors.push(...phErrors);
           hasError = true;
+        }
+        if (isInsertStyleBlockApplied(currentContent, block)) {
+          continue;
         }
         try {
           currentContent = applySearchReplace(currentContent, block.search, block.replace, op.path);

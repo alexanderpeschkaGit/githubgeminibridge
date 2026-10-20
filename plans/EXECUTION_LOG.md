@@ -663,4 +663,15 @@
 - **Neuer Befund (nicht behoben):** Die Idempotenz-Invariante gilt nur fuer **replace-style** Patches. Bei **insert-style** Patches (`search` ist Teilstring von `replace`) greift der Dedupe-Guard in `packages/edge-worker/src/modules/patchInMemory.ts` nicht, weil `currentContent.includes(block.replace)` nur im `catch`-Zweig geprueft wird: `search` matcht weiterhin vor dem eingefuegten Block, ein zweiter Lauf meldet `effectiveChanges: true` und dupliziert den Block. Lokal gegen den echten Modulcode nachgewiesen (insert-style: Marker 1 → 2; replace-style: Lauf 2 `effectiveChanges: false`). Ein Fix (Pre-Check `includes(replace)` vor `applySearchReplace`) wurde bewusst **nicht** umgesetzt, weil er Worker-Redeploy (`wrangler deploy` = Hard Stop) erfordern wuerde.
 - **Overall:** `COMMITTED`; Ziel-`main` bleibt `7151026…`, Fremd-Repo `sikanda_projectinart_11` bleibt `639fb9e…`; kein `git push`, kein `wrangler deploy`.
 
+### [2026-10-21T00:20:00+02:00] | Bugfix: Idempotenz für Insert-Style-Patches
+- **Status:** `DONE` (lokaler Fix + Regression; **nicht** deployt)
+- **Anlass:** Der Retest (Eintrag 00:07) hat gezeigt, dass die Idempotenz-Invariante nur für **replace-style** Patches gilt. Bei **insert-style** Blöcken (`search` ist Teilstring von `replace`) bleibt der Anker nach dem Commit vorhanden, `applySearchReplace` fügt die ergänzten Zeilen erneut ein — ein zweites `⚡ Apply All` hätte dupliziert statt `NO_CHANGES_NEEDED` zu liefern.
+- **Aenderungen:**
+  1. `packages/edge-worker/src/modules/patchInMemory.ts`: neuer Export `isInsertStyleBlockApplied(currentContent, block)` (`search.length > 0 && replace.includes(search) && currentContent.includes(replace)`); Pre-Check im Block-Loop **vor** `applySearchReplace`. Reine Replace-Style-Blöcke behalten die bestehende `catch`-Idempotenz unverändert, damit ein zufällig anderswo vorhandener identischer `replace`-Text nicht fälschlich als „bereits angewendet“ gilt.
+  2. Neue Regression `scripts/patches_and_tests/test-patch-idempotence.mjs` + Registrierung in `run-regressions.mjs` (jetzt 9 lokale Suiten).
+  3. `packages/edge-worker/dist/worker.mjs` neu gebaut (Bundle +6 Zeilen).
+  4. Docs synchronisiert: `.agents/rules/edge-worker-architecture.md` (Abschnitt 4) und `agents.md` (P1-Zeile Untertool B).
+- **Validierung:** `tsc --noEmit` (worker) `PASS`; neue Suite `PASS`; Negativ-Nachweis: mit temporär neutralisiertem Guard schlägt die Suite fehl (`AssertionError: re-applying an insert-style patch must be a no-op`) ⇒ der Test deckt den Bug tatsächlich ab; `run-regressions.mjs --include-smoke` `PASS` (10/10, `worker-smoke` 14/14 inkl. Dateigrößen-Audit); `patchInMemory.ts` 319 Zeilen (< 500).
+- **Overall:** `DONE` (lokal). Der Live-Worker läuft weiterhin auf `2.0.1` **ohne** diesen Fix — `wrangler deploy` ist Hard Stop und wurde nicht ausgeführt.
+
 

@@ -1,7 +1,8 @@
 import type {
   FilePatchOperation,
   GeminiPatchPayload,
-  LinterError
+  LinterError,
+  PatchBlock
 } from '../types';
 import {
   LLM_PLACEHOLDER_PATTERNS,
@@ -117,6 +118,24 @@ export function runBuiltinPreflightRules(
 }
 
 /**
+ * Detects an already-applied insert-style block ("add lines around an anchor"):
+ * when `replace` contains `search`, the anchor still matches after the commit,
+ * so applySearchReplace would re-insert the added lines and duplicate them.
+ * Presence of the full replacement is therefore the applied-state marker.
+ */
+export function isInsertStyleBlockApplied(
+  currentContent: string,
+  block: PatchBlock
+): boolean {
+  return (
+    block.search.length > 0 &&
+    block.replace.length > 0 &&
+    block.replace.includes(block.search) &&
+    currentContent.includes(block.replace)
+  );
+}
+
+/**
  * Pure in-memory patch processor.
  * Applies patches, validates placeholders, checks idempotency and executes preflight rules.
  */
@@ -215,6 +234,10 @@ export async function applyPatchesInMemory(
         if (phErrors.length > 0) {
           errors.push(...phErrors);
           hasError = true;
+        }
+
+        if (isInsertStyleBlockApplied(currentContent, block)) {
+          continue;
         }
 
         try {

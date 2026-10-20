@@ -385,3 +385,12 @@ Idempotenz-Nachweis (lokal, esbuild-Bundle des echten `applyPatchesInMemory` geg
 - insert-style (`search ⊂ replace`, wie der ausgefuehrte Patch): Lauf 2 `effectiveChanges: true`, Marker 1 → 2, Inhalt nicht identisch ⇒ `FAIL` — der Dedupe-Guard (`currentContent.includes(block.replace)`) greift nur im `catch`-Zweig von `applySearchReplace`.
 Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Extension und ohne Google-Session): Tampermonkey-`2.0.3`-Nachweis im Dashboard, `🔄 Snapshot OID reset` nach Repo-/Branch-Wechsel, Badge `65dbd85…` nach „Load Repo Mix“, Inline-`⚡`-Queue + `⚡ Apply All`, sowie die HUD-seitigen Invarianten 1, 5 und 6.
 - **GESAMTSTATUS**: `PASS` (Worker-/GitHub-Pfad) · `BLOCKED` (HUD-UI-Nachweise) · `FINDING` (insert-style Idempotenz)
+
+### [2026-10-21T00:20:00+02:00] | Bugfix Idempotenz (insert-style Patches)
+- `node packages/edge-worker/node_modules/typescript/bin/tsc --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler).
+- `node scripts/patches_and_tests/test-patch-idempotence.mjs`: `PASS` — insert-style: Lauf 1 `hasEffectiveChanges: true`, Lauf 2 `hasEffectiveChanges: false`, keine Addition, Marker bleibt 1; replace-style unverändert idempotent (Lauf 2 ohne Änderung); Replace-Style mit zufällig anderswo vorhandenem `replace`-Text wird weiterhin angewendet (kein False-Positive-Skip); gemischte Queue (1 bereits angewendet + 1 neu) ⇒ nur der neue Block wird angewendet.
+- Negativ-Nachweis: mit temporär neutralisiertem Guard schlägt die Suite fehl (`AssertionError: re-applying an insert-style patch must be a no-op`) ⇒ der Test deckt den gemeldeten Bug ab.
+- `node packages/edge-worker/scripts/build-worker.mjs`: `PASS` (`dist/worker.mjs` neu, +6 Zeilen).
+- `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten, `worker-smoke` 14/14 Probes inkl. Modularitäts-Audit und Live-`/health`).
+- Dateigrößen: `patchInMemory.ts` 319 Zeilen (< 500).
+- **GESAMTSTATUS**: `PASS` (lokal; Live-Worker unverändert `2.0.1`, kein Deploy)
