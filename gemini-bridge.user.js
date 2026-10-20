@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.3
+// @version      2.0.4
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -38,7 +38,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
-  // src/services/storage.ts
+  // packages/userscript-hud/src/services/storage.ts
   var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
@@ -202,7 +202,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // src/services/workerClient.ts
+  // packages/userscript-hud/src/services/workerClient.ts
   async function gmRequestJson(url, method, secret, body) {
     const headers = {
       "Accept": "application/json",
@@ -315,7 +315,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
 
-  // src/dom/injector.ts
+  // packages/userscript-hud/src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
     const geminiSelectors = [
@@ -420,7 +420,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return true;
   }
 
-  // src/services/selfHealing.ts
+  // packages/userscript-hud/src/services/selfHealing.ts
   var MAX_SELF_HEALING_RETRIES = 3;
   function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt) {
     const formattedErrors = errors.map((err, idx) => {
@@ -527,7 +527,7 @@ Fix Instructions:
     };
   }
 
-  // src/services/patchOidState.ts
+  // packages/userscript-hud/src/services/patchOidState.ts
   var OID_REGEX = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
@@ -564,6 +564,10 @@ Fix Instructions:
   function patchSnapshotRequiredMessage(config, commitMessage) {
     return `No repo mix snapshot for ${config.repo}@${config.branch}. Click "Load Repo Mix" first \u2014 patches are only committed against a validated HEAD OID. (Patch: "${commitMessage}")`;
   }
+  function resolveConflictOidReset(response) {
+    if (response.status !== "GIT_CONFLICT") return "none";
+    return response.targetBranch ? "target" : "source";
+  }
   function advancePatchOidState(config, response) {
     if (response.status !== "COMMITTED" && response.status !== "NO_CHANGES_NEEDED" || !response.newHeadOid) {
       return {};
@@ -581,7 +585,7 @@ Fix Instructions:
     };
   }
 
-  // src/services/patchOidStore.ts
+  // packages/userscript-hud/src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
       headOidScope: getStoredValue("head_oid_scope", ""),
@@ -621,7 +625,7 @@ Fix Instructions:
     }
   }
 
-  // src/services/patchIdentity.ts
+  // packages/userscript-hud/src/services/patchIdentity.ts
   function canonicalize(value) {
     if (Array.isArray(value)) {
       return value.map((entry) => canonicalize(entry));
@@ -652,7 +656,7 @@ Fix Instructions:
     return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
   }
 
-  // src/services/patchQueue.ts
+  // packages/userscript-hud/src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
   function isDuplicatePatch(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
@@ -683,7 +687,7 @@ Fix Instructions:
     return { applied, total };
   }
 
-  // src/ui/hudStylesAndDom.ts
+  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -958,7 +962,7 @@ Fix Instructions:
     return el;
   }
 
-  // src/ui/hudDomTree.ts
+  // packages/userscript-hud/src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -1109,6 +1113,7 @@ Fix Instructions:
       trigger,
       triggerBadge,
       panel,
+      title,
       closeBtn,
       repoInput,
       branchInput,
@@ -1129,7 +1134,7 @@ Fix Instructions:
     };
   }
 
-  // src/ui/shadowHud.ts
+  // packages/userscript-hud/src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -1145,6 +1150,10 @@ Fix Instructions:
       harvestedPatches: []
     };
     const dom = buildHudDomTree(config, state);
+    const runningVersion = typeof GM_info !== "undefined" ? GM_info?.script?.version || GM_info?.script?.versionString || "" : "";
+    if (runningVersion) {
+      dom.title.textContent = `\u26A1 Cloudflare Edge HUD v${runningVersion}`;
+    }
     function resetPatchOidState(reason) {
       clearPatchOidState(state);
       controller.updateState({
@@ -1426,9 +1435,16 @@ Fix Instructions:
           }
           if (res.status === "GIT_CONFLICT" || res.status === "ERROR") {
             const scopeHint = res.status === "GIT_CONFLICT" ? ` [validated ${config.repo}@${config.branch}]` : "";
+            const resetScope = resolveConflictOidReset(res);
+            if (resetScope === "source") {
+              clearPatchOidState(state);
+            } else if (resetScope === "target") {
+              clearTargetOidState(state);
+            }
+            const recoveryHint = resetScope === "source" ? ' Stale snapshot OID discarded \u2014 click "Load Repo Mix" to mix the current HEAD, then retry.' : resetScope === "target" ? ` Target OID discarded \u2014 retry to commit on the current "${config.targetBranch}" HEAD.` : "";
             controller.updateState({
               status: res.status,
-              statusMessage: `\u274C ${res.status}: ${res.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}`,
+              statusMessage: `\u274C ${res.status}: ${res.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}${recoveryHint}`,
               lastErrors: res.errors || []
             });
             return false;
@@ -1494,7 +1510,7 @@ Fix Instructions:
     return controller;
   }
 
-  // src/dom/harvester.ts
+  // packages/userscript-hud/src/dom/harvester.ts
   function extractPathFromCode(codeText, preElement) {
     const inlineMatch = codeText.match(/(?:\/\/|#|\/\*)\s*(?:filepath|file|path):\s*([^\r\n*]+)/i);
     if (inlineMatch && inlineMatch[1]) {
@@ -1783,7 +1799,7 @@ Fix Instructions:
     return observer;
   }
 
-  // src/index.ts
+  // packages/userscript-hud/src/index.ts
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {

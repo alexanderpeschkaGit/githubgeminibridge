@@ -273,6 +273,7 @@ export interface HudDomElements {
   trigger: HTMLDivElement;
   triggerBadge: HTMLSpanElement;
   panel: HTMLDivElement;
+  title: HTMLDivElement;
   closeBtn: HTMLButtonElement;
   repoInput: HTMLInputElement;
   branchInput: HTMLInputElement;

@@ -404,3 +404,10 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - Read-only Gegenprobe: `branches/bridge` = `e98e02c…` (unverändert); Datei auf `bridge` enthält `set({ socialLinks: r2Data.socialLinks });` genau 1× (keine Duplikation).
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten; `worker-smoke` 14/14 Probes inkl. Live-`/health` und Modularitäts-Audit).
 - **GESAMTSTATUS**: `PASS`
+
+### [2026-10-21T00:36:00+02:00] | HUD `2.0.4` (GIT_CONFLICT-Selbstheilung + Versionsanzeige)
+- `node packages/edge-worker/node_modules/typescript/bin/tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+- `node scripts/patches_and_tests/test-hud-oid-scope.mjs`: `PASS` — zusätzlich `resolveConflictOidReset`: Source-Konflikt (Antwort ohne `targetBranch`) ⇒ `source`, Target-Race (mit `targetBranch`) ⇒ `target`, `COMMITTED`/`NO_CHANGES_NEEDED`/`PREFLIGHT_FAILED`/`ERROR` ⇒ `none`.
+- `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; Bundle `@version 2.0.4`, `dist` ⇄ Root byte-identisch; enthält `runningVersion` (`GM_info.script.version`) und den Recovery-Hinweis `Stale snapshot OID discarded`.
+- `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (10/10 Suiten, `worker-smoke` 14/14).
+- **GESAMTSTATUS**: `PASS` (wirksam nach Update im Tampermonkey; Worker unverändert `2.0.2`)

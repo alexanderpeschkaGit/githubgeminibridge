@@ -34,6 +34,7 @@ const {
   buildWorkerPatchRequest,
   isPatchSnapshotReady,
   patchSnapshotRequiredMessage,
+  resolveConflictOidReset,
 } = await import(moduleUrl);
 
 const configA = {
@@ -121,5 +122,18 @@ assert.equal(isPatchSnapshotReady({ headOid: OID_REPO_A }), true);
 const refusal = patchSnapshotRequiredMessage(configA, 'feat: x');
 assert.match(refusal, /No repo mix snapshot for alexanderpeschkaGit\/sikanda_projectinart_11@main/);
 assert.match(refusal, /Load Repo Mix/);
+
+// 8. A GIT_CONFLICT must invalidate the token that lost the check, so a stale OID
+//    can never be replayed on the next retry (source conflict) and a target race
+//    never throws away a still-valid mix snapshot.
+assert.equal(resolveConflictOidReset({ status: 'GIT_CONFLICT', newHeadOid: OID_REPO_B }), 'source');
+assert.equal(
+  resolveConflictOidReset({ status: 'GIT_CONFLICT', newHeadOid: OID_TARGET, targetBranch: 'bridge' }),
+  'target'
+);
+assert.equal(resolveConflictOidReset({ status: 'COMMITTED', newHeadOid: OID_TARGET }), 'none');
+assert.equal(resolveConflictOidReset({ status: 'NO_CHANGES_NEEDED', newHeadOid: OID_TARGET }), 'none');
+assert.equal(resolveConflictOidReset({ status: 'PREFLIGHT_FAILED' }), 'none');
+assert.equal(resolveConflictOidReset({ status: 'ERROR', errorMessage: 'boom' }), 'none');
 
 console.log('PASS: persisted patch OIDs are repo+branch scoped and foreign snapshots are never replayed');

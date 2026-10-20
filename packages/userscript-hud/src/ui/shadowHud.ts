@@ -18,7 +18,7 @@ import {
   buildSelfHealingPrompt,
   MAX_SELF_HEALING_RETRIES,
 } from '../services/selfHealing';
-import { buildWorkerPatchRequest, patchSnapshotRequiredMessage } from '../services/patchOidState';
+import { buildWorkerPatchRequest, patchSnapshotRequiredMessage, resolveConflictOidReset } from '../services/patchOidState';
 import {
   applyPatchResponseOids,
   clearPatchOidState,
@@ -68,6 +68,15 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   };
 
   const dom = buildHudDomTree(config, state);
+
+  // Surfaces the actually executing script version: a stale Tampermonkey install is
+  // otherwise indistinguishable from a logic bug when diagnosing HUD behaviour.
+  const runningVersion = typeof GM_info !== 'undefined'
+    ? GM_info?.script?.version || GM_info?.script?.versionString || ''
+    : '';
+  if (runningVersion) {
+    dom.title.textContent = `⚡ Cloudflare Edge HUD v${runningVersion}`;
+  }
 
   /** Config changes invalidate every snapshot OID: they are repo+branch bound. */
   function resetPatchOidState(reason: string) {
@@ -392,9 +401,20 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
           const scopeHint = res.status === 'GIT_CONFLICT'
             ? ` [validated ${config.repo}@${config.branch}]`
             : '';
+          const resetScope = resolveConflictOidReset(res);
+          if (resetScope === 'source') {
+            clearPatchOidState(state);
+          } else if (resetScope === 'target') {
+            clearTargetOidState(state);
+          }
+          const recoveryHint = resetScope === 'source'
+            ? ' Stale snapshot OID discarded — click "Load Repo Mix" to mix the current HEAD, then retry.'
+            : resetScope === 'target'
+              ? ` Target OID discarded — retry to commit on the current "${config.targetBranch}" HEAD.`
+              : '';
           controller.updateState({
             status: res.status,
-            statusMessage: `❌ ${res.status}: ${res.errorMessage || 'Preflight / Concurrency check failed'}${scopeHint}`,
+            statusMessage: `❌ ${res.status}: ${res.errorMessage || 'Preflight / Concurrency check failed'}${scopeHint}${recoveryHint}`,
             lastErrors: res.errors || [],
           });
           return false;

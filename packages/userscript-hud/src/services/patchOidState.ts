@@ -82,6 +82,19 @@ export function patchSnapshotRequiredMessage(
   return `No repo mix snapshot for ${config.repo}@${config.branch}. Click "Load Repo Mix" first — patches are only committed against a validated HEAD OID. (Patch: "${commitMessage}")`;
 }
 
+/**
+ * GIT_CONFLICT recovery: an OID that just lost a concurrency check must not survive,
+ * otherwise every retry replays the same wrong token. A response without `targetBranch`
+ * is a source-snapshot conflict (the mix is stale), one with `targetBranch` is a
+ * target-branch race (only the target token is stale).
+ */
+export function resolveConflictOidReset(
+  response: WorkerPatchResponse
+): 'source' | 'target' | 'none' {
+  if (response.status !== 'GIT_CONFLICT') return 'none';
+  return response.targetBranch ? 'target' : 'source';
+}
+
 export function advancePatchOidState(
   config: HudConfig,
   response: WorkerPatchResponse

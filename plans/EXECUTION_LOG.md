@@ -682,4 +682,16 @@
 - **Post-Deploy-Verifikation:** `GET /health` → `version: 2.0.2`, `hasBridgeSecret: true`, `hasGithubToken: true`. Live-Replay desselben insert-style Patches gegen `bridge` (`expectedHeadOid = 65dbd85…`, `expectedTargetHeadOid = e98e02c…`) → `NO_CHANGES_NEEDED` mit `newHeadOid = e98e02c…`; `bridge`-HEAD unverändert, `set({ socialLinks: … })` genau 1× in der Datei. Der Fix wirkt also live, ohne einen zweiten Commit zu erzeugen.
 - **Overall:** `PASS`; kein `git push`.
 
+### [2026-10-21T00:36:00+02:00] | HUD `2.0.4`: GIT_CONFLICT-Selbstheilung & sichtbare Runner-Version
+- **Status:** `DONE`
+- **Anlass:** Nach dem 2.0.3-Fix meldete der User erneut `GIT_CONFLICT: Expected HEAD "639fb9e…" but branch "preview" is at "65dbd85…"`. Die 2.0.3-Hydration kann diese OID unter der konfigurierten Scope `…-on-main#preview` nicht liefern (Scope-Mismatch wird verworfen) — der Befund deutet auf eine noch aktive 2.0.2-Installation bzw. einen nach dem Update nicht neu geladenen Tab. Beide Ursachen wurden adressiert, statt auf eine Ferndiagnose zu setzen.
+- **Aenderungen:**
+  1. `packages/userscript-hud/src/services/patchOidState.ts`: `resolveConflictOidReset(response)` klassifiziert den Konflikt aus dem bestehenden Vertrag — Antwort **ohne** `targetBranch` ⇒ `'source'` (Mix-Snapshot stale), **mit** `targetBranch` ⇒ `'target'` (Target-Race), sonst `'none'`.
+  2. `packages/userscript-hud/src/ui/shadowHud.ts`: Bei `GIT_CONFLICT` wird der verlorene Token verworfen (`clearPatchOidState` bzw. `clearTargetOidState`) und die Statuszeile nennt den nächsten Schritt. Ein stale OID kann damit nicht erneut gesendet werden; ohne Snapshot greift die bestehende „No repo mix snapshot …“-Sperre statt eines `/push`.
+  3. Laufende Script-Version im HUD-Titel (`GM_info.script.version`) über `hudDomTree.ts` + `HudDomElements.title`; eine veraltete Tampermonkey-Installation ist damit direkt sichtbar.
+  4. Userscript auf `2.0.4` gebumpt (`package.json`, Banner in `build-userscript.mjs`), Bundle neu gebaut (`dist` ⇄ Root byte-identisch).
+  5. Regression `scripts/patches_and_tests/test-hud-oid-scope.mjs` um die `resolveConflictOidReset`-Matrix (source/target/none) erweitert.
+- **Validierung:** `tsc --noEmit` (HUD) `PASS`; `test-hud-oid-scope.mjs` `PASS`; `run-regressions.mjs --include-smoke` `PASS` (10/10 Suiten).
+- **Overall:** `DONE`. **Wirksam erst nach Update im Tampermonkey** (kein Deploy nötig — Worker bleibt `2.0.2`).
+
 

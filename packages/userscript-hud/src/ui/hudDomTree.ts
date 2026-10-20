@@ -190,6 +190,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     trigger,
     triggerBadge,
     panel,
+    title,
     closeBtn,
     repoInput,
     branchInput,

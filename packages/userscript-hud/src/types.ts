@@ -74,6 +74,9 @@ declare global {
   function GM_setValue<T = string>(key: string, value: T): void;
   function GM_notification(options: { title?: string; text: string; timeout?: number }): void;
   function GM_addStyle(css: string): HTMLStyleElement;
+  const GM_info:
+    | { script?: { name?: string; version?: string; versionString?: string } }
+    | undefined;
 
   interface GMXmlHttpRequestHeaders {
     [key: string]: string;
