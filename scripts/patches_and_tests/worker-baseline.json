@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-20T23:45:11.626Z",
+  "timestamp": "2026-10-20T23:53:22.537Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -42,7 +42,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "2.0.2",
+      "version": "2.0.4",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },
@@ -110,7 +110,7 @@
       "warningZoneFilesCount": 10,
       "overLimitFilesCount": 0,
       "bundleByteIdentical": true,
-      "bundleSize": 76702,
+      "bundleSize": 76738,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
@@ -122,11 +122,11 @@
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 440
+          "lines": 441
         },
         {
           "file": "packages/edge-worker/src/modules/patchInMemory.ts",
-          "lines": 320
+          "lines": 343
         },
         {
           "file": "packages/edge-worker/src/modules/syntaxScanner.ts",
@@ -142,7 +142,7 @@
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
-          "lines": 392
+          "lines": 393
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
@@ -173,11 +173,11 @@
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 440
+          "lines": 441
         },
         {
           "file": "packages/edge-worker/src/modules/patchInMemory.ts",
-          "lines": 320
+          "lines": 343
         },
         {
           "file": "packages/edge-worker/src/modules/recentCommits.ts",
@@ -209,7 +209,7 @@
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
-          "lines": 392
+          "lines": 393
         },
         {
           "file": "packages/userscript-hud/src/dom/injector.ts",

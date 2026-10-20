@@ -450,3 +450,4 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `tsc --noEmit` (Worker/CLI): `PASS`; `node packages/edge-worker/scripts/build-worker.mjs` + `node packages/local-cli/scripts/build-cli.mjs`: `PASS`.
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke --include-live`: `PASS` (13/13 Suiten, `worker-smoke` 14/14).
 - **GESAMTSTATUS:** `PASS`.
+- Post-Deploy (2026-10-21T02:20:00+02:00): `/health` => `version 2.0.4`; `worker-smoke.mjs` `PASS` (14/14); `git ls-remote origin refs/heads/main` = `1945cec`.
