@@ -364,3 +364,24 @@
 - `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (14/14 Probes, inkl. Live-`/health`); Baseline `worker-baseline.json` refresh (30 TS-Dateien, 0 ≥ 500 Zeilen, Maximum `shadowHud.ts` 474).
 - `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; dist/root byte-identisch (SHA256 `2C590CFD…`, 67.612 Bytes, `@version 2.0.3`).
 - **GESAMTSTATUS**: `PASS`
+
+### [2026-10-21T00:07:00+02:00] | E2E-Retest HUD-Scope-Fix (Live-Worker `2.0.1`)
+Preconditions (read-only, `gh api`):
+- `preview` = `65dbd851cd2f30f3d3e417809a2eddabc5eaf50a` (unveraendert seit 2026-10-20T16:05:01Z), `main` = `715102671660f74ad289e27a1e30a154490d902b`, Branch `bridge` vor dem Lauf → HTTP 404.
+- `src/hooks/feed/useModalCloseHandler.ts` existiert nur auf `preview` (Blob `8d9b691…`, 2883 B).
+- Bundle `gemini-bridge.user.js`: `@version 2.0.3`, SHA256 `2C590CFD689257707A65C36503195478BAD0A1941CDC3AA0AE97A9644349D285`, dist ⇄ root byte-identisch; enthaelt `head_oid_scope`, `Snapshot OID reset`, `No repo mix snapshot`.
+- `node scripts/patches_and_tests/test-hud-oid-scope.mjs`: `PASS`.
+- `GET /health` (Live): `PASS` — `version: 2.0.1`, `hasBridgeSecret: true`, `hasGithubToken: true`.
+Live-Worker-Laeufe (`POST /api/patch` mit `x-bridge-secret`):
+1. No-op (`src/hooks/feed/useModalCloseHandler.ts`, `search == replace`) @ `65dbd85…` → `{"status":"NO_CHANGES_NEEDED","newHeadOid":"65dbd851cd2f30f3d3e417809a2eddabc5eaf50a","targetBranch":"preview","createdBranch":false}` — **kein** `GIT_CONFLICT` (alter Fehlermodus beseitigt).
+2. Stale User-Payload (`src/store/portfolioFetchActions.ts`, Anker `if (data.theme) {`) @ `65dbd85…` → `PREFLIGHT_FAILED`, `errors[0].stage = "SEARCH_REPLACE"`; keine Schreibwirkung (danach `preview` = `65dbd85…`, `bridge` = 404).
+3. Neu verankerter Patch (`if (r2Data.theme)` + `socialLinks`-Persistenz) mit `targetBranch: "bridge"` → `COMMITTED`, `createdBranch: true`, `newHeadOid = e98e02c003b245a6d713dea7a46f8787d783bb40`, `pullRequestUrl = …/compare/preview...bridge?expand=1`.
+Verifikation (read-only):
+- `commits/e98e02c…`: Parent `65dbd85…`; `files[]` = **nur** `src/store/portfolioFetchActions.ts` (`+7`/`-0`).
+- `branches/bridge` = `e98e02c…`; `branches/preview` = `65dbd85…` (unveraendert); `branches/main` = `7151026…` (unveraendert).
+- Fremd-Repo `sikanda_projectinart_11@main` = `639fb9e…`, letzter Commit `2026-10-20T21:18:21Z` (vor dem Lauf) → kein Fremd-Commit.
+Idempotenz-Nachweis (lokal, esbuild-Bundle des echten `applyPatchesInMemory` gegen den `preview`-Dateiinhalt):
+- replace-style: Lauf 1 `effectiveChanges: true`, Lauf 2 `effectiveChanges: false` ⇒ `PASS` (fuehrt zu `NO_CHANGES_NEEDED`).
+- insert-style (`search ⊂ replace`, wie der ausgefuehrte Patch): Lauf 2 `effectiveChanges: true`, Marker 1 → 2, Inhalt nicht identisch ⇒ `FAIL` — der Dedupe-Guard (`currentContent.includes(block.replace)`) greift nur im `catch`-Zweig von `applySearchReplace`.
+Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Extension und ohne Google-Session): Tampermonkey-`2.0.3`-Nachweis im Dashboard, `🔄 Snapshot OID reset` nach Repo-/Branch-Wechsel, Badge `65dbd85…` nach „Load Repo Mix“, Inline-`⚡`-Queue + `⚡ Apply All`, sowie die HUD-seitigen Invarianten 1, 5 und 6.
+- **GESAMTSTATUS**: `PASS` (Worker-/GitHub-Pfad) · `BLOCKED` (HUD-UI-Nachweise) · `FINDING` (insert-style Idempotenz)

@@ -651,4 +651,16 @@
 - **Artefakt:** `plans/07_HUD_RETEST_PROMPT.md` (copy-paste-faehiger Prompt fuer einen neuen Chat).
 - **Overall:** `DONE`; kein Code, kein Commit ueber diesen Schritt hinaus.
 
+### [2026-10-21T00:07:00+02:00] | E2E-Retest nach HUD-Scope-Fix (`COMMITTED` auf `bridge`)
+- **Status:** `DONE` (Worker-/GitHub-Pfad verifiziert; HUD-Bedienung in dieser Umgebung nicht moeglich)
+- **Ziel-Konfiguration:** `alexanderpeschkaGit/sikanda_projectinart_11-on-main`, Quelle `preview@65dbd851cd2f30f3d3e417809a2eddabc5eaf50a`, Target `bridge` (vom Worker neu erzeugt).
+- **Umgebungsbefund:** Der Automations-Browser ist ein frisches Profil (`chrome-extension://dhdgffkkebhmkfjojejmpbldmpobfkfo` → `ERR_BLOCKED_BY_CLIENT`, kein `#gemini-edge-hud-root`, `GM_xmlhttpRequest` undefined, nicht bei Google angemeldet). Die HUD-Schritte 1–4/6 des Plans (Tampermonkey-`2.0.3`-Nachweis, `🔄 Snapshot OID reset`, Badge `65dbd85`, `⚡ Apply All`) waren daher **nicht** bedienbar. Der `/api/patch`-Pfad wurde stattdessen authentifiziert direkt gegen den Live-Worker (`2.0.1`) gefahren (vom User freigegebene Option „direkt gegen `/api/patch`“).
+- **Laeufe:**
+  1. No-op-Probe (`search == replace`) auf `src/hooks/feed/useModalCloseHandler.ts`, `expectedHeadOid = 65dbd85…` ⇒ `NO_CHANGES_NEEDED` mit `newHeadOid = 65dbd85…` — **kein** `GIT_CONFLICT` mehr; der alte `639fb9e…`-Fehlermodus ist mit korrekt gescopeter OID beseitigt.
+  2. Vom User gelieferter Patch (`src/store/portfolioFetchActions.ts`, Anker `if (data.theme) {`) ⇒ `PREFLIGHT_FAILED` / `SEARCH_REPLACE`. Der Payload ist stale: der Anker existiert auf `65dbd85` nicht (dort `if (r2Data.theme) { baseThemeSettings = r2Data.theme; }`), `socialLinks` kommt in der Datei nicht vor. Deterministisch abgelehnt, **kein** Schreibzugriff (Nachpruefung: `preview` unveraendert, `bridge` weiter 404).
+  3. Neu verankerter Patch auf dem aktuellen `r2Data`-Anker mit `targetBranch: "bridge"` ⇒ `COMMITTED`, `createdBranch: true`, `newHeadOid = e98e02c003b245a6d713dea7a46f8787d783bb40`.
+- **Abweichung vom Plan-Inventar:** Die Plan-Invarianten 2/3 nennen `src/hooks/feed/useModalCloseHandler.ts` als einziges `files[]`-Element. Der ausgefuehrte Patch betrifft `src/store/portfolioFetchActions.ts` (User-Vorgabe, Option D); die Invariante „genau eine Datei, atomar auf `bridge`“ ist damit eingehalten, die Datei-Benennung weicht ab.
+- **Neuer Befund (nicht behoben):** Die Idempotenz-Invariante gilt nur fuer **replace-style** Patches. Bei **insert-style** Patches (`search` ist Teilstring von `replace`) greift der Dedupe-Guard in `packages/edge-worker/src/modules/patchInMemory.ts` nicht, weil `currentContent.includes(block.replace)` nur im `catch`-Zweig geprueft wird: `search` matcht weiterhin vor dem eingefuegten Block, ein zweiter Lauf meldet `effectiveChanges: true` und dupliziert den Block. Lokal gegen den echten Modulcode nachgewiesen (insert-style: Marker 1 → 2; replace-style: Lauf 2 `effectiveChanges: false`). Ein Fix (Pre-Check `includes(replace)` vor `applySearchReplace`) wurde bewusst **nicht** umgesetzt, weil er Worker-Redeploy (`wrangler deploy` = Hard Stop) erfordern wuerde.
+- **Overall:** `COMMITTED`; Ziel-`main` bleibt `7151026…`, Fremd-Repo `sikanda_projectinart_11` bleibt `639fb9e…`; kein `git push`, kein `wrangler deploy`.
+
 
