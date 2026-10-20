@@ -623,3 +623,16 @@
   4. Bundle-Verifikation: `node packages/edge-worker/scripts/build-worker.mjs` → Fix `block.replace.length > 0 && currentContent.includes(block.replace)` in `dist/worker.mjs` Zeile 944 nachgewiesen.
 - **Validierung:** Worker-Smoke 14/14 `PASS`; `/health` `PASS`; Bundle enthält den Idempotenz-Fix.
 - **Overall:** `PASS`. Kein authentifizierter `/api/patch`-Livetest möglich (kein `.dev.vars`/`.env` im Repo); Verhalten ist über den Local-CLI-Test `24/24` und den Bundle-Nachweis abgedeckt.
+
+### [2026-10-20T23:43:00+02:00] | Bugfix: Repo-/Branch-Scope für persistierte Snapshot-OIDs
+- **Status:** `DONE`
+- **Anlass:** Realer E2E-Lauf lieferte `GIT_CONFLICT: Expected HEAD "639fb9e522800b24e9693bbc17558b7c4db2ec50" but branch "main" is at "715102671660f74ad289e27a1e30a154490d902b"`, obwohl der User nichts committet hatte. Diagnose über die GitHub-API: `639fb9e` ist der `main`-HEAD von `alexanderpeschkaGit/sikanda_projectinart_11` (Mix-Snapshot), `7151026` ist der `main`-HEAD von `alexanderpeschkaGit/sikanda_projectinart_11-on-main`. Das HUD hatte nach einem Repo-Wechsel die OID des anderen Repos als `expectedHeadOid` gesendet — die Frische-Prüfung im Worker war korrekt, nur die HUD-State-Hydration war unscharf.
+- **Aenderungen:**
+  1. `packages/userscript-hud/src/services/patchOidState.ts`: `buildOidScope(config)` (`repo#branch`, lowercase, `refs/heads/` normalisiert) und `resolvePatchOidState(config, stored)` — verwirft OIDs mit fremdem Scope, Legacy-Einträge ohne Scope-Marker, malformed OIDs und Target-OIDs mit nicht (mehr) konfiguriertem Zielbranch. Zusätzlich `isPatchSnapshotReady` + `patchSnapshotRequiredMessage` als Guardrail-Vertrag.
+  2. Neues Modul `packages/userscript-hud/src/services/patchOidStore.ts`: `loadPatchOidState`, `setSourceHeadOid` (persistiert `head_oid` + `head_oid_scope`), `applyPatchResponseOids`, `clearPatchOidState`, `clearTargetOidState`.
+  3. `packages/userscript-hud/src/ui/shadowHud.ts`: Hydration über `loadPatchOidState`, `resetPatchOidState()` bei Repo-/Branch-Wechsel (State + Storage + Hinweis „Load Repo Mix“), OID-Fortschreibung nur noch über `applyPatchResponseOids`, `GIT_CONFLICT`-Statuszeile nennt den validierten Scope `repo@branch`. **Stiller V1-`/push`-Fallback entfernt:** ohne Snapshot-OID wird nie committet (vorher konnte ein Patch nach OID-Reset ungeprüft über `/push` laufen). Dateigrößen-Gesetz: 497 → 474 Zeilen (Storage-Plumbing ausgelagert).
+  4. `scripts/patches_and_tests/test-hud-oid-scope.mjs` (neu) + Registrierung in `run-regressions.mjs` (Scope-Reset, Legacy-Eintrag ohne Marker, Target-Branch-Bindung, No-Snapshot-Guard).
+  5. Release-Version Userscript `2.0.3` (`package.json`, `build-userscript.mjs`), Root-`gemini-bridge.user.js` neu gebaut.
+  6. Docs synchronisiert: `agents.md` (P1-Zeile HUD, Modul-Liste, Mix-Flow), `.agents/rules/userscript-shadow-hud.md` (Abschnitte 6 & 7).
+- **Validierung:** `tsc --noEmit` HUD `PASS` (0 Fehler); `run-regressions.mjs` `PASS` (8/8, inkl. neuer `hud-oid-scope`-Suite); `worker-smoke.mjs` `PASS` (14/14, inkl. Probe 10 Dateigrößen-Audit 30 Dateien / 0 ≥ 500); Userscript-Build `PASS`, dist/root byte-identisch (SHA256 `2C590CFD…`, 67.612 Bytes).
+- **Overall:** `PASS`; kein `git push`, kein `wrangler deploy` (Worker-Code unverändert — nur HUD/Client).

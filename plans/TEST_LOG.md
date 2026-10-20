@@ -356,3 +356,11 @@
 - Live `GET /health`: `PASS` — `status: ok`, `version: 2.0.1`, `hasBridgeSecret: true`, `hasGithubToken: true`.
 - Bundle-Nachweis: `packages/edge-worker/dist/worker.mjs` enthält `block.replace.length > 0 && currentContent.includes(block.replace)` (Zeile 944).
 - **GESAMTSTATUS**: `PASS`
+
+### [2026-10-20T23:32:41+02:00] | Bugfix HUD-OID-Scope (Repo-/Branch-Bindung)
+- `node packages/edge-worker/node_modules/typescript/bin/tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+- `node scripts/patches_and_tests/test-hud-oid-scope.mjs`: `PASS` — fremder Repo-Scope, Branch-Wechsel, Legacy-Eintrag ohne Scope-Marker und malformed OIDs werden verworfen; `expectedHeadOid` ist danach leer statt fremd; `isPatchSnapshotReady`/`patchSnapshotRequiredMessage` erzwingen „Load Repo Mix“ statt `/push`.
+- `node scripts/patches_and_tests/run-regressions.mjs`: `PASS` (8/8 lokale Suiten).
+- `node scripts/patches_and_tests/worker-smoke.mjs`: `PASS` (14/14 Probes, inkl. Live-`/health`); Baseline `worker-baseline.json` refresh (30 TS-Dateien, 0 ≥ 500 Zeilen, Maximum `shadowHud.ts` 474).
+- `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; dist/root byte-identisch (SHA256 `2C590CFD…`, 67.612 Bytes, `@version 2.0.3`).
+- **GESAMTSTATUS**: `PASS`

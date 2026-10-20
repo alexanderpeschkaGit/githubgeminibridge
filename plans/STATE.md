@@ -6,7 +6,7 @@
 ## Aktuelle Phase
 - **Aktive Stufe:** **Stufe 7.2 (Review-Fix-Welle Steps 1–5: konsolidiertes Regressions-Gate, Dokumentations-Drift & Protokoll-Sync)** erfolgreich abgeschlossen.
 - **Modell-Politik:** 3-Tier-Modellmatrix: Vorab-Gesamtplanung auf **Argon High / Medium (`pro`/`inherit`)**; Ausführung mit Flash-First: Tier 1 (`flash_lite` [1–3]), Tier 2 (`flash` [4–6]), Tier 3 (`pro` [7–10]).
-- **Letztes Update:** 2026-10-20T20:48:15+02:00 (Stufe 7.2 abgeschlossen: `run-regressions.mjs` als einheitliches lokales Gate, V2-Schema/Target-Snapshot/Opt-In-Commits/100k-Deckel dokumentarisch geschlossen; Runner 6/6 lokal bzw. 7/7 mit Live-Smoke, Type-Checks PASS, 28/28 TS-Dateien < 500 Zeilen, `git diff --check` PASS).
+- **Letztes Update:** 2026-10-20T23:43:00+02:00 (Stufe 7.4 abgeschlossen: persistierte Snapshot-OIDs strikt an `repo#branch` gebunden — falsche `GIT_CONFLICT`-Meldungen nach Repo-/Branch-Wechsel im HUD beseitigt, stiller `/push`-Fallback entfernt; neue Regression `test-hud-oid-scope.mjs`, Runner 8/8, Smoke 14/14, 30/30 TS-Dateien < 500 Zeilen).
 
 ## Stufen-Fortschritt
 - [x] **Stufe 0: Architektur, Schnittstellen (`shared/types.ts`) & Orchestrator-Design**
@@ -79,6 +79,11 @@
 - [x] **Stufe 7.3 (Harvester-Dedupe): Content-Signature-Patch-IDs & Single-Emission-Garantie**
   - Status: *ABGESCHLOSSEN (`PASS`)*.
   - Ziel: Doppelte Queue-Einträge bei `⚡ Apply All` beseitigen. Neues Modul `packages/userscript-hud/src/services/patchIdentity.ts` (`canonicalize`, `computePatchSignature`, `createStablePatchId`); `harvester.ts` nutzt inhaltsabgeleitete IDs, scoppt Button-/Header-Lookup auf den eigenen Codeblock, emittiert erst nach angehängtem `.ggb-inline-btn`; `shadowHud.addHarvestedPatch` verwirft Dubletten über `id` oder Signatur. Queue-Logik nach `packages/userscript-hud/src/services/patchQueue.ts` dekomponiert (`shadowHud.ts` 505 → 495 Zeilen, Dateigrößen-Gesetz eingehalten). Neue Regression `scripts/patches_and_tests/test-harvest-dedupe.mjs` (inkl. gemeinsamem `harvester-modules.mjs`-Loader, Queue-Dedupe/FIFO/Fail-Fast) im Aggregat-Gate (7/7), Type-Checks und Bundle-Identität grün, Regelwerk (`userscript-shadow-hud.md`, `agents.md`) synchronisiert.
+
+- [x] **Stufe 7.4 (Bugfix): Repo-/Branch-Scope für persistierte Snapshot-OIDs (`GIT_CONFLICT`-False-Positives)**
+  - Status: *ABGESCHLOSSEN (`PASS`)*.
+  - Anlass: Reale Iteration meldete `GIT_CONFLICT: Expected HEAD "639fb9e…" but branch "main" is at "7151026…"`, obwohl der User nichts committet hatte. Ursache: `head_oid` lag repo-agnostisch im Storage. `639fb9e` ist `main` von `sikanda_projectinart_11`, `7151026` ist `main` von `sikanda_projectinart_11-on-main` — nach einem Repo-Wechsel im HUD wurde die Fremd-OID als `expectedHeadOid` gesendet. Die Frische-Prüfung selbst war korrekt und bleibt unverändert scharf.
+  - Ziel: `buildOidScope`/`resolvePatchOidState` in `patchOidState.ts`, neues Modul `services/patchOidStore.ts` (`loadPatchOidState`, `setSourceHeadOid`, `applyPatchResponseOids`, `clearPatchOidState`, `clearTargetOidState`), HUD-Hydration nur bei passendem Scope, OID-Reset bei Repo-/Branch-Wechsel, Scope-Hinweis in der `GIT_CONFLICT`-Statuszeile, Entfall des stillen `/push`-Fallbacks (ohne Snapshot-OID wird nie committet), Userscript `2.0.3`; `shadowHud.ts` 497 → 474 Zeilen (Dateigrößen-Gesetz). Neue Regression `scripts/patches_and_tests/test-hud-oid-scope.mjs` im Aggregat-Gate (8/8).
 
 ## Offene Entscheidungen / Blocker
 - **Release-Update (2026-10-20):** Live-Deployment abgeschlossen - Worker `gemini-git-bridge` auf `2.0.1` deployt (Version ID `89284b1d`), Userscript-Bundle synchron, Post-Deploy-`/health` `PASS` (14/14 Smoke), lokaler Checkpoint-Commit erfolgt; kein `git push` (kein Remote konfiguriert).

@@ -6,14 +6,11 @@ import type {
 import {
   loadHudConfig,
   saveHudConfig,
-  sanitizeNoGithubPat,
-  getStoredValue,
-  setStoredValue
+  sanitizeNoGithubPat
 } from '../services/storage';
 import {
   requestRepoMix,
-  requestWorkerPatch,
-  requestLegacyCommit
+  requestWorkerPatch
 } from '../services/workerClient';
 import { injectRepoMixFile, injectRepoMixParts, injectPromptText } from '../dom/injector';
 import {
@@ -21,7 +18,14 @@ import {
   buildSelfHealingPrompt,
   MAX_SELF_HEALING_RETRIES,
 } from '../services/selfHealing';
-import { advancePatchOidState, buildWorkerPatchRequest } from '../services/patchOidState';
+import { buildWorkerPatchRequest, patchSnapshotRequiredMessage } from '../services/patchOidState';
+import {
+  applyPatchResponseOids,
+  clearPatchOidState,
+  clearTargetOidState,
+  loadPatchOidState,
+  setSourceHeadOid,
+} from '../services/patchOidStore';
 import {
   enqueueHarvestedPatch,
   removeHarvestedPatch,
@@ -53,16 +57,8 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   }
 
   const config = loadHudConfig();
-  const configuredTargetBranch = config.targetBranch?.trim() || '';
-  const storedTargetBranch = getStoredValue('target_head_branch', '');
-  const matchesStoredTarget = storedTargetBranch.replace(/^refs\/heads\//, '') ===
-    configuredTargetBranch.replace(/^refs\/heads\//, '');
   const state: HudState = {
-    headOid: getStoredValue('head_oid', ''),
-    targetHeadOid: matchesStoredTarget
-      ? getStoredValue('target_head_oid', '')
-      : '',
-    targetHeadBranch: matchesStoredTarget ? storedTargetBranch : '',
+    ...loadPatchOidState(config),
     lastMixStats: null,
     status: 'IDLE',
     statusMessage: 'Ready. Load Repo Mix or commit patches.',
@@ -72,6 +68,17 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   };
 
   const dom = buildHudDomTree(config, state);
+
+  /** Config changes invalidate every snapshot OID: they are repo+branch bound. */
+  function resetPatchOidState(reason: string) {
+    clearPatchOidState(state);
+    controller.updateState({
+      status: 'IDLE',
+      statusMessage: `🔄 ${reason} Snapshot OID reset — click "Load Repo Mix" before applying patches.`,
+      retryCount: 0,
+      lastErrors: [],
+    });
+  }
 
   // Helper to re-render UI state
   function renderState() {
@@ -190,8 +197,10 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   dom.repoInput.onchange = () => {
     try {
       const sanitized = sanitizeNoGithubPat(dom.repoInput.value.trim(), 'repo');
+      const previousRepo = config.repo;
       config.repo = sanitized;
       saveHudConfig({ repo: sanitized });
+      if (sanitized !== previousRepo) resetPatchOidState(`Repository changed to "${sanitized}".`);
     } catch (e: any) {
       alert(e.message);
       dom.repoInput.value = config.repo;
@@ -201,8 +210,10 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   dom.branchInput.onchange = () => {
     try {
       const sanitized = sanitizeNoGithubPat(dom.branchInput.value.trim(), 'branch');
+      const previousBranch = config.branch;
       config.branch = sanitized;
       saveHudConfig({ branch: sanitized });
+      if (sanitized !== previousBranch) resetPatchOidState(`Branch changed to "${sanitized}".`);
     } catch (e: any) {
       alert(e.message);
       dom.branchInput.value = config.branch;
@@ -213,10 +224,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     try {
       const sanitized = sanitizeNoGithubPat(dom.targetBranchInput.value.trim(), 'targetBranch');
       config.targetBranch = sanitized;
-      state.targetHeadOid = '';
-      state.targetHeadBranch = '';
-      setStoredValue('target_head_oid', '');
-      setStoredValue('target_head_branch', '');
+      clearTargetOidState(state);
       saveHudConfig({ targetBranch: sanitized });
       renderState();
     } catch (e: any) {
@@ -282,9 +290,8 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
       const res = await requestRepoMix(config);
       if (res.status === 'OK' && (res.parts?.length || res.xmlContent)) {
-        state.headOid = res.headOid;
+        setSourceHeadOid(config, state, res.headOid);
         state.lastMixStats = res.stats;
-        setStoredValue('head_oid', res.headOid);
 
         let injected = false;
         const metaCommits = res.stats.recentCommitsCount
@@ -345,13 +352,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
         const res = await requestWorkerPatch(config, patchReq);
         if (res.status === 'COMMITTED') {
           state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
-          const oidUpdates = advancePatchOidState(config, res);
-          Object.assign(state, oidUpdates);
-          if (oidUpdates.headOid) setStoredValue('head_oid', oidUpdates.headOid);
-          if (oidUpdates.targetHeadOid) {
-            setStoredValue('target_head_oid', oidUpdates.targetHeadOid);
-            setStoredValue('target_head_branch', oidUpdates.targetHeadBranch || '');
-          }
+          applyPatchResponseOids(config, state, res);
           const branchLabel = res.targetBranch || config.branch;
           const prMsg = res.pullRequestUrl ? ` | 🔗 PR: ${res.pullRequestUrl}` : '';
           controller.updateState({
@@ -388,9 +389,12 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
         }
 
         if (res.status === 'GIT_CONFLICT' || res.status === 'ERROR') {
+          const scopeHint = res.status === 'GIT_CONFLICT'
+            ? ` [validated ${config.repo}@${config.branch}]`
+            : '';
           controller.updateState({
             status: res.status,
-            statusMessage: `❌ ${res.status}: ${res.errorMessage || 'Preflight / Concurrency check failed'}`,
+            statusMessage: `❌ ${res.status}: ${res.errorMessage || 'Preflight / Concurrency check failed'}${scopeHint}`,
             lastErrors: res.errors || [],
           });
           return false;
@@ -398,13 +402,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
         if (res.status === 'NO_CHANGES_NEEDED') {
           state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
-          const oidUpdates = advancePatchOidState(config, res);
-          Object.assign(state, oidUpdates);
-          if (oidUpdates.headOid) setStoredValue('head_oid', oidUpdates.headOid);
-          if (oidUpdates.targetHeadOid) {
-            setStoredValue('target_head_oid', oidUpdates.targetHeadOid);
-            setStoredValue('target_head_branch', oidUpdates.targetHeadBranch || '');
-          }
+          applyPatchResponseOids(config, state, res);
           controller.updateState({
             status: 'IDLE',
             statusMessage: `ℹ️ No changes needed (idempotent patch).`,
@@ -413,30 +411,9 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
         }
       }
 
-      if (patch.legacyPayload) {
-        controller.updateState({
-          status: 'PATCHING',
-          statusMessage: `⏳ Submitting legacy commit to /push...`,
-        });
-        const [owner, repoName] = config.repo.split('/');
-        const legacyReq = {
-          ...patch.legacyPayload,
-          owner: owner || undefined,
-          repo: repoName || config.repo,
-          branch: config.branch,
-        };
-        const res = await requestLegacyCommit(config, legacyReq);
-        state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
-        controller.updateState({
-          status: 'COMMITTED',
-          statusMessage: `✅ Committed via legacy bridge: ${res?.commit?.oid ? res.commit.oid.slice(0, 7) : 'OK'}`,
-          retryCount: 0,
-          lastErrors: [],
-        });
-        return true;
-      }
-
-      throw new Error('No headOid set and no legacy payload available. Please click "Load Repo Mix" first.');
+      // Without a mix snapshot there is no expectedHeadOid to validate against.
+      // A silent V1 /push fallback would commit against an unknown revision.
+      throw new Error(patchSnapshotRequiredMessage(config, patch.commitMessage));
     } catch (err: any) {
       controller.updateState({
         status: 'ERROR',

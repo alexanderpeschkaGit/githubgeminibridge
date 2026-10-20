@@ -43,6 +43,11 @@ const LOCAL_SUITES = [
     finding: 'Existing target branches patched on their snapshot with separate source/target OIDs',
   },
   {
+    id: 'hud-oid-scope',
+    script: 'test-hud-oid-scope.mjs',
+    finding: 'Persisted patch OIDs are repo+branch scoped (no false GIT_CONFLICT after config switches)',
+  },
+  {
     id: 'recent-commits-opt-in',
     script: 'test-recent-commits-opt-in.mjs',
     finding: 'Recent commits opt-in with one-time migration and persisted user choice',
