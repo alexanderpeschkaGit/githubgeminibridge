@@ -114,6 +114,12 @@ export const HUD_STYLES = `
     flex-direction: column;
     gap: 4px;
   }
+  .hud-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 12px;
+    align-items: start;
+  }
   .hud-label {
     font-size: 11px;
     font-weight: 600;
@@ -216,6 +222,7 @@ export const HUD_STYLES = `
     border-radius: 8px;
     background: #182234;
     padding: 8px;
+    min-height: 76px;
     max-height: 280px;
     overflow-y: auto;
     display: flex;

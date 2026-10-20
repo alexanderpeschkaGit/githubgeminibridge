@@ -740,6 +740,12 @@ Fix Instructions:
     flex-direction: column;
     gap: 4px;
   }
+  .hud-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 12px;
+    align-items: start;
+  }
   .hud-label {
     font-size: 11px;
     font-weight: 600;
@@ -842,6 +848,7 @@ Fix Instructions:
     border-radius: 8px;
     background: #182234;
     padding: 8px;
+    min-height: 76px;
     max-height: 280px;
     overflow-y: auto;
     display: flex;
@@ -929,13 +936,13 @@ Fix Instructions:
     repoRow.appendChild(repoLabel);
     repoRow.appendChild(repoInput);
     body.appendChild(repoRow);
+    const branchGrid = createHudElement("div", "hud-form-grid");
     const branchRow = createHudElement("div", "hud-form-row");
     const branchLabel = createHudElement("span", "hud-label", "Branch");
     const branchInput = createHudElement("input", "hud-input");
     branchInput.value = config.branch;
     branchRow.appendChild(branchLabel);
     branchRow.appendChild(branchInput);
-    body.appendChild(branchRow);
     const targetBranchRow = createHudElement("div", "hud-form-row");
     const targetBranchLabel = createHudElement("span", "hud-label", "Target Branch (optional)");
     const targetBranchInput = createHudElement("input", "hud-input");
@@ -943,7 +950,10 @@ Fix Instructions:
     targetBranchInput.value = config.targetBranch || "";
     targetBranchRow.appendChild(targetBranchLabel);
     targetBranchRow.appendChild(targetBranchInput);
-    body.appendChild(targetBranchRow);
+    branchGrid.appendChild(branchRow);
+    branchGrid.appendChild(targetBranchRow);
+    body.appendChild(branchGrid);
+    const scopeGrid = createHudElement("div", "hud-form-grid");
     const pathsRow = createHudElement("div", "hud-form-row");
     const pathsLabel = createHudElement("span", "hud-label", "Include Paths (comma-separated, optional)");
     const includePathsInput = createHudElement("input", "hud-input");
@@ -951,7 +961,6 @@ Fix Instructions:
     includePathsInput.value = (config.includePaths || []).join(", ");
     pathsRow.appendChild(pathsLabel);
     pathsRow.appendChild(includePathsInput);
-    body.appendChild(pathsRow);
     const maxChunkRow = createHudElement("div", "hud-form-row");
     const maxChunkLabel = createHudElement("span", "hud-label", "Max Chunk Chars (Default: 85000, Max 10 Parts)");
     const maxChunkCharsInput = createHudElement("input", "hud-input");
@@ -961,7 +970,10 @@ Fix Instructions:
     maxChunkCharsInput.value = String(config.maxChunkChars || 85e3);
     maxChunkRow.appendChild(maxChunkLabel);
     maxChunkRow.appendChild(maxChunkCharsInput);
-    body.appendChild(maxChunkRow);
+    scopeGrid.appendChild(pathsRow);
+    scopeGrid.appendChild(maxChunkRow);
+    body.appendChild(scopeGrid);
+    const secretGrid = createHudElement("div", "hud-form-grid");
     const secretRow = createHudElement("div", "hud-form-row");
     const secretLabel = createHudElement("span", "hud-label", "Worker Secret (WORKER_SECRET)");
     const secretInput = createHudElement("input", "hud-input");
@@ -969,13 +981,14 @@ Fix Instructions:
     secretInput.value = config.workerSecret;
     secretRow.appendChild(secretLabel);
     secretRow.appendChild(secretInput);
-    body.appendChild(secretRow);
     const oidRow = createHudElement("div", "hud-form-row");
     const oidLabel = createHudElement("span", "hud-label", "Head OID (Optimistic Concurrency)");
     const oidBadge = createHudElement("div", "hud-badge-oid", state.headOid || "(Not mixed yet)");
     oidRow.appendChild(oidLabel);
     oidRow.appendChild(oidBadge);
-    body.appendChild(oidRow);
+    secretGrid.appendChild(secretRow);
+    secretGrid.appendChild(oidRow);
+    body.appendChild(secretGrid);
     const actionRow = createHudElement("div");
     actionRow.style.cssText = "display: flex; gap: 8px;";
     const mixBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u{1F4E6} Load Repo Mix (/api/mix)");

@@ -340,3 +340,13 @@
 - Dateigroessen-Audit (Probe-Metrik split(\n).length): 29 aktive TypeScript-Dateien, 0 >= 500 Zeilen.
 - `git diff --check`: `PASS` (Exit 0, nur CRLF-Hinweise).
 - **GESAMTSTATUS**: `PASS`
+
+### [2026-10-20T22:59:56+02:00] | Idempotenz & HUD-UI (Queue-Höhe + 2-Spalten-Form)
+- `tsc --noEmit -p packages/edge-worker/tsconfig.json`: `PASS` (0 Fehler).
+- `tsc --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS` (0 Fehler).
+- `node scripts/patches_and_tests/test-local-cli.mjs`: `PASS` (24/24) — inkl. neuer Idempotenz-Assertions (Re-Applikation eines committeten Patches → 0 Fehler, `hasEffectiveChanges === false`).
+- `node scripts/patches_and_tests/run-regressions.mjs`: `PASS` (7/7).
+- `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; dist/root byte-identisch (SHA256 `C96F91BE…`, 66.872 B).
+- Dateigrößen-Audit: 29 TS-Dateien, 0 ≥ 500 Zeilen.
+- `git diff --check`: `PASS` (nur CRLF-Hinweise).
+- **GESAMTSTATUS**: `PASS`

@@ -50,14 +50,14 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   repoRow.appendChild(repoInput);
   body.appendChild(repoRow);
 
-  // Branch Row
+  // Compact grid: Branch | Target Branch
+  const branchGrid = createHudElement('div', 'hud-form-grid');
   const branchRow = createHudElement('div', 'hud-form-row');
   const branchLabel = createHudElement('span', 'hud-label', 'Branch');
   const branchInput = createHudElement('input', 'hud-input');
   branchInput.value = config.branch;
   branchRow.appendChild(branchLabel);
   branchRow.appendChild(branchInput);
-  body.appendChild(branchRow);
 
   // Target Branch Row (Optional, for writing to a different or new branch)
   const targetBranchRow = createHudElement('div', 'hud-form-row');
@@ -67,9 +67,12 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   targetBranchInput.value = config.targetBranch || '';
   targetBranchRow.appendChild(targetBranchLabel);
   targetBranchRow.appendChild(targetBranchInput);
-  body.appendChild(targetBranchRow);
+  branchGrid.appendChild(branchRow);
+  branchGrid.appendChild(targetBranchRow);
+  body.appendChild(branchGrid);
 
-  // Include Paths Row (Scope Filter for large repos)
+  // Compact grid: Include Paths | Max Chunk Chars
+  const scopeGrid = createHudElement('div', 'hud-form-grid');
   const pathsRow = createHudElement('div', 'hud-form-row');
   const pathsLabel = createHudElement('span', 'hud-label', 'Include Paths (comma-separated, optional)');
   const includePathsInput = createHudElement('input', 'hud-input');
@@ -77,9 +80,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   includePathsInput.value = (config.includePaths || []).join(', ');
   pathsRow.appendChild(pathsLabel);
   pathsRow.appendChild(includePathsInput);
-  body.appendChild(pathsRow);
 
-  // Max Chunk Chars Row (Gemini Chat 85k budget)
   const maxChunkRow = createHudElement('div', 'hud-form-row');
   const maxChunkLabel = createHudElement('span', 'hud-label', 'Max Chunk Chars (Default: 85000, Max 10 Parts)');
   const maxChunkCharsInput = createHudElement('input', 'hud-input');
@@ -89,9 +90,12 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   maxChunkCharsInput.value = String(config.maxChunkChars || 85000);
   maxChunkRow.appendChild(maxChunkLabel);
   maxChunkRow.appendChild(maxChunkCharsInput);
-  body.appendChild(maxChunkRow);
+  scopeGrid.appendChild(pathsRow);
+  scopeGrid.appendChild(maxChunkRow);
+  body.appendChild(scopeGrid);
 
-  // Worker Secret Row
+  // Compact grid: Worker Secret | Head OID
+  const secretGrid = createHudElement('div', 'hud-form-grid');
   const secretRow = createHudElement('div', 'hud-form-row');
   const secretLabel = createHudElement('span', 'hud-label', 'Worker Secret (WORKER_SECRET)');
   const secretInput = createHudElement('input', 'hud-input');
@@ -99,15 +103,15 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   secretInput.value = config.workerSecret;
   secretRow.appendChild(secretLabel);
   secretRow.appendChild(secretInput);
-  body.appendChild(secretRow);
 
-  // Head OID Badge Row
   const oidRow = createHudElement('div', 'hud-form-row');
   const oidLabel = createHudElement('span', 'hud-label', 'Head OID (Optimistic Concurrency)');
   const oidBadge = createHudElement('div', 'hud-badge-oid', state.headOid || '(Not mixed yet)');
   oidRow.appendChild(oidLabel);
   oidRow.appendChild(oidBadge);
-  body.appendChild(oidRow);
+  secretGrid.appendChild(secretRow);
+  secretGrid.appendChild(oidRow);
+  body.appendChild(secretGrid);
 
   // Action Buttons Row: Mix Repo
   const actionRow = createHudElement('div');

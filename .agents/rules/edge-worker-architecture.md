@@ -90,6 +90,7 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Biete in `handlePatchRequest` einen typisierten Hook (`PreflightLinterHook`) sowie Basis-Prüfungen für `preflight.forbidPatterns` / `preflight.requireExports`, in den sich Stufe 4 (`linter.ts`) ohne Refactoring von `patcher.ts` einklinkt.
    - Die in-Memory-Verarbeitung und Preflight-Auswertung ist in `src/modules/patchInMemory.ts` gekapselt und bleibt über `patcher.ts` zu 100 % re-exportiert.
    - Ergibt das Patchen exakt denselben Inhalt wie auf GitHub (`additions.length === 0 && deletions.length === 0`), gib `status: "NO_CHANGES_NEEDED"` zurück.
+   - **Idempotenz bei bereits angewendeten Search/Replace-Blöcken:** Schlägt ein `search`-Block fehl, ist sein `replace`-Text aber bereits vollständig im aktuellen Dateiinhalt enthalten, wird der Block als No-op gewertet (kein `SEARCH_REPLACE`-Fehler, kein Self-Healing-Loop). Dadurch liefert das erneute Anwenden eines bereits committeten Patches `NO_CHANGES_NEEDED` statt `PREFLIGHT_FAILED`.
 
 5. **Target Branch & Atomic Branch Creation (`createBranchRef`, Stufe 7):**
    - Unterstützt optionalen abweichenden `targetBranch` in `WorkerPatchRequest`.

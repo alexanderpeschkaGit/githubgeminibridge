@@ -148,4 +148,29 @@ const validResult = await applyPatchesInMemory(validPatch, { 'test.ts': 'export 
 assert(validResult.errors.length === 0, 'Clean patch produces 0 preflight errors');
 assert(validResult.additions[0].content === 'export const version = "2.0.0";', 'Addition contains correctly patched content');
 
+// 6d. Idempotency: re-applying an already-committed patch is a no-op, not a SEARCH_REPLACE failure
+const alreadyAppliedPatch = [
+  {
+    path: 'test.ts',
+    action: 'modify',
+    blocks: [
+      {
+        search: 'export const version = "1.0.0";',
+        replace: 'export const version = "2.0.0";'
+      }
+    ]
+  }
+];
+const alreadyAppliedResult = await applyPatchesInMemory(alreadyAppliedPatch, {
+  'test.ts': 'export const version = "2.0.0";'
+});
+assert(
+  alreadyAppliedResult.errors.length === 0,
+  'Re-applying an already-committed patch produces 0 errors (idempotent)'
+);
+assert(
+  alreadyAppliedResult.hasEffectiveChanges === false,
+  'Re-applying an already-committed patch has no effective changes'
+);
+
 console.log(`\n🎉 Stufe II Test abgeschlossen: ${passCount}/${totalCount} Assertions bestanden!`);

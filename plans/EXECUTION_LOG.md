@@ -601,3 +601,15 @@
   4. `scripts/patches_and_tests/test-recent-commits-opt-in.mjs`: Assertions-Pfad auf `hudDomTree.ts` korrigiert (Checkbox-Verdrahtung lebt jetzt dort).
 - **Validierung:** `tsc --noEmit` HUD `PASS` (0 Fehler); `test-harvest-dedupe.mjs` `PASS`; `run-regressions.mjs` `PASS` (7/7); Userscript-Build `PASS`, dist/root byte-identisch (SHA256 `1990F103...`, 66.399 Bytes); Dateigroessen-Audit 29 Dateien / 0 >= 500 Zeilen; `git diff --check` clean.
 - **Overall:** `PASS`; kein `git push`, kein `wrangler deploy`.
+
+### [2026-10-20T22:59:52+02:00] | Idempotenz-Fix & HUD Queue/Form Kompaktierung
+- **Status:** `DONE`
+- **Anlass:** Retest nach Harvester-Dedupe-Fix. Der erste E2E-Lauf hatte die Änderung (`label?: string;` in `SocialLink`, Commit `78fd7d0`) bereits committet; ein erneuter Lauf mit identischem Patch lief in `SEARCH_REPLACE`-Fehler + Self-Healing-Schleife, weil der `search`-Block nicht mehr auf die bereits geänderte Datei passte. Zusätzlich: Queue-Fenster zu niedrig und Config-Formular zu hoch.
+- **Änderungen:**
+  1. `packages/edge-worker/src/modules/patchInMemory.ts`: Idempotenz-No-op — schlägt `search` fehl, ist `replace` aber bereits vollständig im aktuellen Inhalt enthalten, wird der Block als No-op gewertet (kein `SEARCH_REPLACE`-Fehler). Re-Applikation eines committeten Patches liefert jetzt `NO_CHANGES_NEEDED`.
+  2. `scripts/patches_and_tests/test-local-cli.mjs`: +2 Idempotenz-Assertions (24/24).
+  3. `packages/userscript-hud/src/ui/hudStylesAndDom.ts`: `.hud-form-grid` (2 Spalten), `.hud-patch-queue` `min-height: 76px`.
+  4. `packages/userscript-hud/src/ui/hudDomTree.ts`: Config-Felder in 3 Grid-Zeilen (Branch|Target, Paths|MaxChunk, Secret|OID).
+  5. Docs synchronisiert: `edge-worker-architecture.md`, `userscript-shadow-hud.md`.
+- **Validierung:** `tsc --noEmit` edge-worker & HUD `PASS`; `test-local-cli.mjs` 24/24 `PASS`; `run-regressions.mjs` 7/7 `PASS`; Userscript-Build `PASS`, dist/root byte-identisch (SHA256 `C96F91BE…`, 66.872 B); Dateigrößen-Audit 29 Dateien / 0 ≥ 500; `git diff --check` `PASS` (nur CRLF-Hinweise).
+- **Overall:** `PASS`; kein `git push`, kein `wrangler deploy` (Worker-Idempotenz greift live erst nach expliziter Deploy-Freigabe).

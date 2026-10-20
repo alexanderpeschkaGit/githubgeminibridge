@@ -696,6 +696,9 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         try {
           currentContent = applySearchReplace(currentContent, block.search, block.replace, op.path);
         } catch (err) {
+          if (block.replace.length > 0 && currentContent.includes(block.replace)) {
+            continue;
+          }
           errors.push({
             file: op.path,
             stage: "SEARCH_REPLACE",

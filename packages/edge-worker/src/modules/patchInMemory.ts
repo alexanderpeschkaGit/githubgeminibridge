@@ -220,6 +220,13 @@ export async function applyPatchesInMemory(
         try {
           currentContent = applySearchReplace(currentContent, block.search, block.replace, op.path);
         } catch (err: any) {
+          // Idempotency: if the replacement text is already fully present in the
+          // current content, this block was applied by an earlier commit. Treat it
+          // as a no-op instead of a SEARCH_REPLACE failure, so re-applying an
+          // already-committed patch yields NO_CHANGES_NEEDED rather than an error.
+          if (block.replace.length > 0 && currentContent.includes(block.replace)) {
+            continue;
+          }
           errors.push({
             file: op.path,
             stage: 'SEARCH_REPLACE',
