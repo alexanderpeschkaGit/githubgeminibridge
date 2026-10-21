@@ -805,3 +805,11 @@
 
 ### [2026-10-21T18:11:00+02:00] | PLAN_DONE `09_ACCOUNT_SWITCH_AND_OWNER_DETECTION_EXECUTION_PLAN.md`
 - **Status:** `DONE` (`PASS`). Alle Steps 1-11 abgeschlossen, Regelwerke (`userscript-shadow-hud.md`, `agents.md` P1-Zeile), `plans/08_TWO_GITHUB_ACCOUNTS_PLAN.md` (Step 7b) aktualisiert, Logging in `EXECUTION_LOG.md`/`STATE.md`, lokaler Checkpoint-Commit (kein Push).
+
+### [2026-10-21T18:25:00+02:00] | HUD-Update-Check nie mehr stumm + Userscript `2.0.14` veroeffentlicht (Push, User-Freigabe)
+- **Befund:** Der `⟳`-Button meldete nach dem Gemini-Reload kein Update. Ursache: `2.0.13` war nur ein **lokaler** Checkpoint-Commit; `origin/main` stand auf `6cc4e56` und die Raw-URL lieferte weiterhin `@version 2.0.11`. Der Check war also korrekt — es existierte keine veroeffentlichte neuere Version (die Anweisung "Tampermonkey-Update fuer 2.0.13 annehmen" war falsch).
+- **Fix `never silent`:** `updateChecker.ts` liefert bei unbekannter Laufzeitversion (kein `GM_info`) nicht mehr `null`, sondern `currentVersion: ''`; NEU `evaluateUpdateState(running, published)` (leere Laufzeitversion ist **nie** ein Update). `updateBanner.ts`: manuelle Ergebnisse (Update / "up to date" / unbekannte Version) bleiben bis zum Dismiss sichtbar (`persistent`-Parameter statt `BannerAction.persistent`); `⟳`-Tooltip nennt die laufende Version; der Hintergrund-Check loggt bei unbekannter Version nur in die Konsole.
+- **Dateien:** `packages/userscript-hud/src/services/updateChecker.ts`, `src/ui/updateBanner.ts`, `scripts/patches_and_tests/test-hud-update-check.mjs` (neue `evaluateUpdateState`-Faelle), Userscript `2.0.13 -> 2.0.14`, `dist` <=> Root byte-identisch.
+- **Validierung:** HUD `tsc --noEmit` PASS; `test-hud-update-check.mjs` PASS; `run-regressions.mjs --include-smoke` PASS (14/14 Suiten, `worker-smoke` 14/14).
+- **Push:** `6cc4e56..374b694 main -> main` — `92b0340` (Account-Switch + Owner-Erkennung, `2.0.13`), `fa9ddaa` (dieser Fix, `2.0.14`), `374b694` (`env.account2` in `wrangler.jsonc`, Plan 08 Step 3, separater Commit). GitHub-API: `main` => `@version 2.0.14` (Blob-SHA `fff955c1`).
+- **CDN:** `raw.githubusercontent.com` liefert fuer ~1-5 min weiterhin `2.0.11`; der HUD-Check bustet den Cache via `?t=`.
