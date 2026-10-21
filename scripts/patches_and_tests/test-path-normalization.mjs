@@ -245,7 +245,45 @@ const headerStub = (text) => ({ previousElementSibling: { textContent: text, pre
 assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('**src/App.tsx**')), 'src/App.tsx');
 assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('`./src/utils/helpers.ts`')), 'src/utils/helpers.ts');
 assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('File: /src/services/r2Sync.ts')), 'src/services/r2Sync.ts');
+assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('**Pfad:** `src/store/theme.ts`')), 'src/store/theme.ts');
 console.log('PASS: markdown-decorated and prefixed filename headers are canonicalized');
+
+// Gemini's default heading styles above a code block (numbered list, heading, bullet, bold)
+assert.equal(
+  harvester.extractPathFromCode('const a = 1;', headerStub('3. `src/store/portfolioFetchActions.ts`')),
+  'src/store/portfolioFetchActions.ts'
+);
+assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('### src/components/App.tsx')), 'src/components/App.tsx');
+assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('- **src/hooks/useThing.ts**')), 'src/hooks/useThing.ts');
+assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('Datei: src/legacy/old.ts:')), 'src/legacy/old.ts');
+console.log('PASS: numbered, heading, bullet and bold filename headers are canonicalized');
+
+// Never invent a path from prose or a URL
+assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('Die Datei src/index.ts ist veraltet.')), '');
+assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('https://example.com/main.ts')), '');
+console.log('PASS: prose and URLs never yield a path');
+
+// The header may live outside the code block wrapper (Gemini renders it as a sibling of <code-block>)
+const blockSiblingStub = {
+  previousElementSibling: null,
+  closest: () => ({
+    previousElementSibling: { textContent: '2. `src/store/actions.ts`', previousElementSibling: null },
+  }),
+};
+assert.equal(harvester.extractPathFromCode('const a = 1;', blockSiblingStub), 'src/store/actions.ts');
+console.log('PASS: headers above the enclosing code block are resolved');
+
+// Bare path comment above the diff markers, without the "filepath:" label
+const bareCommentHinted = harvester.convertLegacyBlocksToV2Payload(
+  `// src/store/portfolioFetchActions.ts\n${SEARCH_REPLACE_TEXT}`
+);
+assert.equal(bareCommentHinted.payload.patches[0].path, 'src/store/portfolioFetchActions.ts');
+console.log('PASS: bare path comment above SEARCH/REPLACE is used as the target path');
+
+// A leading path comment inside plain code is NOT a header (no diff markers follow)
+const commentOnly = harvester.convertLegacyBlocksToV2Payload('// src/legacy/note.ts\nconst a = 1;');
+assert.equal(commentOnly.payload.patches[0].path, '', 'a leading path comment without markers is not a target');
+console.log('PASS: path comments without patch markers stay path-less');
 
 // ---------------------------------------------------------------------------
 // 4. HUD path resolution: prompts only for missing paths

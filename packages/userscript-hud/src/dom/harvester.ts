@@ -8,6 +8,74 @@ import type {
 import { createStablePatchId } from '../services/patchIdentity';
 import { normalizeRepoPath } from '../../../../shared/repoPaths';
 
+const FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
+const LABELED_HEADER_PATH =
+  /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
+const PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
+const DIFF_MARKER_LINE = /^<{7}/;
+
+/**
+ * Reduces markdown chrome so headers like "3. `src/a.ts`", "### **src/a.ts**" or "- src/a.ts"
+ * collapse to a bare path token.
+ */
+function stripHeaderDecoration(raw: string): string {
+  let text = raw.replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < 3; i += 1) {
+    const next = text
+      .replace(/^[*_`"'\s]+/, '')
+      .replace(/[*_`"'\s]+$/, '')
+      .replace(/^#{1,6}\s*/, '')
+      .replace(/^(?:[-*+•]|\d+[.)])\s+/, '')
+      .trim();
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
+/**
+ * Turns a header element's text into a repo path, accepting labeled ("File: src/a.ts")
+ * and bare-path variants while never inventing a path from prose.
+ */
+function matchHeaderPath(raw: string): string {
+  const text = stripHeaderDecoration(raw).replace(/[*`]/g, '');
+  if (!text) return '';
+
+  const labeled = text.match(LABELED_HEADER_PATH);
+  if (labeled && labeled[1]) return labeled[1];
+
+  const candidate = text.replace(/[:;,]+$/, '').trim();
+  return FILE_PATH_TOKEN.test(candidate) ? candidate : '';
+}
+
+/**
+ * Collects the header candidates around a code element: its own previous siblings first,
+ * then the previous siblings of the enclosing code block (Gemini renders the filename
+ * heading outside the block wrapper).
+ */
+function collectHeaderElements(preElement?: HTMLElement | null): Element[] {
+  const elements: Element[] = [];
+  const pushPrevious = (start: Element | null | undefined, limit: number): void => {
+    let prev = start ?? null;
+    for (let i = 0; i < limit && prev; i += 1) {
+      if (!elements.includes(prev)) elements.push(prev);
+      prev = prev.previousElementSibling;
+    }
+  };
+
+  if (!preElement) return elements;
+  pushPrevious(preElement.previousElementSibling, 3);
+
+  if (typeof preElement.closest === 'function') {
+    const block = preElement.closest('code-block');
+    if (block && block !== preElement) {
+      pushPrevious(block.previousElementSibling, 3);
+    }
+  }
+
+  return elements;
+}
+
 /**
  * Extracts a file path hint from code comments or preceding sibling elements in the DOM.
  */
@@ -19,20 +87,24 @@ export function extractPathFromCode(codeText: string, preElement?: HTMLElement |
     return normalizeRepoPath(inlinePath);
   }
 
-  // 2. Look for filename header right above the code block in the DOM
-  if (preElement) {
-    let prev = preElement.previousElementSibling;
-    for (let i = 0; i < 3 && prev; i++) {
-      // Header text is often markdown-decorated ("**src/App.tsx**" or "`src/App.tsx`").
-      const text = (prev.textContent?.trim() || '').replace(/^[*`\s]+|[*`\s]+$/g, '');
-      const headerMatch = text.match(/(?:File|Pfad|Datei)?:\s*([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)/i);
-      if (headerMatch && headerMatch[1]) {
-        return normalizeRepoPath(headerMatch[1].trim());
-      }
-      if (/^[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+$/.test(text)) {
-        return normalizeRepoPath(text);
-      }
-      prev = prev.previousElementSibling;
+  // 2. Bare path comment directly above the diff markers ("// src/a.ts" instead of "// filepath: ...")
+  const codeLines = codeText.split(/\r?\n/);
+  const firstContentIndex = codeLines.findIndex((line) => line.trim().length > 0);
+  const bareComment =
+    firstContentIndex >= 0 ? codeLines[firstContentIndex].trim().match(PATH_COMMENT_LINE) : null;
+  if (bareComment && bareComment[1]) {
+    const nextLine =
+      codeLines.slice(firstContentIndex + 1).find((line) => line.trim().length > 0)?.trim() ?? '';
+    if (DIFF_MARKER_LINE.test(nextLine)) {
+      return normalizeRepoPath(bareComment[1]);
+    }
+  }
+
+  // 3. Look for a filename header above the code block ("3. `src/a.ts`", "**src/a.ts**", "File: src/a.ts")
+  for (const element of collectHeaderElements(preElement)) {
+    const headerPath = matchHeaderPath(element.textContent ?? '');
+    if (headerPath) {
+      return normalizeRepoPath(headerPath);
     }
   }
 

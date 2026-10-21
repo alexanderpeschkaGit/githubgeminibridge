@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.8
+// @version      2.0.9
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -40,7 +40,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
-  // packages/userscript-hud/src/services/storage.ts
+  // src/services/storage.ts
   var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
@@ -206,7 +206,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // packages/userscript-hud/src/services/workerClient.ts
+  // src/services/workerClient.ts
   async function gmRequestJson(url, method, secret, body) {
     const headers = {
       "Accept": "application/json",
@@ -357,7 +357,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
 
-  // packages/userscript-hud/src/dom/injector.ts
+  // src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
     const geminiSelectors = [
@@ -462,7 +462,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return true;
   }
 
-  // packages/userscript-hud/src/services/selfHealing.ts
+  // src/services/selfHealing.ts
   var MAX_SELF_HEALING_RETRIES = 3;
   function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt) {
     const formattedErrors = errors.map((err, idx) => {
@@ -569,7 +569,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/patchOidState.ts
+  // src/services/patchOidState.ts
   var OID_REGEX2 = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
@@ -630,7 +630,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/runtimeInfo.ts
+  // src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
   function getRunningScriptVersion() {
     if (typeof GM_info === "undefined" || !GM_info || !GM_info.script) {
@@ -664,7 +664,7 @@ Fix Instructions:
     document.body.appendChild(box);
   }
 
-  // packages/userscript-hud/src/services/patchOidStore.ts
+  // src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
       headOidScope: getStoredValue("head_oid_scope", ""),
@@ -704,7 +704,7 @@ Fix Instructions:
     }
   }
 
-  // packages/userscript-hud/src/services/patchIdentity.ts
+  // src/services/patchIdentity.ts
   function canonicalize(value) {
     if (Array.isArray(value)) {
       return value.map((entry) => canonicalize(entry));
@@ -735,7 +735,7 @@ Fix Instructions:
     return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
   }
 
-  // packages/userscript-hud/src/services/patchQueue.ts
+  // src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
   function isDuplicatePatch(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
@@ -766,7 +766,7 @@ Fix Instructions:
     return { applied, total };
   }
 
-  // shared/repoPaths.ts
+  // ../../shared/repoPaths.ts
   function normalizeRepoPath(input) {
     return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
   }
@@ -788,7 +788,7 @@ Fix Instructions:
     return null;
   }
 
-  // packages/userscript-hud/src/services/patchPaths.ts
+  // src/services/patchPaths.ts
   function resolvePatchPaths(payload, prompt) {
     const patches = (payload.patches || []).map((patch) => ({
       ...patch,
@@ -814,7 +814,7 @@ Fix Instructions:
     return { payload: { ...payload, patches }, cancelled: false };
   }
 
-  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
+  // src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -1089,7 +1089,7 @@ Fix Instructions:
     return el;
   }
 
-  // packages/userscript-hud/src/ui/hudDomTree.ts
+  // src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -1261,7 +1261,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/hudConfigBindings.ts
+  // src/ui/hudConfigBindings.ts
   function bindHudConfigInputs(deps) {
     const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, renderState } = deps;
     dom.repoInput.onchange = () => {
@@ -1343,7 +1343,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/shadowHud.ts
+  // src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -1688,25 +1688,66 @@ Fix Instructions:
     return controller;
   }
 
-  // packages/userscript-hud/src/dom/harvester.ts
+  // src/dom/harvester.ts
+  var FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
+  var LABELED_HEADER_PATH = /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
+  var PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
+  var DIFF_MARKER_LINE = /^<{7}/;
+  function stripHeaderDecoration(raw) {
+    let text = raw.replace(/\s+/g, " ").trim();
+    for (let i = 0; i < 3; i += 1) {
+      const next = text.replace(/^[*_`"'\s]+/, "").replace(/[*_`"'\s]+$/, "").replace(/^#{1,6}\s*/, "").replace(/^(?:[-*+•]|\d+[.)])\s+/, "").trim();
+      if (next === text) break;
+      text = next;
+    }
+    return text;
+  }
+  function matchHeaderPath(raw) {
+    const text = stripHeaderDecoration(raw).replace(/[*`]/g, "");
+    if (!text) return "";
+    const labeled = text.match(LABELED_HEADER_PATH);
+    if (labeled && labeled[1]) return labeled[1];
+    const candidate = text.replace(/[:;,]+$/, "").trim();
+    return FILE_PATH_TOKEN.test(candidate) ? candidate : "";
+  }
+  function collectHeaderElements(preElement) {
+    const elements = [];
+    const pushPrevious = (start, limit) => {
+      let prev = start ?? null;
+      for (let i = 0; i < limit && prev; i += 1) {
+        if (!elements.includes(prev)) elements.push(prev);
+        prev = prev.previousElementSibling;
+      }
+    };
+    if (!preElement) return elements;
+    pushPrevious(preElement.previousElementSibling, 3);
+    if (typeof preElement.closest === "function") {
+      const block = preElement.closest("code-block");
+      if (block && block !== preElement) {
+        pushPrevious(block.previousElementSibling, 3);
+      }
+    }
+    return elements;
+  }
   function extractPathFromCode(codeText, preElement) {
     const inlineMatch = codeText.match(/(?:\/\/|#|\/\*)\s*(?:filepath|file|path):\s*([^\r\n*]+)/i);
     if (inlineMatch && inlineMatch[1]) {
       const inlinePath = inlineMatch[1].trim().replace(/^["']|["']$/g, "");
       return normalizeRepoPath(inlinePath);
     }
-    if (preElement) {
-      let prev = preElement.previousElementSibling;
-      for (let i = 0; i < 3 && prev; i++) {
-        const text = (prev.textContent?.trim() || "").replace(/^[*`\s]+|[*`\s]+$/g, "");
-        const headerMatch = text.match(/(?:File|Pfad|Datei)?:\s*([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)/i);
-        if (headerMatch && headerMatch[1]) {
-          return normalizeRepoPath(headerMatch[1].trim());
-        }
-        if (/^[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+$/.test(text)) {
-          return normalizeRepoPath(text);
-        }
-        prev = prev.previousElementSibling;
+    const codeLines = codeText.split(/\r?\n/);
+    const firstContentIndex = codeLines.findIndex((line) => line.trim().length > 0);
+    const bareComment = firstContentIndex >= 0 ? codeLines[firstContentIndex].trim().match(PATH_COMMENT_LINE) : null;
+    if (bareComment && bareComment[1]) {
+      const nextLine = codeLines.slice(firstContentIndex + 1).find((line) => line.trim().length > 0)?.trim() ?? "";
+      if (DIFF_MARKER_LINE.test(nextLine)) {
+        return normalizeRepoPath(bareComment[1]);
+      }
+    }
+    for (const element of collectHeaderElements(preElement)) {
+      const headerPath = matchHeaderPath(element.textContent ?? "");
+      if (headerPath) {
+        return normalizeRepoPath(headerPath);
       }
     }
     return "";
@@ -1979,7 +2020,7 @@ Fix Instructions:
     return observer;
   }
 
-  // packages/userscript-hud/src/index.ts
+  // src/index.ts
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {

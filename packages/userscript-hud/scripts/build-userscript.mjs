@@ -17,10 +17,10 @@ try {
   esbuild = await import('esbuild');
 }
 
-const USERSCRIPT_BANNER = `// ==UserScript==
+const USERSCRIPT_BANNER = (version) => `// ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.8
+// @version      ${version}
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -58,8 +58,54 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 }
 `;
 
+const SEMVER_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
+const BUMP_KINDS = ['major', 'minor', 'patch'];
+
+function readCliOption(name) {
+  const option = process.argv.slice(2).find((arg) => arg.startsWith(`--${name}=`));
+  return option ? option.slice(name.length + 3).trim() : '';
+}
+
+function bumpSemver(version, kind) {
+  const match = version.match(SEMVER_PATTERN);
+  if (!match) throw new Error(`Unsupported version "${version}" (expected x.y.z)`);
+  const [major, minor, patch] = match.slice(1).map(Number);
+  if (kind === 'major') return `${major + 1}.0.0`;
+  if (kind === 'minor') return `${major}.${minor + 1}.0`;
+  return `${major}.${minor}.${patch + 1}`;
+}
+
+/**
+ * package.json is the single source of truth for the userscript version.
+ * Tampermonkey only re-downloads when @version increases, so releases pass
+ * --bump=patch|minor|major (or --version=x.y.z); a plain build never bumps.
+ */
+function resolveVersion(pkgPath) {
+  const raw = fs.readFileSync(pkgPath, 'utf8');
+  const current = (raw.match(/"version"\s*:\s*"([^"]+)"/) || [])[1];
+  if (!current) throw new Error(`No "version" field in ${pkgPath}`);
+
+  const bumpKind = readCliOption('bump').toLowerCase();
+  const pinned = readCliOption('version');
+  if (bumpKind && !BUMP_KINDS.includes(bumpKind)) {
+    throw new Error(`--bump must be one of: ${BUMP_KINDS.join(', ')}`);
+  }
+  if (pinned && !SEMVER_PATTERN.test(pinned)) {
+    throw new Error(`--version must match x.y.z, got "${pinned}"`);
+  }
+
+  const next = pinned || (bumpKind ? bumpSemver(current, bumpKind) : current);
+  if (next !== current) {
+    fs.writeFileSync(pkgPath, raw.replace(/("version"\s*:\s*")([^"]+)(")/, `$1${next}$3`), 'utf8');
+    console.log(`[Build Userscript] Version ${current} -> ${next}`);
+  }
+  return next;
+}
+
 async function build() {
-  console.log('[Build Userscript] Bundling packages/userscript-hud/src/index.ts...');
+  const pkgPath = path.join(hudDir, 'package.json');
+  const version = resolveVersion(pkgPath);
+  console.log(`[Build Userscript] Bundling packages/userscript-hud/src/index.ts... (v${version})`);
   const entryPoint = path.join(hudDir, 'src/index.ts');
   const distDir = path.join(hudDir, 'dist');
   const distTarget = path.join(distDir, 'gemini-bridge.user.js');
@@ -77,7 +123,7 @@ async function build() {
     target: 'es2022',
     minify: false,
     banner: {
-      js: USERSCRIPT_BANNER,
+      js: USERSCRIPT_BANNER(version),
     },
   });
 
