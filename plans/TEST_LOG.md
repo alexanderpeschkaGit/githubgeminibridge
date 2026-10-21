@@ -466,3 +466,11 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `node packages/userscript-hud/scripts/build-userscript.mjs`: `PASS`; `2.0.10 -> 2.0.11`, `dist` <=> Root byte-identisch.
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (13/13 Suiten, `worker-smoke` 14/14 inkl. Dateigroessen-Audit nach der Dekomposition).
 - **GESAMTSTATUS:** `PASS`.
+
+### [2026-10-21T18:24:00+02:00] | HUD-Update-Check (`2.0.14`) & Push-Verifikation
+- `node packages/edge-worker/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS`.
+- `node scripts/patches_and_tests/test-hud-update-check.mjs`: `PASS` — neu: `evaluateUpdateState('2.0.13','2.0.14').hasUpdate === true`, Gleichstand/aeltere Veroeffentlichung `false`, **leere** Laufzeitversion `false` (`currentVersion: ''`, kein Fake-Update), Whitespace wird getrimmt; bestehende Checks (Header-Parsing LF/CRLF, numerische Semver-Ordnung, `@updateURL` == `SCRIPT_SOURCE_URL`, Bundle-Version == `package.json`) unveraendert gruen.
+- `node packages/userscript-hud/scripts/build-userscript.mjs --bump=patch`: `PASS`; `2.0.13 -> 2.0.14`, Bundle 98.9 KB, `dist` <=> Root byte-identisch (SHA-256 `97A8C296…`).
+- `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (14/14 Suiten; `worker-smoke` 14/14).
+- **Push-Verifikation:** `git push origin main` => `6cc4e56..374b694`; GitHub-Contents-API `main/gemini-bridge.user.js` = `@version 2.0.14` (Blob-SHA `fff955c1f9ab44ffa6ca72f36f50c6870b66f243`). Raw-CDN lieferte unmittelbar danach noch `2.0.11` (Propagation).
+- **GESAMTSTATUS:** `PASS`.
