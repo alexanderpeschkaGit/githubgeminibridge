@@ -33,6 +33,7 @@ const USERSCRIPT_BANNER = (version) => `// ==UserScript==
 // @noframes
 // @connect      gemini-git-bridge.sikanda.workers.dev
 // @connect      *.workers.dev
+// @connect      raw.githubusercontent.com
 // @downloadURL  https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js
 // @updateURL    https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js
 // @run-at       document-idle

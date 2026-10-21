@@ -39,6 +39,7 @@ import {
 import { resolvePatchPaths } from '../services/patchPaths';
 import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } from './hudStylesAndDom';
 import { buildHudDomTree } from './hudDomTree';
+import { initHudUpdateBanner } from './updateBanner';
 import { bindHudConfigInputs } from './hudConfigBindings';
 
 export {
@@ -84,6 +85,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   if (runningVersion && dom.title) {
     dom.title.textContent = `⚡ Cloudflare Edge HUD v${runningVersion}`;
   }
+  initHudUpdateBanner(dom);
 
   /** Config changes invalidate every snapshot OID: they are repo+branch bound. */
   function resetPatchOidState(reason: string) {

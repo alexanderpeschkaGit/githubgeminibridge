@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.9
+// @version      2.0.10
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -14,6 +14,7 @@
 // @noframes
 // @connect      gemini-git-bridge.sikanda.workers.dev
 // @connect      *.workers.dev
+// @connect      raw.githubusercontent.com
 // @downloadURL  https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js
 // @updateURL    https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js
 // @run-at       document-idle
@@ -40,7 +41,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
-  // src/services/storage.ts
+  // packages/userscript-hud/src/services/storage.ts
   var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
@@ -206,7 +207,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // src/services/workerClient.ts
+  // packages/userscript-hud/src/services/workerClient.ts
   async function gmRequestJson(url, method, secret, body) {
     const headers = {
       "Accept": "application/json",
@@ -357,7 +358,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
 
-  // src/dom/injector.ts
+  // packages/userscript-hud/src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
     const geminiSelectors = [
@@ -462,7 +463,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return true;
   }
 
-  // src/services/selfHealing.ts
+  // packages/userscript-hud/src/services/selfHealing.ts
   var MAX_SELF_HEALING_RETRIES = 3;
   function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt) {
     const formattedErrors = errors.map((err, idx) => {
@@ -569,7 +570,7 @@ Fix Instructions:
     };
   }
 
-  // src/services/patchOidState.ts
+  // packages/userscript-hud/src/services/patchOidState.ts
   var OID_REGEX2 = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
@@ -630,7 +631,7 @@ Fix Instructions:
     };
   }
 
-  // src/services/runtimeInfo.ts
+  // packages/userscript-hud/src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
   function getRunningScriptVersion() {
     if (typeof GM_info === "undefined" || !GM_info || !GM_info.script) {
@@ -664,7 +665,7 @@ Fix Instructions:
     document.body.appendChild(box);
   }
 
-  // src/services/patchOidStore.ts
+  // packages/userscript-hud/src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
       headOidScope: getStoredValue("head_oid_scope", ""),
@@ -704,7 +705,7 @@ Fix Instructions:
     }
   }
 
-  // src/services/patchIdentity.ts
+  // packages/userscript-hud/src/services/patchIdentity.ts
   function canonicalize(value) {
     if (Array.isArray(value)) {
       return value.map((entry) => canonicalize(entry));
@@ -735,7 +736,7 @@ Fix Instructions:
     return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
   }
 
-  // src/services/patchQueue.ts
+  // packages/userscript-hud/src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
   function isDuplicatePatch(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
@@ -766,7 +767,7 @@ Fix Instructions:
     return { applied, total };
   }
 
-  // ../../shared/repoPaths.ts
+  // shared/repoPaths.ts
   function normalizeRepoPath(input) {
     return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
   }
@@ -788,7 +789,7 @@ Fix Instructions:
     return null;
   }
 
-  // src/services/patchPaths.ts
+  // packages/userscript-hud/src/services/patchPaths.ts
   function resolvePatchPaths(payload, prompt) {
     const patches = (payload.patches || []).map((patch) => ({
       ...patch,
@@ -814,7 +815,7 @@ Fix Instructions:
     return { payload: { ...payload, patches }, cancelled: false };
   }
 
-  // src/ui/hudStylesAndDom.ts
+  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -918,6 +919,43 @@ Fix Instructions:
   .hud-close-btn:hover {
     color: #ffffff;
     background: rgba(255, 255, 255, 0.1);
+  }
+  .hud-header-icon {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 7px;
+    border-radius: 6px;
+  }
+  .hud-header-icon:hover:not(:disabled) {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .hud-header-icon:disabled {
+    opacity: 0.45;
+    cursor: progress;
+  }
+  .hud-update-banner {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 11px;
+    line-height: 1.4;
+    border: 1px solid transparent;
+  }
+  .hud-update-banner.update { background: #422006; color: #fcd34d; border-color: #d97706; }
+  .hud-update-banner.ok { background: #064e3b; color: #6ee7b7; border-color: #059669; }
+  .hud-update-banner.error { background: #7f1d1d; color: #fca5a5; border-color: #dc2626; }
+  .hud-update-banner .hud-btn {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    font-size: 11px;
   }
   .hud-body {
     padding: 16px;
@@ -1089,7 +1127,7 @@ Fix Instructions:
     return el;
   }
 
-  // src/ui/hudDomTree.ts
+  // packages/userscript-hud/src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -1114,12 +1152,21 @@ Fix Instructions:
     const panel = createHudElement("div", "hud-panel");
     const header = createHudElement("div", "hud-header");
     const title = createHudElement("div", "hud-title", "\u26A1 Cloudflare Edge HUD");
+    const updateCheckBtn = createHudElement("button", "hud-header-icon", "\u27F3");
+    updateCheckBtn.title = "Check published userscript version";
     const closeBtn = createHudElement("button", "hud-close-btn", "\xD7");
     closeBtn.title = "Close Panel";
     header.appendChild(title);
+    header.appendChild(updateCheckBtn);
     header.appendChild(closeBtn);
     panel.appendChild(header);
     const body = createHudElement("div", "hud-body");
+    const updateBanner = createHudElement("div", "hud-update-banner");
+    const updateBannerText = createHudElement("span", void 0, "");
+    const updateBannerBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u2B06 Update");
+    updateBanner.appendChild(updateBannerText);
+    updateBanner.appendChild(updateBannerBtn);
+    body.appendChild(updateBanner);
     const repoRow = createHudElement("div", "hud-form-row");
     const repoLabel = createHudElement("span", "hud-label", "GitHub Repository (owner/repo)");
     const repoInput = createHudElement("input", "hud-input");
@@ -1241,6 +1288,10 @@ Fix Instructions:
       triggerBadge,
       panel,
       title,
+      updateCheckBtn,
+      updateBanner,
+      updateBannerText,
+      updateBannerBtn,
       closeBtn,
       repoInput,
       branchInput,
@@ -1261,7 +1312,166 @@ Fix Instructions:
     };
   }
 
-  // src/ui/hudConfigBindings.ts
+  // packages/userscript-hud/src/services/updateChecker.ts
+  var SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js";
+  var LAST_CHECK_KEY = "script_update_last_check";
+  var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
+  var CHECK_TIMEOUT_MS = 15e3;
+  function parseUserscriptVersion(source) {
+    const block = (source || "").match(/\/\/\s*==UserScript==\r?\n([\s\S]*?)\/\/\s*==\/UserScript==/);
+    if (!block) return "";
+    const version = block[1].match(/^\/\/\s*@version\s+(\S+)\s*$/m);
+    return version ? version[1].trim() : "";
+  }
+  function compareVersions(a, b) {
+    const toParts = (value) => (value || "").trim().split(/[.+-]/).map((part) => {
+      const parsed = parseInt(part, 10);
+      return Number.isFinite(parsed) ? parsed : 0;
+    });
+    const left = toParts(a);
+    const right = toParts(b);
+    const length = Math.max(left.length, right.length);
+    for (let i = 0; i < length; i += 1) {
+      const diff = (left[i] || 0) - (right[i] || 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  }
+  function buildUpdateUrl(version) {
+    const suffix = version ? `?v=${encodeURIComponent(version)}` : "";
+    return `${SCRIPT_SOURCE_URL}${suffix}`;
+  }
+  function isUpdateCheckDue(nowMs = Date.now()) {
+    const last = parseInt(getStoredValue(LAST_CHECK_KEY, "0"), 10);
+    if (!Number.isFinite(last) || last <= 0) return true;
+    return nowMs - last >= CHECK_INTERVAL_MS;
+  }
+  function readText(url) {
+    if (typeof GM_xmlhttpRequest === "function") {
+      return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: "GET",
+          url,
+          timeout: CHECK_TIMEOUT_MS,
+          headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+          onload: (res) => {
+            if (res.status >= 200 && res.status < 300) {
+              resolve(res.responseText);
+            } else {
+              reject(new Error(`HTTP ${res.status} while fetching the published userscript`));
+            }
+          },
+          onerror: () => reject(new Error("Network error while checking the published userscript")),
+          ontimeout: () => reject(new Error("Update check timed out"))
+        });
+      });
+    }
+    if (typeof GM !== "undefined" && typeof GM.xmlHttpRequest === "function") {
+      return GM.xmlHttpRequest({
+        method: "GET",
+        url,
+        timeout: CHECK_TIMEOUT_MS,
+        headers: { "Cache-Control": "no-cache", Pragma: "no-cache" }
+      }).then((res) => {
+        if (res.status >= 200 && res.status < 300) return res.responseText;
+        throw new Error(`HTTP ${res.status} while fetching the published userscript`);
+      });
+    }
+    if (typeof fetch === "function") {
+      return fetch(url, { cache: "no-store" }).then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status} while fetching the published userscript`);
+        return res.text();
+      });
+    }
+    return Promise.reject(new Error("No supported HTTP client found for the update check"));
+  }
+  async function fetchLatestScriptVersion() {
+    const source = await readText(`${SCRIPT_SOURCE_URL}?t=${Date.now()}`);
+    const version = parseUserscriptVersion(source);
+    if (!version) throw new Error("Published userscript has no valid @version metadata block");
+    return version;
+  }
+  async function checkForScriptUpdate(options = {}) {
+    const currentVersion = getRunningScriptVersion();
+    if (!currentVersion) return null;
+    if (!options.force && !isUpdateCheckDue()) return null;
+    const latestVersion = await fetchLatestScriptVersion();
+    setStoredValue(LAST_CHECK_KEY, String(Date.now()));
+    return {
+      currentVersion,
+      latestVersion,
+      hasUpdate: compareVersions(latestVersion, currentVersion) > 0
+    };
+  }
+
+  // packages/userscript-hud/src/ui/updateBanner.ts
+  var TRANSIENT_MESSAGE_MS = 6e3;
+  function initHudUpdateBanner(dom) {
+    let hideTimer = null;
+    let installUrl = "";
+    const hide = () => {
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+      installUrl = "";
+      dom.updateBanner.style.display = "none";
+    };
+    const show = (message, tone, action) => {
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+      installUrl = action ? action.url : "";
+      dom.updateBanner.className = `hud-update-banner ${tone}`;
+      dom.updateBannerText.textContent = message;
+      dom.updateBannerBtn.textContent = action ? action.label : "\xD7";
+      dom.updateBannerBtn.title = action ? "Open the Tampermonkey update page" : "Dismiss";
+      dom.updateBanner.style.display = "flex";
+      if (!action || !action.persistent) {
+        hideTimer = setTimeout(hide, TRANSIENT_MESSAGE_MS);
+      }
+    };
+    dom.updateBannerBtn.addEventListener("click", () => {
+      if (!installUrl) {
+        hide();
+        return;
+      }
+      window.open(installUrl, "_blank", "noopener");
+    });
+    const runCheck = async (force) => {
+      dom.updateCheckBtn.disabled = true;
+      try {
+        const info = await checkForScriptUpdate({ force });
+        if (!info) return;
+        if (info.hasUpdate) {
+          show(
+            `\u2B06 HUD v${info.latestVersion} is available (running v${info.currentVersion}).`,
+            "update",
+            {
+              label: `\u2B06 Install v${info.latestVersion}`,
+              url: buildUpdateUrl(info.latestVersion),
+              persistent: true
+            }
+          );
+        } else if (force) {
+          show(`\u2705 HUD is up to date (v${info.currentVersion}).`, "ok");
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[Gemini Edge HUD] Update check failed:", err);
+        if (force) show(`\u26A0\uFE0F Update check failed: ${message}`, "error");
+      } finally {
+        dom.updateCheckBtn.disabled = false;
+      }
+    };
+    dom.updateCheckBtn.addEventListener("click", () => {
+      void runCheck(true);
+    });
+    void runCheck(false);
+  }
+
+  // packages/userscript-hud/src/ui/hudConfigBindings.ts
   function bindHudConfigInputs(deps) {
     const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, renderState } = deps;
     dom.repoInput.onchange = () => {
@@ -1343,7 +1553,7 @@ Fix Instructions:
     };
   }
 
-  // src/ui/shadowHud.ts
+  // packages/userscript-hud/src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -1363,6 +1573,7 @@ Fix Instructions:
     if (runningVersion && dom.title) {
       dom.title.textContent = `\u26A1 Cloudflare Edge HUD v${runningVersion}`;
     }
+    initHudUpdateBanner(dom);
     function resetPatchOidState(reason) {
       clearPatchOidState(state);
       controller.updateState({
@@ -1688,7 +1899,7 @@ Fix Instructions:
     return controller;
   }
 
-  // src/dom/harvester.ts
+  // packages/userscript-hud/src/dom/harvester.ts
   var FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
   var LABELED_HEADER_PATH = /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
   var PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
@@ -2020,7 +2231,7 @@ Fix Instructions:
     return observer;
   }
 
-  // src/index.ts
+  // packages/userscript-hud/src/index.ts
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {

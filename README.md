@@ -49,6 +49,20 @@ Um die 1-Click-Commit-Buttons in Google Gemini und AI Studio zu aktivieren:
 > es läuft still gar nicht. Über `@downloadURL`/`@updateURL` aktualisiert Tampermonkey das Skript
 > anschließend selbst, sobald im Repo eine höhere `@version` liegt.
 
+### Updates
+
+Tampermonkey prüft `@updateURL` nur nach seinem eigenen Zeitplan (Standard: alle 24 Stunden) —
+eine frisch gepushte Version kann deshalb bis zu einen Tag unsichtbar bleiben. Der HUD prüft die
+veröffentlichte `@version` daher zusätzlich selbst (alle 6 Stunden, plus manuell über `⟳` im
+Panel-Header). Liegt eine höhere Version vor, erscheint oben im Panel ein Banner mit
+`⬆ Install vX.Y.Z`; der Button öffnet die Tampermonkey-Installationsseite, auf der nur noch
+**Aktualisieren** bestätigt werden muss. Ein Update wird nie automatisch im Hintergrund installiert.
+
+> [!NOTE]
+> Installationen **vor `2.0.7`** (ohne `@updateURL` im Header) und per Copy-Paste angelegte Skripte
+> können sich nicht selbst aktualisieren. In diesem Fall die Raw-URL einmal manuell öffnen und
+> **Aktualisieren** wählen — danach greifen `@updateURL` und der HUD-Update-Check.
+
 ### Konfiguration im Browser
 Nach der Installation erscheint auf `gemini.google.com` und `aistudio.google.com`:
 - Ein Einstellungs-Icon (Zahnrad / Bridge-Badge) unten rechts oder am Code-Block.

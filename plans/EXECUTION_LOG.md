@@ -757,3 +757,11 @@
 - **Tests:** `test-patch-idempotence.mjs` um drei Faelle erweitert (generischer Marker => `SEARCH_REPLACE`-Fehler, spezifischer Replay => No-op, Grenzwert/Whitespace-Verhalten). `run-regressions.mjs --include-smoke --include-live`: `PASS` (13/13). Worker-Quelle/`/health` auf `2.0.4` gebumpt, Worker- und CLI-Bundle neu gebaut.
 - **Overall:** `DONE` (deployt als `2.0.4`).
 - **Abschluss (2026-10-21T02:20:00+02:00):** Worker `2.0.4` deployt (Version ID `8c679315-431c-48ef-85a2-55605b4b40d5`), `GET /health` => `version 2.0.4`; `git push` `3b68cc6..1945cec main -> main`; `worker-smoke` 14/14 nach dem Deploy; `raw.githubusercontent.com/.../main/gemini-bridge.user.js` => `@version 2.0.8`.
+
+### [2026-10-21T02:31:00+02:00] | Userscript `2.0.10`: Auto-Update sichtbar und anstossbar
+- **Anlass:** Meldung "das autoupdate des Cloudflare Edge HUD funktioniert nicht".
+- **Diagnose:** Kein Script-Fehler. `origin/main` = `1538c0f` liefert `@version 2.0.8`; die lokalen Commits `6eb3b52`/`99a6b1c` (Userscript `2.0.9`, Harvester-Dateinamen) waren nicht gepusht. Zusaetzlich prueft Tampermonkey `@updateURL` nur nach eigenem Zeitplan (Default ~24 h), ein frisch gepushter Release bleibt daher bis zu einen Tag unsichtbar.
+- **Aenderungen:** Neu `packages/userscript-hud/src/services/updateChecker.ts` (liest `@version` aus dem veroeffentlichten Banner, numerischer Semver-Vergleich, 6-h-Throttle via `script_update_last_check`, Cache-Buster, GM/fetch-Fallback) und `src/ui/updateBanner.ts` (Banner "HUD vX.Y.Z is available", Button "Install vX.Y.Z" oeffnet nur die Tampermonkey-Installationsseite; `⟳` im Header fuer manuellen Check mit Up-to-date-/Fehler-Feedback). `hudDomTree.ts`/`hudStylesAndDom.ts`/`shadowHud.ts` entsprechend erweitert; Build-Banner um `@connect raw.githubusercontent.com` ergaenzt. Userscript `2.0.10` (package.json + Bundle, dist <=> Root byte-identisch).
+- **Tests:** neu `scripts/patches_and_tests/test-hud-update-check.mjs` (Metadaten-Parsing, numerische Semver-Ordnung 2.0.10 > 2.0.9, Update-URL-Konsistenz, Bundle-Version == package.json) und in `run-regressions.mjs` registriert.
+- **Validierung:** `tsc --noEmit -p packages/userscript-hud/tsconfig.json` PASS; `run-regressions.mjs` PASS (12/12 Suiten).
+- **Offen:** `git push` nach `main` (Hard Stop, User-Freigabe) - erst danach sieht Tampermonkey `2.0.10`.

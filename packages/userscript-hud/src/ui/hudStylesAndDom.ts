@@ -102,6 +102,43 @@ export const HUD_STYLES = `
     color: #ffffff;
     background: rgba(255, 255, 255, 0.1);
   }
+  .hud-header-icon {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 7px;
+    border-radius: 6px;
+  }
+  .hud-header-icon:hover:not(:disabled) {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .hud-header-icon:disabled {
+    opacity: 0.45;
+    cursor: progress;
+  }
+  .hud-update-banner {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 11px;
+    line-height: 1.4;
+    border: 1px solid transparent;
+  }
+  .hud-update-banner.update { background: #422006; color: #fcd34d; border-color: #d97706; }
+  .hud-update-banner.ok { background: #064e3b; color: #6ee7b7; border-color: #059669; }
+  .hud-update-banner.error { background: #7f1d1d; color: #fca5a5; border-color: #dc2626; }
+  .hud-update-banner .hud-btn {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    font-size: 11px;
+  }
   .hud-body {
     padding: 16px;
     overflow-y: auto;
@@ -275,6 +312,10 @@ export interface HudDomElements {
   panel: HTMLDivElement;
   title: HTMLDivElement;
   closeBtn: HTMLButtonElement;
+  updateCheckBtn: HTMLButtonElement;
+  updateBanner: HTMLDivElement;
+  updateBannerText: HTMLSpanElement;
+  updateBannerBtn: HTMLButtonElement;
   repoInput: HTMLInputElement;
   branchInput: HTMLInputElement;
   targetBranchInput: HTMLInputElement;

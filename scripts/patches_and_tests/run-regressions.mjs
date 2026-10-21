@@ -48,6 +48,11 @@ const LOCAL_SUITES = [
     finding: 'Persisted patch OIDs are repo+branch scoped (no false GIT_CONFLICT after config switches)',
   },
   {
+    id: 'hud-update-check',
+    script: 'test-hud-update-check.mjs',
+    finding: 'HUD detects published userscript updates (metadata parse, numeric semver order, update URL)',
+  },
+  {
     id: 'patch-idempotence',
     script: 'test-patch-idempotence.mjs',
     finding: 'Insert-style patches re-apply as NO_CHANGES_NEEDED (no duplicated lines), replace-style stays idempotent',

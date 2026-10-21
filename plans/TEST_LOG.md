@@ -451,3 +451,10 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke --include-live`: `PASS` (13/13 Suiten, `worker-smoke` 14/14).
 - **GESAMTSTATUS:** `PASS`.
 - Post-Deploy (2026-10-21T02:20:00+02:00): `/health` => `version 2.0.4`; `worker-smoke.mjs` `PASS` (14/14); `git ls-remote origin refs/heads/main` = `1945cec`.
+
+### [2026-10-21T02:31:00+02:00] | HUD-Update-Check (Userscript `2.0.10`)
+- `tsc --noEmit -p packages/userscript-hud/tsconfig.json` (TypeScript 5.9.3): `PASS`.
+- `node packages/userscript-hud/scripts/build-userscript.mjs --bump=patch`: `PASS`; `2.0.9 -> 2.0.10`, Bundle 84.3 KB, `dist` <=> Root byte-identisch; Banner enthaelt `@updateURL`/`@downloadURL` und `@connect raw.githubusercontent.com`.
+- `node scripts/patches_and_tests/test-hud-update-check.mjs`: `PASS` - `parseUserscriptVersion` liest `2.0.10` (LF/CRLF) und ignoriert fehlende/ungueltige Bloecke; `compareVersions('2.0.10','2.0.9') === 1`, `('2.0.9','2.0.10') === -1`, `('2.1','2.0.99') === 1`, Padding/Whitespace neutral; `buildUpdateUrl('2.0.10')` == `SCRIPT_SOURCE_URL + '?v=2.0.10'`; Bundle-Version == `package.json`.
+- `node scripts/patches_and_tests/run-regressions.mjs`: `PASS` (12/12 Suiten).
+- **GESAMTSTATUS:** `PASS` (Code + Bundle). **Nicht verifiziert:** Tampermonkey-Auto-Update live - `origin/main` liefert weiterhin `2.0.8`, bis der Hard Stop `git push` freigegeben ist.

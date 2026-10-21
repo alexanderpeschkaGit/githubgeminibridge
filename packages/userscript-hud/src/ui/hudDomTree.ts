@@ -32,14 +32,25 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   const panel = createHudElement('div', 'hud-panel');
   const header = createHudElement('div', 'hud-header');
   const title = createHudElement('div', 'hud-title', '⚡ Cloudflare Edge HUD');
+  const updateCheckBtn = createHudElement('button', 'hud-header-icon', '⟳');
+  updateCheckBtn.title = 'Check published userscript version';
   const closeBtn = createHudElement('button', 'hud-close-btn', '×');
   closeBtn.title = 'Close Panel';
   header.appendChild(title);
+  header.appendChild(updateCheckBtn);
   header.appendChild(closeBtn);
   panel.appendChild(header);
 
   // Body
   const body = createHudElement('div', 'hud-body');
+
+  // Self-update banner (hidden until a newer published @version is detected)
+  const updateBanner = createHudElement('div', 'hud-update-banner');
+  const updateBannerText = createHudElement('span', undefined, '');
+  const updateBannerBtn = createHudElement('button', 'hud-btn hud-btn-primary', '⬆ Update');
+  updateBanner.appendChild(updateBannerText);
+  updateBanner.appendChild(updateBannerBtn);
+  body.appendChild(updateBanner);
 
   // Repo Row
   const repoRow = createHudElement('div', 'hud-form-row');
@@ -191,6 +202,10 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     triggerBadge,
     panel,
     title,
+    updateCheckBtn,
+    updateBanner,
+    updateBannerText,
+    updateBannerBtn,
     closeBtn,
     repoInput,
     branchInput,
