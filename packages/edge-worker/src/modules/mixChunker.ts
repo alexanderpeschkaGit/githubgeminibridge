@@ -55,7 +55,11 @@ export const DEFAULT_MIX_INSTRUCTIONS = [
   '     }',
   '     ```',
   '   - For V2 modify operations, use blocks with exact search and replace strings; create operations use fullContent; delete operations need no content fields.',
-  '   - Keep the classic V1 Search/Replace block format as a separate fallback, not as a V2 JSON variant. Include its // filepath: path header and the established SEARCH, separator, and REPLACE markers.',
+  '   - Keep the classic V1 Search/Replace block format as a separate fallback, not as a V2 JSON variant.',
+  '     V1 BLOCK LAYOUT: the "// filepath: relative/path.ext" line must be the FIRST line INSIDE the code block, above the SEARCH marker.',
+  '     V1 PATH PLACEMENT: never put the filename outside the code block. No markdown heading, no numbered list item such as "3. src/file.ts", and no path backticks above the block.',
+  '     V1 GRANULARITY: exactly one code block per file. A multi-file change needs one block per file, each carrying its own filepath header.',
+  '     V1 MARKERS: use the established SEARCH, separator, and REPLACE markers, each one alone on its own line.',
   '</instructions>',
   ].join('\n');
 

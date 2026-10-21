@@ -1,4 +1,4 @@
-// packages/edge-worker/src/utils/encoding.ts
+// src/utils/encoding.ts
 function utf8ToBase64(str) {
   const bytes = new TextEncoder().encode(str);
   const CHUNK_SIZE = 32768;
@@ -10,7 +10,7 @@ function utf8ToBase64(str) {
   return btoa(binary);
 }
 
-// shared/repoPaths.ts
+// ../../shared/repoPaths.ts
 function normalizeRepoPath(input) {
   return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
 }
@@ -32,7 +32,7 @@ function findRepoPathIssue(input) {
   return null;
 }
 
-// packages/edge-worker/src/utils/github.ts
+// src/utils/github.ts
 var GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql";
 var BranchNotFoundError = class extends Error {
   constructor(owner, repo, branch) {
@@ -334,7 +334,7 @@ async function commitSingleFileViaGraphQL(arg1, arg2, arg3, arg4, arg5, arg6, ar
   );
 }
 
-// packages/edge-worker/src/modules/syntaxScanner.ts
+// src/modules/syntaxScanner.ts
 var registeredOxcParser = null;
 var SUPPORTED_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
 function validateJson(filePath, content, getSnippet) {
@@ -785,7 +785,7 @@ async function validateSyntaxInWorker(filePath, content) {
   return errors;
 }
 
-// packages/edge-worker/src/modules/linter.ts
+// src/modules/linter.ts
 async function validateSyntaxInWorker2(filePath, content) {
   return validateSyntaxInWorker(filePath, content);
 }
@@ -827,7 +827,7 @@ async function runPreflightLinter(files, preflight) {
   return deduplicated;
 }
 
-// packages/edge-worker/src/modules/patchInMemory.ts
+// src/modules/patchInMemory.ts
 function checkPlaceholderErrors2(content, filePath) {
   const errors = [];
   const lines = content.split("\n");
@@ -1059,7 +1059,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
   };
 }
 
-// packages/edge-worker/src/modules/patcher.ts
+// src/modules/patcher.ts
 var LLM_PLACEHOLDER_PATTERNS = [
   /\/\/\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
   /#\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
@@ -1353,7 +1353,7 @@ async function resolveFileContent(fileInput, existingContentFetcher) {
   return resolved;
 }
 
-// packages/edge-worker/src/utils/tarUtils.ts
+// src/utils/tarUtils.ts
 function concatBuffers(a, b) {
   const result = new Uint8Array(a.length + b.length);
   result.set(a, 0);
@@ -1484,7 +1484,7 @@ var DEFAULT_IGNORED_EXTENSIONS = /* @__PURE__ */ new Set([
   ".pyc"
 ]);
 
-// packages/edge-worker/src/modules/mixChunker.ts
+// src/modules/mixChunker.ts
 var DEFAULT_MAX_CHUNK_CHARS = 85e3;
 var HARD_GEMINI_CHAR_LIMIT = 1e5;
 var MAX_GEMINI_PARTS = 10;
@@ -1526,7 +1526,11 @@ var DEFAULT_MIX_INSTRUCTIONS = [
   "     }",
   "     ```",
   "   - For V2 modify operations, use blocks with exact search and replace strings; create operations use fullContent; delete operations need no content fields.",
-  "   - Keep the classic V1 Search/Replace block format as a separate fallback, not as a V2 JSON variant. Include its // filepath: path header and the established SEARCH, separator, and REPLACE markers.",
+  "   - Keep the classic V1 Search/Replace block format as a separate fallback, not as a V2 JSON variant.",
+  '     V1 BLOCK LAYOUT: the "// filepath: relative/path.ext" line must be the FIRST line INSIDE the code block, above the SEARCH marker.',
+  '     V1 PATH PLACEMENT: never put the filename outside the code block. No markdown heading, no numbered list item such as "3. src/file.ts", and no path backticks above the block.',
+  "     V1 GRANULARITY: exactly one code block per file. A multi-file change needs one block per file, each carrying its own filepath header.",
+  "     V1 MARKERS: use the established SEARCH, separator, and REPLACE markers, each one alone on its own line.",
   "</instructions>"
 ].join("\n");
 var CONTINUATION_MIX_INSTRUCTIONS = (partNum, totalParts) => `<instructions>
@@ -1785,7 +1789,7 @@ ${bucket.map((b) => b.path).join("\n")}`;
   };
 }
 
-// packages/edge-worker/src/modules/recentCommits.ts
+// src/modules/recentCommits.ts
 function escapeXml(str) {
   if (!str) return "";
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -1921,7 +1925,7 @@ async function fetchRecentCommitsAndVolatileFiles(owner, repo, branch, token, co
   }
 }
 
-// packages/edge-worker/src/modules/mixer.ts
+// src/modules/mixer.ts
 function escapeCdata(content) {
   return content.replace(/\]\]>/g, "]]]]><![CDATA[>");
 }
@@ -2268,7 +2272,7 @@ async function handleMixRequest(req, githubToken) {
   };
 }
 
-// packages/edge-worker/src/modules/webhookHandler.ts
+// src/modules/webhookHandler.ts
 async function verifyGithubWebhookSignature(rawBody, signatureHeader, secret) {
   if (!signatureHeader || !secret) {
     return false;
@@ -2477,7 +2481,7 @@ async function handleGithubWebhookRequest(request, env, ctx) {
   );
 }
 
-// packages/edge-worker/src/index.ts
+// src/index.ts
 var CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

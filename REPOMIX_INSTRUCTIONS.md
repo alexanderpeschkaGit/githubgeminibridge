@@ -72,6 +72,8 @@ exakter bisheriger Codeausschnitt aus dem RepoMix
 neuer ersetzter Code
 >>>>>>> REPLACE
 ```
+* **Pfad-Position:** Die `// filepath:`-Zeile ist die **erste Zeile innerhalb** des Codeblocks (vor `<<<<<<< SEARCH`). Der Dateiname darf **nicht** außerhalb des Blocks stehen (keine Überschrift, kein `3. \`src/datei.ts\``, keine Backtick-Zeile darüber).
+* **Granularität:** Eine Datei pro Codeblock, jede mit eigener `// filepath:`-Zeile.
 
 ---
 

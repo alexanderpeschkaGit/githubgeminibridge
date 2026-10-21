@@ -74,6 +74,10 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - `fetchRecentCommitsAndVolatileFiles` (`recentCommits.ts`) wird ausschließlich bei `req.includeRecentCommits === true` aufgerufen. Fehlende (`undefined`) und `false`-Werte lösen **keinen** GitHub-API-Aufruf aus und liefern keine `recentCommitsCount`/`volatileFilesCount`-Stats.
    - Bei Opt-In bleibt das bestehende Verhalten erhalten: Metadaten-XML landet in Part 1, `recentCommitsCount` (Default 3, max 5) steuert die Analysetiefe.
    - **Budget-Deckelung der Metadaten:** `recentCommitsText` wird via `capRecentCommitsText` (Konstante `MAX_RECENT_COMMITS_CHARS = 8_000`, zusätzlich auf das verbleibende Part-1-Budget begrenzt) **vor** der Partitionierung gedeckelt und endet bei Kürzung mit dem sichtbaren Marker `... [recent_commits truncated to preserve character budget]`. Der ungedeckelte Rohwert erreicht weder Single-Part-, Part-1-Overhead-, Upscale- noch `buildPartXml`-Pfade.
+8. **Eingebettete RepoMix-Instruktionen (`DEFAULT_MIX_INSTRUCTIONS` in `mixChunker.ts`):**
+   - Jeder Mix enthält in Part 1 am Dokumentanfang `<instructions>...</instructions>` mit dem Modus-Protokoll (Read-Only vs. Modification), dem V2-JSON-Beispiel, dem Platzhalter-Verbot und dem V1-Fallback. Dadurch entsteht **kein zusätzlicher Datei-Upload** im 10-Dateien-Limit von Gemini Web.
+   - Der V1-Fallback verlangt explizit, dass die `// filepath:`-Zeile die **erste Zeile innerhalb** des Codeblocks ist (vor `<<<<<<< SEARCH`), dass der Dateiname **niemals außerhalb** des Blocks steht (keine Markdown-Überschrift, kein `3. \`src/datei.ts\``, keine Backtick-Zeile darüber) und dass jede Datei ihren eigenen Codeblock mit eigenem Header erhält.
+   - Die Instruktionsliste bleibt ein `join('\n')`-String-Array **ohne** `<`/`&`-Zeichen, damit der XML-Block valide bleibt; `scripts/patches_and_tests/test-v2-prompt-contract.mjs` erzwingt beides. Standalone-Spiegel: `gemini_prompt_instructions.txt` und `REPOMIX_INSTRUCTIONS.md`.
 
 ### B. Untertool B: `src/modules/patcher.ts` & `src/modules/patchInMemory.ts` & `src/utils/github.ts` (Stufe 2)
 1. **1-Subrequest GraphQL Batch-Read:**

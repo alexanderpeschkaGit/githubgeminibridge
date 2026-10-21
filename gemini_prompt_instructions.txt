@@ -13,11 +13,11 @@
 Gib Änderungen ausschließlich als V2 Patch-JSON mit commitMessage und patches im GeminiPatchPayload-Schema aus. Worker-Request-Felder gehören nicht in dieses JSON.
 
 # [Alternative: Klassisches Search/Replace]
-Gib die Änderung als SEARCH/REPLACE Block mit // filepath: an.
+Gib die Änderung als SEARCH/REPLACE Block mit // filepath: als ERSTER Zeile INNEN im Codeblock aus.
 
 # [English Quick Triggers]
 Output changes strictly as V2 Patch-JSON using commitMessage and patches from the GeminiPatchPayload schema. Do not include worker request fields.
-Output changes as SEARCH/REPLACE blocks with // filepath: headers.
+Output changes as SEARCH/REPLACE blocks with the // filepath: header as the FIRST line INSIDE each code block.
 
 
 # ------------------------------------------------------------------------------
@@ -63,6 +63,21 @@ Für `modify` enthält `blocks` ein oder mehrere Paare aus exakt im Repository v
 
 --- FORMAT B: V1 SEARCH/REPLACE (SEPARATER FALLBACK) ---
 Für den klassischen V1-Fallback nutze das separate SEARCH/REPLACE-Blockformat mit einem `// filepath: ...`-Header und den etablierten SEARCH-, Trenn- und REPLACE-Markern. Dieses Format ist kein JSON und keine V2-JSON-Variante.
+
+Layout pro Datei — exakt EIN Codeblock, Pfad INNEN:
+```text
+// filepath: relativer/pfad/zur/datei.ts
+<<<<<<< SEARCH
+exakter alter Code
+=======
+exakter neuer Code
+>>>>>>> REPLACE
+```
+
+- Die `// filepath:`-Zeile ist die ALLERERSTE Zeile INNERHALB des Codeblocks, also vor `<<<<<<< SEARCH`.
+- Der Dateiname darf NICHT außerhalb des Codeblocks stehen: keine Markdown-Überschrift, kein nummeriertes Listenelement wie "3. `src/datei.ts`", keine Backtick-Zeile über dem Block und kein Pfad im Fließtext.
+- Eine Datei = ein Codeblock. Mehrere Dateien = mehrere Blöcke, jeder mit eigener `// filepath:`-Zeile.
+- Bei Nicht-JS/TS-Dateien die passende Kommentarsyntax verwenden: `# path: ...` (Python/Shell/YAML/TOML) oder `/* path: ... */` (CSS/SQL).
 
 --- STRIKTE GUARDRAIL (KEINE PLATZHALTER) ---
 Verwende NIEMALS Platzhalter wie "// ... existing code ...", "/* ... rest of code ... */" oder "# ... remaining code".
@@ -112,6 +127,21 @@ For `modify`, `blocks` contains one or more exact `search` strings from the repo
 
 --- FORMAT B: V1 SEARCH/REPLACE (SEPARATE FALLBACK) ---
 For the classic V1 fallback, use the separate SEARCH/REPLACE block format with a `// filepath: ...` header and the established SEARCH, separator, and REPLACE markers. This format is not JSON and is not a V2 JSON variant.
+
+Layout per file — exactly ONE code block, path INSIDE:
+```text
+// filepath: relative/path/to/file.ts
+<<<<<<< SEARCH
+exact old code
+=======
+exact new code
+>>>>>>> REPLACE
+```
+
+- The `// filepath:` line is the VERY FIRST line INSIDE the code block, i.e. before `<<<<<<< SEARCH`.
+- The filename must NOT appear outside the code block: no markdown heading, no numbered list item like "3. `src/file.ts`", no backtick path above the block, and no path in the prose.
+- One file = one code block. Multiple files = multiple blocks, each with its own `// filepath:` line.
+- For non-JS/TS files use the matching comment syntax: `# path: ...` (Python/Shell/YAML/TOML) or `/* path: ... */` (CSS/SQL).
 
 --- STRICT GUARDRAIL (NO PLACEHOLDERS) ---
 NEVER use comments like "// ... existing code ...", "/* ... rest of code ... */", or "# ... remaining code".
