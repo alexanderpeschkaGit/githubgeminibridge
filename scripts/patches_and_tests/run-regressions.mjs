@@ -53,6 +53,11 @@ const LOCAL_SUITES = [
     finding: 'HUD detects published userscript updates (metadata parse, numeric semver order, update URL)',
   },
   {
+    id: 'account-profiles',
+    script: 'test-account-profiles.mjs',
+    finding: 'Profile-scoped storage, migration seeds, foreign-owner classification and typed-wins account switch',
+  },
+  {
     id: 'patch-idempotence',
     script: 'test-patch-idempotence.mjs',
     finding: 'Insert-style patches re-apply as NO_CHANGES_NEEDED (no duplicated lines), replace-style stays idempotent',

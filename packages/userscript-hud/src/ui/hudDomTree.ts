@@ -61,6 +61,20 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   repoRow.appendChild(repoInput);
   body.appendChild(repoRow);
 
+  // Owner Row (per account profile; drives foreign-owner warnings)
+  const ownerRow = createHudElement('div', 'hud-form-row');
+  const ownerLabel = createHudElement('span', 'hud-label', 'GitHub Owner (active account)');
+  const ownerInput = createHudElement('input', 'hud-input');
+  ownerInput.value = config.owner;
+  ownerRow.appendChild(ownerLabel);
+  ownerRow.appendChild(ownerInput);
+  body.appendChild(ownerRow);
+
+  // Owner-Classification Hint (hidden unless repo belongs to another/foreign owner)
+  const ownerHintEl = createHudElement('div', 'hud-account-hint');
+  ownerHintEl.style.display = 'none';
+  body.appendChild(ownerHintEl);
+
   // Compact grid: Branch | Target Branch
   const branchGrid = createHudElement('div', 'hud-form-grid');
   const branchRow = createHudElement('div', 'hud-form-row');
@@ -104,6 +118,32 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   scopeGrid.appendChild(pathsRow);
   scopeGrid.appendChild(maxChunkRow);
   body.appendChild(scopeGrid);
+
+  // Worker URL Row (Edge Worker Endpoint; switch between account deployments)
+  const workerUrlRow = createHudElement('div', 'hud-form-row');
+  const workerUrlLabel = createHudElement('span', 'hud-label', 'Worker URL (Edge Worker Endpoint)');
+  const workerUrlInput = createHudElement('input', 'hud-input');
+  workerUrlInput.type = 'url';
+  workerUrlInput.placeholder = 'https://<your-worker>.workers.dev';
+  workerUrlInput.value = config.workerUrl;
+  workerUrlRow.appendChild(workerUrlLabel);
+  workerUrlRow.appendChild(workerUrlInput);
+  body.appendChild(workerUrlRow);
+
+  // Account Switch Row (one-click profile switching; manual buttons)
+  const accountRow = createHudElement('div', 'hud-form-row');
+  const accountLabel = createHudElement('span', 'hud-label', 'GitHub Account');
+  const accountBtnGroup = createHudElement('div');
+  accountBtnGroup.style.cssText = 'display: flex; gap: 6px;';
+  const accountBtn1 = createHudElement('button', 'hud-btn hud-btn-secondary', '👤 Account 1');
+  accountBtn1.type = 'button';
+  const accountBtn2 = createHudElement('button', 'hud-btn hud-btn-secondary', '👤 Account 2');
+  accountBtn2.type = 'button';
+  accountBtnGroup.appendChild(accountBtn1);
+  accountBtnGroup.appendChild(accountBtn2);
+  accountRow.appendChild(accountLabel);
+  accountRow.appendChild(accountBtnGroup);
+  body.appendChild(accountRow);
 
   // Compact grid: Worker Secret | Head OID
   const secretGrid = createHudElement('div', 'hud-form-grid');
@@ -208,8 +248,13 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     updateBannerBtn,
     closeBtn,
     repoInput,
+    ownerInput,
+    ownerHintEl,
     branchInput,
     targetBranchInput,
+    workerUrlInput,
+    accountBtn1,
+    accountBtn2,
     secretInput,
     includePathsInput,
     maxChunkCharsInput,

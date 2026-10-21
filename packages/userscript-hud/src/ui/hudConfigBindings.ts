@@ -29,6 +29,17 @@ export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
     }
   };
 
+  dom.ownerInput.onchange = () => {
+    try {
+      const sanitized = sanitizeNoGithubPat(dom.ownerInput.value.trim(), 'owner');
+      config.owner = sanitized;
+      saveHudConfig({ owner: sanitized });
+    } catch (e: any) {
+      alert(e.message);
+      dom.ownerInput.value = config.owner;
+    }
+  };
+
   dom.branchInput.onchange = () => {
     try {
       const sanitized = sanitizeNoGithubPat(dom.branchInput.value.trim(), 'branch');
@@ -77,6 +88,19 @@ export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
     } catch (e: any) {
       alert(e.message);
       dom.maxChunkCharsInput.value = String(config.maxChunkChars || 85000);
+    }
+  };
+
+  dom.workerUrlInput.onchange = () => {
+    try {
+      const sanitized = sanitizeNoGithubPat(dom.workerUrlInput.value.trim(), 'workerUrl');
+      const normalized = sanitized.replace(/\/+$/, '');
+      config.workerUrl = normalized;
+      dom.workerUrlInput.value = normalized;
+      saveHudConfig({ workerUrl: normalized });
+    } catch (e: any) {
+      alert(e.message);
+      dom.workerUrlInput.value = config.workerUrl;
     }
   };
 

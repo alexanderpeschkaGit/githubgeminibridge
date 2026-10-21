@@ -300,6 +300,16 @@ export const HUD_STYLES = `
     font-size: 10px;
     color: #94a3b8;
   }
+  .hud-account-hint {
+    margin-top: 4px;
+    padding: 5px 8px;
+    font-size: 11px;
+    border-left: 3px solid #38bdf8;
+    background: rgba(56, 189, 248, 0.08);
+    color: #e2e8f0;
+  }
+  .hud-account-hint.foreign { border-color: #fbbf24; background: rgba(251, 191, 36, 0.08); }
+  .hud-account-hint .hud-btn { margin-left: 6px; padding: 2px 6px; font-size: 10px; }
 `;
 
 export const HUD_SHADOW_STYLES = HUD_STYLES;
@@ -317,8 +327,13 @@ export interface HudDomElements {
   updateBannerText: HTMLSpanElement;
   updateBannerBtn: HTMLButtonElement;
   repoInput: HTMLInputElement;
+  ownerInput: HTMLInputElement;
+  accountBtn1: HTMLButtonElement;
+  accountBtn2: HTMLButtonElement;
+  ownerHintEl: HTMLDivElement;
   branchInput: HTMLInputElement;
   targetBranchInput: HTMLInputElement;
+  workerUrlInput: HTMLInputElement;
   secretInput: HTMLInputElement;
   includePathsInput: HTMLInputElement;
   maxChunkCharsInput: HTMLInputElement;

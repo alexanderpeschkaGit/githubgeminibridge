@@ -4,6 +4,7 @@ import type { GeminiPatchPayload, CommitRequest, LinterError } from '../../../sh
 export interface HudConfig {
   workerUrl: string;
   workerSecret: string;
+  owner: string;
   repo: string;
   branch: string;
   targetBranch?: string;

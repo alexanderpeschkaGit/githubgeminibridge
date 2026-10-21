@@ -70,11 +70,20 @@ export function setStoredValue(key: string, value: string): void {
   }
 }
 
+export type AccountProfileId = 'account1' | 'account2';
+const PROFILE_FIELDS = ['worker_url', 'worker_secret', 'owner', 'owner_repo', 'branch', 'target_branch'] as const;
+const PROFILE_MIGRATION_KEY = 'account_profiles_migration_v1';
+
+export function getActiveProfileId(): AccountProfileId {
+  return getStoredValue('active_profile', 'account1') === 'account2' ? 'account2' : 'account1';
+}
+
 export const DEFAULT_HUD_CONFIG: HudConfig = {
   workerUrl: 'https://gemini-git-bridge.sikanda.workers.dev',
   // No bundled credential: the WORKER_SECRET is entered once in the HUD panel and kept
   // in GM storage. Shipping it in the userscript would publish it with every release.
   workerSecret: '',
+  owner: 'alexanderpeschkaGit',
   repo: 'alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0',
   branch: 'preview',
   targetBranch: '',
@@ -86,6 +95,29 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
 };
 
 const RECENT_COMMITS_MIGRATION_KEY = 'recent_commits_opt_in_migration_v1';
+
+/**
+ * One-time migration to per-account profiles: seeds `account1_*` from the legacy
+ * flat keys and assigns a default owner per account. Account 2 never inherits
+ * account 1 values — an empty profile stays empty.
+ */
+function migrateAccountProfiles(): void {
+  if (getStoredValue(PROFILE_MIGRATION_KEY, '') === 'true') return;
+
+  for (const key of PROFILE_FIELDS) {
+    const legacy = getStoredValue(key, '');
+    if (legacy) setStoredValue(`account1_${key}`, legacy);
+  }
+  if (!getStoredValue('account1_owner', '')) {
+    const legacyRepo = sanitizeRepo(getStoredValue('owner_repo', ''));
+    const ownerFromRepo = legacyRepo.split('/')[0].trim();
+    setStoredValue('account1_owner', ownerFromRepo || 'alexanderpeschkaGit');
+  }
+  if (!getStoredValue('account2_owner', '')) {
+    setStoredValue('account2_owner', 'vijaysikanda');
+  }
+  setStoredValue(PROFILE_MIGRATION_KEY, 'true');
+}
 
 /**
  * One-time migration from the former default-on behavior.
@@ -116,13 +148,24 @@ function migrateRecentCommitsOptIn(): void {
 }
 
 export function loadHudConfig(): HudConfig {
+  migrateAccountProfiles();
   migrateRecentCommitsOptIn();
 
-  const workerUrl = getStoredValue('worker_url', DEFAULT_HUD_CONFIG.workerUrl);
-  const workerSecret = getStoredValue('worker_secret', DEFAULT_HUD_CONFIG.workerSecret);
-  const repo = sanitizeRepo(getStoredValue('owner_repo', DEFAULT_HUD_CONFIG.repo));
-  const branch = getStoredValue('branch', DEFAULT_HUD_CONFIG.branch);
-  const targetBranch = getStoredValue('target_branch', DEFAULT_HUD_CONFIG.targetBranch || '');
+  const profile = getActiveProfileId();
+  const a2 = profile === 'account2';
+  const readProfile = (key: string, fallback: string) => {
+    const stored = getStoredValue(`${profile}_${key}`, '');
+    if (stored) return stored;
+    if (profile === 'account1') return getStoredValue(key, fallback);
+    return fallback; // account2: KEIN Legacy-Fallback → keine Account-1-Werte!
+  };
+
+  const workerUrl = readProfile('worker_url', a2 ? '' : DEFAULT_HUD_CONFIG.workerUrl);
+  const workerSecret = readProfile('worker_secret', a2 ? '' : DEFAULT_HUD_CONFIG.workerSecret);
+  const owner = readProfile('owner', a2 ? '' : DEFAULT_HUD_CONFIG.owner);
+  const repo = sanitizeRepo(readProfile('owner_repo', a2 ? '' : DEFAULT_HUD_CONFIG.repo));
+  const branch = readProfile('branch', a2 ? '' : DEFAULT_HUD_CONFIG.branch);
+  const targetBranch = readProfile('target_branch', a2 ? '' : DEFAULT_HUD_CONFIG.targetBranch ?? '');
   const autoPilotStr = getStoredValue('auto_pilot', 'false');
   const persistStr = getStoredValue('persist_to_github', 'false');
   const includePathsStr = getStoredValue('include_paths', '');
@@ -145,6 +188,7 @@ export function loadHudConfig(): HudConfig {
   return {
     workerUrl: workerUrl.replace(/\/+$/, ''),
     workerSecret,
+    owner,
     repo,
     branch,
     targetBranch,
@@ -159,21 +203,31 @@ export function loadHudConfig(): HudConfig {
 export function saveHudConfig(cfg: Partial<HudConfig>): HudConfig {
   const current = loadHudConfig();
   const updated: HudConfig = { ...current, ...cfg };
+  const profile = getActiveProfileId();
 
   if (cfg.workerUrl !== undefined) {
     setStoredValue('worker_url', sanitizeNoGithubPat(updated.workerUrl, 'workerUrl'));
+    setStoredValue(`${profile}_worker_url`, sanitizeNoGithubPat(updated.workerUrl, 'workerUrl'));
   }
   if (cfg.workerSecret !== undefined) {
     setStoredValue('worker_secret', sanitizeNoGithubPat(updated.workerSecret, 'workerSecret'));
+    setStoredValue(`${profile}_worker_secret`, sanitizeNoGithubPat(updated.workerSecret, 'workerSecret'));
+  }
+  if (cfg.owner !== undefined) {
+    setStoredValue('owner', sanitizeNoGithubPat(updated.owner, 'owner'));
+    setStoredValue(`${profile}_owner`, sanitizeNoGithubPat(updated.owner, 'owner'));
   }
   if (cfg.repo !== undefined) {
     setStoredValue('owner_repo', sanitizeRepo(sanitizeNoGithubPat(updated.repo, 'repo')));
+    setStoredValue(`${profile}_owner_repo`, sanitizeRepo(sanitizeNoGithubPat(updated.repo, 'repo')));
   }
   if (cfg.branch !== undefined) {
     setStoredValue('branch', sanitizeNoGithubPat(updated.branch, 'branch'));
+    setStoredValue(`${profile}_branch`, sanitizeNoGithubPat(updated.branch, 'branch'));
   }
   if (cfg.targetBranch !== undefined) {
     setStoredValue('target_branch', sanitizeNoGithubPat(updated.targetBranch || '', 'targetBranch'));
+    setStoredValue(`${profile}_target_branch`, sanitizeNoGithubPat(updated.targetBranch || '', 'targetBranch'));
   }
   if (cfg.autoPilot !== undefined) {
     setStoredValue('auto_pilot', updated.autoPilot ? 'true' : 'false');

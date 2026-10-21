@@ -37,10 +37,12 @@ import {
   runPatchQueue,
 } from '../services/patchQueue';
 import { resolvePatchPaths } from '../services/patchPaths';
+import { classifyRepoOwner, ownerOfRepo } from '../services/accountProfiles';
 import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } from './hudStylesAndDom';
 import { buildHudDomTree } from './hudDomTree';
 import { initHudUpdateBanner } from './updateBanner';
 import { bindHudConfigInputs } from './hudConfigBindings';
+import { bindAccountSwitch } from './hudAccountSwitch';
 
 export {
   HUD_STYLES,
@@ -221,6 +223,9 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     renderState,
   });
 
+  const applyAccountSwitch = bindAccountSwitch({ dom, config, state, resetPatchOidState, renderState });
+  applyAccountSwitch();
+
   dom.mixBtn.onclick = async () => {
     try {
       dom.mixBtn.disabled = true;
@@ -310,6 +315,17 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       status: 'PATCHING',
       statusMessage: `⏳ Applying patch: "${patch.commitMessage}"...`,
     });
+
+    // Foreign-owner guard: mixing public foreign repos stays allowed, but commits
+    // need a PAT for that owner which no registered account provides.
+    const ownerMatch = classifyRepoOwner(config);
+    if (ownerMatch === 'foreign') {
+      controller.updateState({
+        status: 'ERROR',
+        statusMessage: `❌ Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. Öffentliche Repos können weiterhin gemischt werden, aber Commits brauchen einen PAT für diesen Owner.`,
+      });
+      return false;
+    }
 
     try {
       // A missing snapshot (fresh install, cleared OID, repo switch, browser restart)

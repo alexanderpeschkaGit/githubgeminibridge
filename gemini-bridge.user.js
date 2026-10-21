@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.11
+// @version      2.0.13
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -41,7 +41,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
-  // packages/userscript-hud/src/services/storage.ts
+  // src/services/storage.ts
   var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
@@ -100,11 +100,17 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       console.warn(`[Gemini Bridge Storage] localStorage.setItem error for ${key}:`, err);
     }
   }
+  var PROFILE_FIELDS = ["worker_url", "worker_secret", "owner", "owner_repo", "branch", "target_branch"];
+  var PROFILE_MIGRATION_KEY = "account_profiles_migration_v1";
+  function getActiveProfileId() {
+    return getStoredValue("active_profile", "account1") === "account2" ? "account2" : "account1";
+  }
   var DEFAULT_HUD_CONFIG = {
     workerUrl: "https://gemini-git-bridge.sikanda.workers.dev",
     // No bundled credential: the WORKER_SECRET is entered once in the HUD panel and kept
     // in GM storage. Shipping it in the userscript would publish it with every release.
     workerSecret: "",
+    owner: "alexanderpeschkaGit",
     repo: "alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0",
     branch: "preview",
     targetBranch: "",
@@ -115,6 +121,22 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     includeRecentCommits: false
   };
   var RECENT_COMMITS_MIGRATION_KEY = "recent_commits_opt_in_migration_v1";
+  function migrateAccountProfiles() {
+    if (getStoredValue(PROFILE_MIGRATION_KEY, "") === "true") return;
+    for (const key of PROFILE_FIELDS) {
+      const legacy = getStoredValue(key, "");
+      if (legacy) setStoredValue(`account1_${key}`, legacy);
+    }
+    if (!getStoredValue("account1_owner", "")) {
+      const legacyRepo = sanitizeRepo(getStoredValue("owner_repo", ""));
+      const ownerFromRepo = legacyRepo.split("/")[0].trim();
+      setStoredValue("account1_owner", ownerFromRepo || "alexanderpeschkaGit");
+    }
+    if (!getStoredValue("account2_owner", "")) {
+      setStoredValue("account2_owner", "vijaysikanda");
+    }
+    setStoredValue(PROFILE_MIGRATION_KEY, "true");
+  }
   function migrateRecentCommitsOptIn() {
     if (getStoredValue(RECENT_COMMITS_MIGRATION_KEY, "") === "true") {
       return;
@@ -136,12 +158,22 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
   }
   function loadHudConfig() {
+    migrateAccountProfiles();
     migrateRecentCommitsOptIn();
-    const workerUrl = getStoredValue("worker_url", DEFAULT_HUD_CONFIG.workerUrl);
-    const workerSecret = getStoredValue("worker_secret", DEFAULT_HUD_CONFIG.workerSecret);
-    const repo = sanitizeRepo(getStoredValue("owner_repo", DEFAULT_HUD_CONFIG.repo));
-    const branch = getStoredValue("branch", DEFAULT_HUD_CONFIG.branch);
-    const targetBranch = getStoredValue("target_branch", DEFAULT_HUD_CONFIG.targetBranch || "");
+    const profile = getActiveProfileId();
+    const a2 = profile === "account2";
+    const readProfile = (key, fallback) => {
+      const stored = getStoredValue(`${profile}_${key}`, "");
+      if (stored) return stored;
+      if (profile === "account1") return getStoredValue(key, fallback);
+      return fallback;
+    };
+    const workerUrl = readProfile("worker_url", a2 ? "" : DEFAULT_HUD_CONFIG.workerUrl);
+    const workerSecret = readProfile("worker_secret", a2 ? "" : DEFAULT_HUD_CONFIG.workerSecret);
+    const owner = readProfile("owner", a2 ? "" : DEFAULT_HUD_CONFIG.owner);
+    const repo = sanitizeRepo(readProfile("owner_repo", a2 ? "" : DEFAULT_HUD_CONFIG.repo));
+    const branch = readProfile("branch", a2 ? "" : DEFAULT_HUD_CONFIG.branch);
+    const targetBranch = readProfile("target_branch", a2 ? "" : DEFAULT_HUD_CONFIG.targetBranch ?? "");
     const autoPilotStr = getStoredValue("auto_pilot", "false");
     const persistStr = getStoredValue("persist_to_github", "false");
     const includePathsStr = getStoredValue("include_paths", "");
@@ -161,6 +193,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return {
       workerUrl: workerUrl.replace(/\/+$/, ""),
       workerSecret,
+      owner,
       repo,
       branch,
       targetBranch,
@@ -174,20 +207,30 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   function saveHudConfig(cfg) {
     const current = loadHudConfig();
     const updated = { ...current, ...cfg };
+    const profile = getActiveProfileId();
     if (cfg.workerUrl !== void 0) {
       setStoredValue("worker_url", sanitizeNoGithubPat(updated.workerUrl, "workerUrl"));
+      setStoredValue(`${profile}_worker_url`, sanitizeNoGithubPat(updated.workerUrl, "workerUrl"));
     }
     if (cfg.workerSecret !== void 0) {
       setStoredValue("worker_secret", sanitizeNoGithubPat(updated.workerSecret, "workerSecret"));
+      setStoredValue(`${profile}_worker_secret`, sanitizeNoGithubPat(updated.workerSecret, "workerSecret"));
+    }
+    if (cfg.owner !== void 0) {
+      setStoredValue("owner", sanitizeNoGithubPat(updated.owner, "owner"));
+      setStoredValue(`${profile}_owner`, sanitizeNoGithubPat(updated.owner, "owner"));
     }
     if (cfg.repo !== void 0) {
       setStoredValue("owner_repo", sanitizeRepo(sanitizeNoGithubPat(updated.repo, "repo")));
+      setStoredValue(`${profile}_owner_repo`, sanitizeRepo(sanitizeNoGithubPat(updated.repo, "repo")));
     }
     if (cfg.branch !== void 0) {
       setStoredValue("branch", sanitizeNoGithubPat(updated.branch, "branch"));
+      setStoredValue(`${profile}_branch`, sanitizeNoGithubPat(updated.branch, "branch"));
     }
     if (cfg.targetBranch !== void 0) {
       setStoredValue("target_branch", sanitizeNoGithubPat(updated.targetBranch || "", "targetBranch"));
+      setStoredValue(`${profile}_target_branch`, sanitizeNoGithubPat(updated.targetBranch || "", "targetBranch"));
     }
     if (cfg.autoPilot !== void 0) {
       setStoredValue("auto_pilot", updated.autoPilot ? "true" : "false");
@@ -207,7 +250,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // packages/userscript-hud/src/services/workerClient.ts
+  // src/services/workerClient.ts
   async function gmRequestJson(url, method, secret, body) {
     const headers = {
       "Accept": "application/json",
@@ -358,7 +401,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
 
-  // packages/userscript-hud/src/dom/injector.ts
+  // src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
     const geminiSelectors = [
@@ -463,7 +506,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return true;
   }
 
-  // packages/userscript-hud/src/services/selfHealing.ts
+  // src/services/selfHealing.ts
   var MAX_SELF_HEALING_RETRIES = 3;
   function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt) {
     const formattedErrors = errors.map((err, idx) => {
@@ -570,7 +613,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/patchOidState.ts
+  // src/services/patchOidState.ts
   var OID_REGEX2 = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
@@ -631,7 +674,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/runtimeInfo.ts
+  // src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
   function getRunningScriptVersion() {
     if (typeof GM_info === "undefined" || !GM_info || !GM_info.script) {
@@ -665,7 +708,7 @@ Fix Instructions:
     document.body.appendChild(box);
   }
 
-  // packages/userscript-hud/src/services/patchOidStore.ts
+  // src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
       headOidScope: getStoredValue("head_oid_scope", ""),
@@ -705,7 +748,7 @@ Fix Instructions:
     }
   }
 
-  // packages/userscript-hud/src/services/patchIdentity.ts
+  // src/services/patchIdentity.ts
   function canonicalize(value) {
     if (Array.isArray(value)) {
       return value.map((entry) => canonicalize(entry));
@@ -736,7 +779,7 @@ Fix Instructions:
     return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
   }
 
-  // packages/userscript-hud/src/services/patchQueue.ts
+  // src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
   function isDuplicatePatch(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
@@ -767,7 +810,7 @@ Fix Instructions:
     return { applied, total };
   }
 
-  // shared/repoPaths.ts
+  // ../../shared/repoPaths.ts
   function normalizeRepoPath(input) {
     return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
   }
@@ -789,7 +832,7 @@ Fix Instructions:
     return null;
   }
 
-  // packages/userscript-hud/src/services/patchPaths.ts
+  // src/services/patchPaths.ts
   function resolvePatchPaths(payload, prompt) {
     const patches = (payload.patches || []).map((patch) => ({
       ...patch,
@@ -815,7 +858,40 @@ Fix Instructions:
     return { payload: { ...payload, patches }, cancelled: false };
   }
 
-  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
+  // src/services/accountProfiles.ts
+  var ACCOUNT_PROFILES = [
+    { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
+    { id: "account2", label: "Account 2", workerName: "gemini-git-bridge-account2" }
+  ];
+  function isProfileConfigured(cfg) {
+    return Boolean(cfg.workerUrl && cfg.workerSecret);
+  }
+  function switchAccountProfile(target) {
+    setStoredValue("active_profile", target);
+    return loadHudConfig();
+  }
+  function switchAccountProfileWithRepo(target, repo) {
+    const cleaned = sanitizeRepo(repo);
+    if (cleaned) setStoredValue(`${target}_owner_repo`, cleaned);
+    setStoredValue("active_profile", target);
+    return loadHudConfig();
+  }
+  function ownerOfRepo(repo) {
+    const cleaned = (repo || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/^git@github\.com:/i, "");
+    return cleaned.split("/")[0].trim().toLowerCase();
+  }
+  function classifyRepoOwner(cfg) {
+    const owner = ownerOfRepo(cfg.repo);
+    if (!owner) return "empty";
+    if (owner === (cfg.owner || "").trim().toLowerCase()) return "active";
+    const active = getActiveProfileId();
+    const other = active === "account1" ? "account2" : "account1";
+    const otherOwner = getStoredValue(`${other}_owner`, "").trim().toLowerCase();
+    if (otherOwner && owner === otherOwner) return other;
+    return "foreign";
+  }
+
+  // src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -1118,6 +1194,16 @@ Fix Instructions:
     font-size: 10px;
     color: #94a3b8;
   }
+  .hud-account-hint {
+    margin-top: 4px;
+    padding: 5px 8px;
+    font-size: 11px;
+    border-left: 3px solid #38bdf8;
+    background: rgba(56, 189, 248, 0.08);
+    color: #e2e8f0;
+  }
+  .hud-account-hint.foreign { border-color: #fbbf24; background: rgba(251, 191, 36, 0.08); }
+  .hud-account-hint .hud-btn { margin-left: 6px; padding: 2px 6px; font-size: 10px; }
 `;
   var HUD_SHADOW_STYLES = HUD_STYLES;
   function createHudElement(tag, className, textContent) {
@@ -1127,7 +1213,7 @@ Fix Instructions:
     return el;
   }
 
-  // packages/userscript-hud/src/ui/hudDomTree.ts
+  // src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -1174,6 +1260,16 @@ Fix Instructions:
     repoRow.appendChild(repoLabel);
     repoRow.appendChild(repoInput);
     body.appendChild(repoRow);
+    const ownerRow = createHudElement("div", "hud-form-row");
+    const ownerLabel = createHudElement("span", "hud-label", "GitHub Owner (active account)");
+    const ownerInput = createHudElement("input", "hud-input");
+    ownerInput.value = config.owner;
+    ownerRow.appendChild(ownerLabel);
+    ownerRow.appendChild(ownerInput);
+    body.appendChild(ownerRow);
+    const ownerHintEl = createHudElement("div", "hud-account-hint");
+    ownerHintEl.style.display = "none";
+    body.appendChild(ownerHintEl);
     const branchGrid = createHudElement("div", "hud-form-grid");
     const branchRow = createHudElement("div", "hud-form-row");
     const branchLabel = createHudElement("span", "hud-label", "Branch");
@@ -1211,6 +1307,28 @@ Fix Instructions:
     scopeGrid.appendChild(pathsRow);
     scopeGrid.appendChild(maxChunkRow);
     body.appendChild(scopeGrid);
+    const workerUrlRow = createHudElement("div", "hud-form-row");
+    const workerUrlLabel = createHudElement("span", "hud-label", "Worker URL (Edge Worker Endpoint)");
+    const workerUrlInput = createHudElement("input", "hud-input");
+    workerUrlInput.type = "url";
+    workerUrlInput.placeholder = "https://<your-worker>.workers.dev";
+    workerUrlInput.value = config.workerUrl;
+    workerUrlRow.appendChild(workerUrlLabel);
+    workerUrlRow.appendChild(workerUrlInput);
+    body.appendChild(workerUrlRow);
+    const accountRow = createHudElement("div", "hud-form-row");
+    const accountLabel = createHudElement("span", "hud-label", "GitHub Account");
+    const accountBtnGroup = createHudElement("div");
+    accountBtnGroup.style.cssText = "display: flex; gap: 6px;";
+    const accountBtn1 = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F464} Account 1");
+    accountBtn1.type = "button";
+    const accountBtn2 = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F464} Account 2");
+    accountBtn2.type = "button";
+    accountBtnGroup.appendChild(accountBtn1);
+    accountBtnGroup.appendChild(accountBtn2);
+    accountRow.appendChild(accountLabel);
+    accountRow.appendChild(accountBtnGroup);
+    body.appendChild(accountRow);
     const secretGrid = createHudElement("div", "hud-form-grid");
     const secretRow = createHudElement("div", "hud-form-row");
     const secretLabel = createHudElement("span", "hud-label", "Worker Secret (WORKER_SECRET)");
@@ -1294,8 +1412,13 @@ Fix Instructions:
       updateBannerBtn,
       closeBtn,
       repoInput,
+      ownerInput,
+      ownerHintEl,
       branchInput,
       targetBranchInput,
+      workerUrlInput,
+      accountBtn1,
+      accountBtn2,
       secretInput,
       includePathsInput,
       maxChunkCharsInput,
@@ -1312,7 +1435,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/updateChecker.ts
+  // src/services/updateChecker.ts
   var SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js";
   var LAST_CHECK_KEY = "script_update_last_check";
   var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
@@ -1404,7 +1527,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/updateBanner.ts
+  // src/ui/updateBanner.ts
   var TRANSIENT_MESSAGE_MS = 6e3;
   function initHudUpdateBanner(dom) {
     let hideTimer = null;
@@ -1471,7 +1594,7 @@ Fix Instructions:
     void runCheck(false);
   }
 
-  // packages/userscript-hud/src/ui/hudConfigBindings.ts
+  // src/ui/hudConfigBindings.ts
   function bindHudConfigInputs(deps) {
     const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, renderState } = deps;
     dom.repoInput.onchange = () => {
@@ -1484,6 +1607,16 @@ Fix Instructions:
       } catch (e) {
         alert(e.message);
         dom.repoInput.value = config.repo;
+      }
+    };
+    dom.ownerInput.onchange = () => {
+      try {
+        const sanitized = sanitizeNoGithubPat(dom.ownerInput.value.trim(), "owner");
+        config.owner = sanitized;
+        saveHudConfig({ owner: sanitized });
+      } catch (e) {
+        alert(e.message);
+        dom.ownerInput.value = config.owner;
       }
     };
     dom.branchInput.onchange = () => {
@@ -1533,6 +1666,18 @@ Fix Instructions:
         dom.maxChunkCharsInput.value = String(config.maxChunkChars || 85e3);
       }
     };
+    dom.workerUrlInput.onchange = () => {
+      try {
+        const sanitized = sanitizeNoGithubPat(dom.workerUrlInput.value.trim(), "workerUrl");
+        const normalized = sanitized.replace(/\/+$/, "");
+        config.workerUrl = normalized;
+        dom.workerUrlInput.value = normalized;
+        saveHudConfig({ workerUrl: normalized });
+      } catch (e) {
+        alert(e.message);
+        dom.workerUrlInput.value = config.workerUrl;
+      }
+    };
     dom.secretInput.onchange = () => {
       try {
         const sanitized = sanitizeNoGithubPat(dom.secretInput.value.trim(), "workerSecret");
@@ -1553,7 +1698,109 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/shadowHud.ts
+  // src/ui/hudAccountSwitch.ts
+  var activeDeps = null;
+  function profileInfo(id) {
+    return ACCOUNT_PROFILES.find((p) => p.id === id) ?? ACCOUNT_PROFILES[0];
+  }
+  function updateAccountButtons() {
+    if (!activeDeps) return;
+    const active = getActiveProfileId();
+    const setBtn = (btn, id) => {
+      if (id === active) {
+        btn.className = "hud-btn hud-btn-primary";
+        btn.setAttribute("aria-pressed", "true");
+      } else {
+        btn.className = "hud-btn hud-btn-secondary";
+        btn.setAttribute("aria-pressed", "false");
+      }
+    };
+    setBtn(activeDeps.dom.accountBtn1, "account1");
+    setBtn(activeDeps.dom.accountBtn2, "account2");
+  }
+  function refreshAccountHint() {
+    if (!activeDeps) return;
+    const { dom, config } = activeDeps;
+    const hint = dom.ownerHintEl;
+    const match = classifyRepoOwner(config);
+    if (match === "active" || match === "empty") {
+      hint.textContent = "";
+      hint.className = "hud-account-hint";
+      hint.style.display = "none";
+      return;
+    }
+    hint.textContent = "";
+    hint.className = match === "foreign" ? "hud-account-hint foreign" : "hud-account-hint";
+    hint.style.display = "block";
+    if (match === "foreign") {
+      hint.textContent = `\u26A0\uFE0F Owner "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden; Patches sind blockiert (kein PAT f\xFCr diesen Owner). Private Fremd-Repos scheitern auch beim Mix.`;
+      return;
+    }
+    const info = profileInfo(match);
+    const text = createHudElement("span", void 0, `\u26A0\uFE0F Dieses Repo geh\xF6rt zu ${info.label} (${info.workerName}).`);
+    const switchBtn = createHudElement("button", "hud-btn hud-btn-secondary", `\u{1F501} Zu ${info.label} wechseln`);
+    switchBtn.type = "button";
+    switchBtn.onclick = () => switchViaHint(match);
+    hint.appendChild(text);
+    hint.appendChild(switchBtn);
+  }
+  function confirmSwitchDiscard(target) {
+    if (!activeDeps) return false;
+    const count = activeDeps.state.harvestedPatches.length;
+    if (count === 0) return true;
+    const info = profileInfo(target);
+    return window.confirm(
+      `${count} geerntete Patches geh\xF6ren zum aktiven Account und werden beim Wechsel zu ${info.label} verworfen. Trotzdem wechseln?`
+    );
+  }
+  function switchViaHint(target) {
+    if (!activeDeps) return;
+    if (!confirmSwitchDiscard(target)) return;
+    applySwitched(switchAccountProfileWithRepo(target, activeDeps.dom.repoInput.value), target);
+  }
+  function applySwitched(next, target) {
+    if (!activeDeps) return;
+    const { dom, config, state, resetPatchOidState, renderState } = activeDeps;
+    const info = profileInfo(target);
+    Object.assign(config, next);
+    dom.ownerInput.value = next.owner;
+    dom.workerUrlInput.value = next.workerUrl;
+    dom.secretInput.value = next.workerSecret;
+    dom.repoInput.value = next.repo;
+    dom.branchInput.value = next.branch;
+    dom.targetBranchInput.value = next.targetBranch || "";
+    state.harvestedPatches = [];
+    if (!isProfileConfigured(next)) {
+      resetPatchOidState(
+        `\u26A0\uFE0F ${info.label} ist noch nicht konfiguriert \u2014 Worker URL, Secret, Owner und Repo eintragen (Felder speichern beim Verlassen).`
+      );
+    } else {
+      resetPatchOidState(`Account gewechselt zu ${info.label} (${info.workerName}) \u2014 Snapshot-OIDs zur\xFCckgesetzt.`);
+    }
+    updateAccountButtons();
+    refreshAccountHint();
+    renderState();
+  }
+  function bindAccountSwitch(deps) {
+    activeDeps = deps;
+    const { dom } = deps;
+    dom.accountBtn1.onclick = () => {
+      if (!confirmSwitchDiscard("account1")) return;
+      applySwitched(switchAccountProfile("account1"), "account1");
+    };
+    dom.accountBtn2.onclick = () => {
+      if (!confirmSwitchDiscard("account2")) return;
+      applySwitched(switchAccountProfile("account2"), "account2");
+    };
+    dom.repoInput.addEventListener("change", refreshAccountHint);
+    dom.ownerInput.addEventListener("change", refreshAccountHint);
+    return () => {
+      updateAccountButtons();
+      refreshAccountHint();
+    };
+  }
+
+  // src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -1691,6 +1938,8 @@ Fix Instructions:
       clearTargetOidState,
       renderState
     });
+    const applyAccountSwitch = bindAccountSwitch({ dom, config, state, resetPatchOidState, renderState });
+    applyAccountSwitch();
     dom.mixBtn.onclick = async () => {
       try {
         dom.mixBtn.disabled = true;
@@ -1767,6 +2016,14 @@ Fix Instructions:
         status: "PATCHING",
         statusMessage: `\u23F3 Applying patch: "${patch.commitMessage}"...`
       });
+      const ownerMatch = classifyRepoOwner(config);
+      if (ownerMatch === "foreign") {
+        controller.updateState({
+          status: "ERROR",
+          statusMessage: `\u274C Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden, aber Commits brauchen einen PAT f\xFCr diesen Owner.`
+        });
+        return false;
+      }
       try {
         if (!isPatchSnapshotReady(state)) {
           controller.updateState({
@@ -1899,7 +2156,7 @@ Fix Instructions:
     return controller;
   }
 
-  // packages/userscript-hud/src/dom/pathHints.ts
+  // src/dom/pathHints.ts
   var FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
   var LABELED_HEADER_PATH = /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
   var PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
@@ -2014,7 +2271,7 @@ Fix Instructions:
     fillMissingPatchPaths(patch, extractPathFromCode(codeText, element));
   }
 
-  // packages/userscript-hud/src/dom/harvester.ts
+  // src/dom/harvester.ts
   function isSearchReplace(text) {
     return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
   }
@@ -2301,7 +2558,7 @@ Fix Instructions:
     return observer;
   }
 
-  // packages/userscript-hud/src/index.ts
+  // src/index.ts
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {
