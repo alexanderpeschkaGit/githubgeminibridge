@@ -381,6 +381,55 @@ const {
 }
 
 {
+  const patchText = [
+    '<<<<<<< SEARCH',
+    'if (data.theme) {',
+    '  baseThemeSettings = data.theme;',
+    '}',
+    '=======',
+    'if (data.theme) {',
+    '  baseThemeSettings = data.theme;',
+    '}',
+    '>>>>>>> REPLACE',
+  ].join('\n');
+
+  const first = mountHarvester(startDomHarvester);
+  const { codeBlock } = addCodeBlock(first.document, patchText);
+  first.observer.callback();
+  assert.equal(first.harvested.length, 1, 'a path-less block is harvested');
+  assert.equal(first.harvested[0].payload.patches[0].path, '', 'the path is still missing at harvest');
+
+  // Gemini streams the filename heading only after the fenced block exists.
+  const heading = first.document.createElement('p');
+  heading.textContent = 'file :`src/store/portfolioFetchActions.ts`';
+  first.document.body.insertBefore(heading, codeBlock);
+
+  first.observer.callback();
+  assert.equal(
+    first.harvested[0].payload.patches[0].path,
+    'src/store/portfolioFetchActions.ts',
+    'a heading rendered after the harvest fills the queued patch'
+  );
+
+  const second = mountHarvester(startDomHarvester);
+  const secondBlock = addCodeBlock(second.document, patchText);
+  second.observer.callback();
+  assert.equal(second.harvested[0].payload.patches[0].path, '', 'second harvest starts path-less');
+
+  const lateHeading = second.document.createElement('p');
+  lateHeading.textContent = 'file :`src/store/portfolioFetchActions.ts`';
+  second.document.body.insertBefore(lateHeading, secondBlock.codeBlock);
+  // No extra scan: the click itself must re-read the DOM.
+  const button = secondBlock.codeBlock.querySelector('.ggb-inline-btn');
+  button.onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(
+    second.inlineApplied[0].payload.patches[0].path,
+    'src/store/portfolioFetchActions.ts',
+    'the inline apply refreshes a missing path from the live DOM'
+  );
+}
+
+{
   const legacy = [
     '// filepath: src/legacy.ts',
     '<<<<<<< SEARCH',

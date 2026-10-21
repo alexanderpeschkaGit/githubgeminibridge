@@ -256,7 +256,11 @@ assert.equal(
 assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('### src/components/App.tsx')), 'src/components/App.tsx');
 assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('- **src/hooks/useThing.ts**')), 'src/hooks/useThing.ts');
 assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('Datei: src/legacy/old.ts:')), 'src/legacy/old.ts');
-console.log('PASS: numbered, heading, bullet and bold filename headers are canonicalized');
+assert.equal(
+  harvester.extractPathFromCode('const a = 1;', headerStub('file :`src/store/portfolioFetchActions.ts`')),
+  'src/store/portfolioFetchActions.ts'
+);
+console.log('PASS: numbered, heading, bullet, bold and "file :`…`" filename headers are canonicalized');
 
 // Never invent a path from prose or a URL
 assert.equal(harvester.extractPathFromCode('const a = 1;', headerStub('Die Datei src/index.ts ist veraltet.')), '');
@@ -266,12 +270,45 @@ console.log('PASS: prose and URLs never yield a path');
 // The header may live outside the code block wrapper (Gemini renders it as a sibling of <code-block>)
 const blockSiblingStub = {
   previousElementSibling: null,
-  closest: () => ({
+  parentElement: {
     previousElementSibling: { textContent: '2. `src/store/actions.ts`', previousElementSibling: null },
-  }),
+    parentElement: null,
+  },
 };
 assert.equal(harvester.extractPathFromCode('const a = 1;', blockSiblingStub), 'src/store/actions.ts');
 console.log('PASS: headers above the enclosing code block are resolved');
+
+// Gemini also nests each markdown block in layout divs, so the heading can sit further up.
+const wrappedHeaderStub = {
+  previousElementSibling: null,
+  parentElement: {
+    previousElementSibling: null,
+    parentElement: {
+      previousElementSibling: {
+        textContent: 'file :`src/store/portfolioFetchActions.ts`',
+        previousElementSibling: null,
+      },
+      parentElement: { tagName: 'MESSAGE-CONTENT', previousElementSibling: null, parentElement: null },
+    },
+  },
+};
+assert.equal(
+  harvester.extractPathFromCode('const a = 1;', wrappedHeaderStub),
+  'src/store/portfolioFetchActions.ts'
+);
+console.log('PASS: filename headings behind layout wrappers are resolved');
+
+// A heading is never borrowed from the previous code block in the same message.
+const behindPreviousBlockStub = {
+  previousElementSibling: {
+    tagName: 'CODE-BLOCK',
+    textContent: '// filepath: src/wrong.ts',
+    previousElementSibling: null,
+  },
+  parentElement: null,
+};
+assert.equal(harvester.extractPathFromCode('const a = 1;', behindPreviousBlockStub), '');
+console.log('PASS: a filename heading is not borrowed from an earlier code block');
 
 // Bare path comment above the diff markers, without the "filepath:" label
 const bareCommentHinted = harvester.convertLegacyBlocksToV2Payload(

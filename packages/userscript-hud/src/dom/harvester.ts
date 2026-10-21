@@ -8,108 +8,14 @@ import type {
 import { createStablePatchId } from '../services/patchIdentity';
 import { normalizeRepoPath } from '../../../../shared/repoPaths';
 
-const FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
-const LABELED_HEADER_PATH =
-  /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
-const PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
-const DIFF_MARKER_LINE = /^<{7}/;
+import {
+  canInheritPathFromHeading,
+  extractPathFromCode,
+  fillMissingPatchPaths,
+  refreshPatchPathFromDom,
+} from './pathHints';
 
-/**
- * Reduces markdown chrome so headers like "3. `src/a.ts`", "### **src/a.ts**" or "- src/a.ts"
- * collapse to a bare path token.
- */
-function stripHeaderDecoration(raw: string): string {
-  let text = raw.replace(/\s+/g, ' ').trim();
-  for (let i = 0; i < 3; i += 1) {
-    const next = text
-      .replace(/^[*_`"'\s]+/, '')
-      .replace(/[*_`"'\s]+$/, '')
-      .replace(/^#{1,6}\s*/, '')
-      .replace(/^(?:[-*+•]|\d+[.)])\s+/, '')
-      .trim();
-    if (next === text) break;
-    text = next;
-  }
-  return text;
-}
-
-/**
- * Turns a header element's text into a repo path, accepting labeled ("File: src/a.ts")
- * and bare-path variants while never inventing a path from prose.
- */
-function matchHeaderPath(raw: string): string {
-  const text = stripHeaderDecoration(raw).replace(/[*`]/g, '');
-  if (!text) return '';
-
-  const labeled = text.match(LABELED_HEADER_PATH);
-  if (labeled && labeled[1]) return labeled[1];
-
-  const candidate = text.replace(/[:;,]+$/, '').trim();
-  return FILE_PATH_TOKEN.test(candidate) ? candidate : '';
-}
-
-/**
- * Collects the header candidates around a code element: its own previous siblings first,
- * then the previous siblings of the enclosing code block (Gemini renders the filename
- * heading outside the block wrapper).
- */
-function collectHeaderElements(preElement?: HTMLElement | null): Element[] {
-  const elements: Element[] = [];
-  const pushPrevious = (start: Element | null | undefined, limit: number): void => {
-    let prev = start ?? null;
-    for (let i = 0; i < limit && prev; i += 1) {
-      if (!elements.includes(prev)) elements.push(prev);
-      prev = prev.previousElementSibling;
-    }
-  };
-
-  if (!preElement) return elements;
-  pushPrevious(preElement.previousElementSibling, 3);
-
-  if (typeof preElement.closest === 'function') {
-    const block = preElement.closest('code-block');
-    if (block && block !== preElement) {
-      pushPrevious(block.previousElementSibling, 3);
-    }
-  }
-
-  return elements;
-}
-
-/**
- * Extracts a file path hint from code comments or preceding sibling elements in the DOM.
- */
-export function extractPathFromCode(codeText: string, preElement?: HTMLElement | null): string {
-  // 1. Inline comment hints: // filepath: ... | # path: ... | /* path: ... */
-  const inlineMatch = codeText.match(/(?:\/\/|#|\/\*)\s*(?:filepath|file|path):\s*([^\r\n*]+)/i);
-  if (inlineMatch && inlineMatch[1]) {
-    const inlinePath = inlineMatch[1].trim().replace(/^["']|["']$/g, '');
-    return normalizeRepoPath(inlinePath);
-  }
-
-  // 2. Bare path comment directly above the diff markers ("// src/a.ts" instead of "// filepath: ...")
-  const codeLines = codeText.split(/\r?\n/);
-  const firstContentIndex = codeLines.findIndex((line) => line.trim().length > 0);
-  const bareComment =
-    firstContentIndex >= 0 ? codeLines[firstContentIndex].trim().match(PATH_COMMENT_LINE) : null;
-  if (bareComment && bareComment[1]) {
-    const nextLine =
-      codeLines.slice(firstContentIndex + 1).find((line) => line.trim().length > 0)?.trim() ?? '';
-    if (DIFF_MARKER_LINE.test(nextLine)) {
-      return normalizeRepoPath(bareComment[1]);
-    }
-  }
-
-  // 3. Look for a filename header above the code block ("3. `src/a.ts`", "**src/a.ts**", "File: src/a.ts")
-  for (const element of collectHeaderElements(preElement)) {
-    const headerPath = matchHeaderPath(element.textContent ?? '');
-    if (headerPath) {
-      return normalizeRepoPath(headerPath);
-    }
-  }
-
-  return '';
-}
+export { extractPathFromCode } from './pathHints';
 
 export function isSearchReplace(text: string): boolean {
   return text.includes('<<<<<<<') && text.includes('=======') && text.includes('>>>>>>>');
@@ -256,6 +162,25 @@ export function startDomHarvester(
   onInlineApply: (patch: HarvestedPatch) => void
 ): MutationObserver {
   const processedSet = new WeakSet<Element>();
+  const pendingPathFills: Array<{
+    element: HTMLElement;
+    codeText: string;
+    patch: HarvestedPatch;
+  }> = [];
+
+  /** Streaming can render the heading after the block; retry pending paths on every scan. */
+  function refreshPendingPathFills(): void {
+    for (let index = pendingPathFills.length - 1; index >= 0; index -= 1) {
+      const pending = pendingPathFills[index];
+      if (!canInheritPathFromHeading(pending.patch) || pending.element.isConnected === false) {
+        pendingPathFills.splice(index, 1);
+        continue;
+      }
+      if (fillMissingPatchPaths(pending.patch, extractPathFromCode(pending.codeText, pending.element))) {
+        pendingPathFills.splice(index, 1);
+      }
+    }
+  }
 
   function processCodeBlock(pre: HTMLElement) {
     if (processedSet.has(pre) || pre.getAttribute('data-ggh-processed') === 'true') {
@@ -335,6 +260,9 @@ export function startDomHarvester(
     btn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
+      // The full answer (and with it the filename heading) is guaranteed to be
+      // rendered by the time the user clicks, so resolve a missing path now.
+      refreshPatchPathFromDom(currentPatch, codeText, pre);
       onInlineApply(currentPatch);
     };
 
@@ -351,6 +279,10 @@ export function startDomHarvester(
       btn.style.top = '8px';
       btn.style.right = '40px';
       pre.appendChild(btn);
+    }
+
+    if (canInheritPathFromHeading(currentPatch)) {
+      pendingPathFills.push({ element: pre, codeText, patch: currentPatch });
     }
 
     onPatchHarvested(currentPatch);
@@ -430,6 +362,7 @@ export function startDomHarvester(
   }
 
   function scanDOM() {
+    refreshPendingPathFills();
     const blocks = document.querySelectorAll<HTMLElement>(
       'code-block:not([data-ggh-processed]), pre:not([data-ggh-processed])'
     );

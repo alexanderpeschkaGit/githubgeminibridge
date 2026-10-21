@@ -707,27 +707,27 @@
 
 
 
-### [2026-10-21T01:10:00+02:00] | HUD `2.0.6`: Live-HEAD-Recovery statt „Load Repo Mix"-Dead-End
+### [2026-10-21T01:10:00+02:00] | HUD `2.0.6`: Live-HEAD-Recovery statt ï¿½Load Repo Mix"-Dead-End
 - **Status:** `DONE`
-- **Anlass:** Nach dem korrupten Tampermonkey-Install (`injected: env: missing script "<uuid>"`, Script lief nie) und der Neuinstallation war der GM-Storage leer: `?? Push via Bridge` endete mit `? Patch error: No repo mix snapshot for alexanderpeschkaGit/sikanda_projectinart_11-on-main@preview …`. Ohne vollständigen Repo-Mix war kein Patch anwendbar.
+- **Anlass:** Nach dem korrupten Tampermonkey-Install (`injected: env: missing script "<uuid>"`, Script lief nie) und der Neuinstallation war der GM-Storage leer: `?? Push via Bridge` endete mit `? Patch error: No repo mix snapshot for alexanderpeschkaGit/sikanda_projectinart_11-on-main@preview ï¿½`. Ohne vollstï¿½ndigen Repo-Mix war kein Patch anwendbar.
 - **Aenderungen:**
-  1. `packages/userscript-hud/src/services/workerClient.ts`: `parseRepoSlug`, `buildBranchHeadRequestBody`, `extractBranchHeadOid`, `requestBranchHead` — HEAD-Auflösung in 1 GraphQL-Call ueber den bestehenden authentifizierten V1-`/graphql`-Proxy (kein Worker-Deploy).
-  2. `packages/userscript-hud/src/ui/shadowHud.ts`: `handleApplyPatch` loest bei fehlender Snapshot-OID live den Source-HEAD auf, persistiert ihn gescopt (`setSourceHeadOid`) und committet mit diesem `expectedHeadOid`; Statuszeile nennt den OID. Fehlschlag => „Load Repo Mix"-Hinweis **plus** konkreter Grund. Invariante „kein Commit ohne validierten OID" bleibt (kein `/push`-Fallback).
-  3. Modularisierung (Dateigroessen-Gesetz): Config-Form-Handler nach `packages/userscript-hud/src/ui/hudConfigBindings.ts` (`bindHudConfigInputs`) extrahiert — `shadowHud.ts` 520 -> 443 Zeilen, `hudConfigBindings.ts` 103 Zeilen.
+  1. `packages/userscript-hud/src/services/workerClient.ts`: `parseRepoSlug`, `buildBranchHeadRequestBody`, `extractBranchHeadOid`, `requestBranchHead` ï¿½ HEAD-Auflï¿½sung in 1 GraphQL-Call ueber den bestehenden authentifizierten V1-`/graphql`-Proxy (kein Worker-Deploy).
+  2. `packages/userscript-hud/src/ui/shadowHud.ts`: `handleApplyPatch` loest bei fehlender Snapshot-OID live den Source-HEAD auf, persistiert ihn gescopt (`setSourceHeadOid`) und committet mit diesem `expectedHeadOid`; Statuszeile nennt den OID. Fehlschlag => ï¿½Load Repo Mix"-Hinweis **plus** konkreter Grund. Invariante ï¿½kein Commit ohne validierten OID" bleibt (kein `/push`-Fallback).
+  3. Modularisierung (Dateigroessen-Gesetz): Config-Form-Handler nach `packages/userscript-hud/src/ui/hudConfigBindings.ts` (`bindHudConfigInputs`) extrahiert ï¿½ `shadowHud.ts` 520 -> 443 Zeilen, `hudConfigBindings.ts` 103 Zeilen.
   4. Userscript `2.0.6` (`package.json`, Banner in `build-userscript.mjs`), Bundle neu gebaut (`dist` <=> Root identisch).
   5. Regressionen: `test-hud-oid-scope.mjs` um die Branch-Head-Helfer und `requestBranchHead`-Fetch-Stubs erweitert; `test-recent-commits-opt-in.mjs` prueft den Handler jetzt in `hudConfigBindings.ts`.
-- **Validierung:** `tsc --noEmit` (HUD) `PASS`; Browser-E2E mit GM-Stubs (frischer Storage, `…-on-main`/`preview`, Target `bridge`): `/graphql` -> HEAD `aaaa…`, `/api/patch` mit `expectedHeadOid=aaaa…`, Status `? Committed to bridge`, Source-OID unveraendert, Target-OID `bbbb…` + `target_head_branch=bridge` persistiert; Negativpfad (`ref: null`) => Fehler mit Grund, Patch bleibt in der Queue; `run-regressions.mjs --include-smoke` `PASS` (10/10 Suiten, `worker-smoke` 14/14).
+- **Validierung:** `tsc --noEmit` (HUD) `PASS`; Browser-E2E mit GM-Stubs (frischer Storage, `ï¿½-on-main`/`preview`, Target `bridge`): `/graphql` -> HEAD `aaaaï¿½`, `/api/patch` mit `expectedHeadOid=aaaaï¿½`, Status `? Committed to bridge`, Source-OID unveraendert, Target-OID `bbbbï¿½` + `target_head_branch=bridge` persistiert; Negativpfad (`ref: null`) => Fehler mit Grund, Patch bleibt in der Queue; `run-regressions.mjs --include-smoke` `PASS` (10/10 Suiten, `worker-smoke` 14/14).
 - **Overall:** `DONE`. Wirksam nach Update im Tampermonkey; Worker bleibt `2.0.2` (kein Deploy noetig).
 
-### [2026-10-21T01:25:00+02:00] | HUD `2.0.7`: Secret-Härtung vor Public-Release + Tampermonkey Auto-Update
+### [2026-10-21T01:25:00+02:00] | HUD `2.0.7`: Secret-Hï¿½rtung vor Public-Release + Tampermonkey Auto-Update
 - **Status:** `DONE`
 - **Anlass:** Der Repo-Push in das private `alexanderpeschkaGit/githubgeminibridge` zeigte, dass `DEFAULT_HUD_CONFIG.workerSecret` das **live** `WORKER_SECRET` enthielt (verifiziert: mit dem Wert antwortet `/graphql` autorisiert, ohne `401`). Ein oeffentliches Repo haette damit jedem den Zugriff auf den Worker inkl. dessen `GITHUB_PAT` erlaubt.
 - **Aenderungen:**
   1. `wrangler secret put WORKER_SECRET --name gemini-git-bridge`: neues 32-Byte-Zufalls-Secret gesetzt (Cloudflare, User-Freigabe). Verifiziert: neues Secret => `POST /graphql` `HTTP 200` (`viewer.login = alexanderpeschkaGit`), altes Secret => `HTTP 401` (**widerrufen**).
-  2. `packages/userscript-hud/src/services/storage.ts`: `DEFAULT_HUD_CONFIG.workerSecret` = `''` (kein gebuendeltes Credential mehr); `shadowHud.ts` zeigt bei leerem Secret „Set your Worker Secret (WORKER_SECRET) in the panel before using the bridge."
+  2. `packages/userscript-hud/src/services/storage.ts`: `DEFAULT_HUD_CONFIG.workerSecret` = `''` (kein gebuendeltes Credential mehr); `shadowHud.ts` zeigt bei leerem Secret ï¿½Set your Worker Secret (WORKER_SECRET) in the panel before using the bridge."
   3. Banner in `build-userscript.mjs`: `@downloadURL`/`@updateURL` auf `https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js`; Userscript `2.0.7`.
   4. `worker-smoke.mjs`: Secret-Fixture durch einen Platzhalter ersetzt (kein Credential mehr in Testcode).
-  5. Regelwerk `userscript-shadow-hud.md` um „Kein gebuendeltes Secret" und Auto-Update ergaenzt.
+  5. Regelwerk `userscript-shadow-hud.md` um ï¿½Kein gebuendeltes Secret" und Auto-Update ergaenzt.
 - **Validierung:** `tsc --noEmit` (HUD) `PASS`; Bundle enthaelt den alten Secret-Wert `0`x; `run-regressions.mjs --include-smoke` `PASS` (10/10).
 - **Overall:** `DONE`. Das alte Secret ist widerrufen; verbleibende Vorkommen in `repmixBridge.txt`/`_v1_backup` sind historisch und wertlos.
 
@@ -765,3 +765,10 @@
 - **Tests:** neu `scripts/patches_and_tests/test-hud-update-check.mjs` (Metadaten-Parsing, numerische Semver-Ordnung 2.0.10 > 2.0.9, Update-URL-Konsistenz, Bundle-Version == package.json) und in `run-regressions.mjs` registriert.
 - **Validierung:** `tsc --noEmit -p packages/userscript-hud/tsconfig.json` PASS; `run-regressions.mjs` PASS (12/12 Suiten).
 - **Push:** `git push origin main` = `1538c0f..fd97a7a`; `raw.githubusercontent.com/.../main/gemini-bridge.user.js` liefert `@version 2.0.10` (CDN-Propagation ~3 min; GitHub-Contents-API bestaetigte den Inhalt direkt nach dem Push).
+
+### [2026-10-21T02:52:00+02:00] | Userscript `2.0.11`: Dateinamen-Header zuverlaessig erkennen
+- **Anlass:** Meldung "automatic detection of filenames above the text blocks ... is not working"; der Nutzer musste den Pfad im `window.prompt` manuell eingeben und erhielt danach einen `SEARCH_REPLACE`-Preflight-Fehler.
+- **Diagnose:** Der Header-Text `file :\`src/â€¦\`` wird vom Regex akzeptiert, aber `collectHeaderElements` suchte nur direkte Geschwister von `<pre>`/`<code-block>`. Gemini schachtelt Markdown-Bloecke in Layout-Divs; zusaetzlich streamt Gemini, sodass der Header beim Harvest noch fehlen kann. Der Preflight-Fehler ist davon unabhaengig: die SEARCH-Zeilen existieren auf dem Target-Branch `bridge` nicht (Quelle ist `preview`).
+- **Aenderungen:** `src/dom/pathHints.ts` neu (Pfad-Extraktion, Ancestor-Walk bis 4 Ebenen mit Stopp an `message-content`/`model-response`/`.markdown`, Ueberspringen vorheriger Codebloecke, 300-Zeichen-Grenze); `harvester.ts` auf 397 Zeilen reduziert und um `pendingPathFills`/`refreshPatchPathFromDom` ergaenzt (Pfad wird bei spaeteren DOM-Scans und spaetestens beim Klick nachgezogen, nur fuer Single-File-Patches); `harvester-modules.mjs` inlined `./pathHints` und prueft verschachtelte Relative-Imports; Regressionstests fuer `file :\`â€¦\``, Wrapper-Header, Fremdblock-Schutz und Late-Header ergaenzt; Regel-Doku aktualisiert.
+- **Validierung:** `tsc --noEmit -p packages/userscript-hud/tsconfig.json` PASS; `run-regressions.mjs --include-smoke` PASS (13/13, `worker-smoke` 14/14); Bundle `2.0.11`, `dist` <=> Root byte-identisch.
+- **Status:** `DONE` (lokal, noch nicht gepusht).

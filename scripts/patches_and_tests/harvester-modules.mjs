@@ -21,6 +21,10 @@ const RELATIVE_MODULES = [
     specifier: '../../../../shared/repoPaths',
     source: 'shared/repoPaths.ts',
   },
+  {
+    specifier: './pathHints',
+    source: 'packages/userscript-hud/src/dom/pathHints.ts',
+  },
 ];
 
 const HARVESTER_SOURCE = 'packages/userscript-hud/src/dom/harvester.ts';
@@ -76,7 +80,19 @@ function buildEntryUrl(ts, rootDir, entrySource, inlined) {
 function buildInlinedModules(ts, rootDir) {
   const inlined = new Map();
   for (const dependency of RELATIVE_MODULES) {
-    inlined.set(dependency.specifier, toDataUrl(transpile(ts, rootDir, dependency.source)));
+    let source = transpile(ts, rootDir, dependency.source);
+    for (const [specifier, url] of inlined) {
+      source = source.split(`'${specifier}'`).join(JSON.stringify(url));
+    }
+
+    const leftover = [...source.matchAll(/from '(\.[^']+)'/g)].map((match) => match[1]);
+    if (leftover.length > 0) {
+      throw new Error(
+        `${dependency.source} imports unresolved relative modules: ${leftover.join(', ')} — list them before this entry in RELATIVE_MODULES`
+      );
+    }
+
+    inlined.set(dependency.specifier, toDataUrl(source));
   }
   return inlined;
 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.10
+// @version      2.0.11
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -1899,11 +1899,22 @@ Fix Instructions:
     return controller;
   }
 
-  // packages/userscript-hud/src/dom/harvester.ts
+  // packages/userscript-hud/src/dom/pathHints.ts
   var FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
   var LABELED_HEADER_PATH = /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
   var PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
   var DIFF_MARKER_LINE = /^<{7}/;
+  var MAX_HEADER_ANCESTOR_DEPTH = 4;
+  var MAX_HEADER_SIBLINGS = 3;
+  var MAX_HEADER_TEXT_CHARS = 300;
+  var CODE_BLOCK_TAGS = /* @__PURE__ */ new Set(["PRE", "CODE-BLOCK"]);
+  var HEADER_SEARCH_STOP_TAGS = /* @__PURE__ */ new Set([
+    "BODY",
+    "HTML",
+    "MESSAGE-CONTENT",
+    "MODEL-RESPONSE",
+    "USER-QUERY"
+  ]);
   function stripHeaderDecoration(raw) {
     let text = raw.replace(/\s+/g, " ").trim();
     for (let i = 0; i < 3; i += 1) {
@@ -1921,22 +1932,34 @@ Fix Instructions:
     const candidate = text.replace(/[:;,]+$/, "").trim();
     return FILE_PATH_TOKEN.test(candidate) ? candidate : "";
   }
+  function elementTag(element) {
+    return (element.tagName || "").toUpperCase();
+  }
+  function containsCodeBlock(element) {
+    if (CODE_BLOCK_TAGS.has(elementTag(element))) return true;
+    return typeof element.querySelector === "function" && !!element.querySelector("pre, code-block");
+  }
+  function isHeaderSearchBoundary(element) {
+    if (HEADER_SEARCH_STOP_TAGS.has(elementTag(element))) return true;
+    const className = typeof element.className === "string" ? element.className : "";
+    return /(?:^|\s)(?:markdown|markdown-main-panel|response-content)(?:\s|$)/.test(className);
+  }
   function collectHeaderElements(preElement) {
     const elements = [];
-    const pushPrevious = (start, limit) => {
-      let prev = start ?? null;
-      for (let i = 0; i < limit && prev; i += 1) {
-        if (!elements.includes(prev)) elements.push(prev);
+    let current = preElement ?? null;
+    for (let depth = 0; current && depth <= MAX_HEADER_ANCESTOR_DEPTH; depth += 1) {
+      let prev = current.previousElementSibling;
+      for (let i = 0; i < MAX_HEADER_SIBLINGS && prev; i += 1) {
+        if (containsCodeBlock(prev)) break;
+        const text = (prev.textContent || "").trim();
+        if (text && text.length <= MAX_HEADER_TEXT_CHARS && !elements.includes(prev)) {
+          elements.push(prev);
+        }
         prev = prev.previousElementSibling;
       }
-    };
-    if (!preElement) return elements;
-    pushPrevious(preElement.previousElementSibling, 3);
-    if (typeof preElement.closest === "function") {
-      const block = preElement.closest("code-block");
-      if (block && block !== preElement) {
-        pushPrevious(block.previousElementSibling, 3);
-      }
+      const parent = current.parentElement;
+      if (!parent || isHeaderSearchBoundary(parent)) break;
+      current = parent;
     }
     return elements;
   }
@@ -1963,6 +1986,35 @@ Fix Instructions:
     }
     return "";
   }
+  function hasMissingPatchPath(patch) {
+    return (patch.payload.patches || []).some((filePatch) => !filePatch.path);
+  }
+  function canInheritPathFromHeading(patch) {
+    return (patch.payload.patches || []).length === 1 && hasMissingPatchPath(patch);
+  }
+  function fillMissingPatchPaths(patch, path) {
+    if (!path) return false;
+    let changed = false;
+    for (const filePatch of patch.payload.patches || []) {
+      if (!filePatch.path) {
+        filePatch.path = path;
+        changed = true;
+      }
+    }
+    for (const file of patch.legacyPayload?.files || []) {
+      if (!file.path) {
+        file.path = path;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  function refreshPatchPathFromDom(patch, codeText, element) {
+    if (!canInheritPathFromHeading(patch)) return;
+    fillMissingPatchPaths(patch, extractPathFromCode(codeText, element));
+  }
+
+  // packages/userscript-hud/src/dom/harvester.ts
   function isSearchReplace(text) {
     return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
   }
@@ -2058,6 +2110,19 @@ Fix Instructions:
   }
   function startDomHarvester(onPatchHarvested, onInlineApply) {
     const processedSet = /* @__PURE__ */ new WeakSet();
+    const pendingPathFills = [];
+    function refreshPendingPathFills() {
+      for (let index = pendingPathFills.length - 1; index >= 0; index -= 1) {
+        const pending = pendingPathFills[index];
+        if (!canInheritPathFromHeading(pending.patch) || pending.element.isConnected === false) {
+          pendingPathFills.splice(index, 1);
+          continue;
+        }
+        if (fillMissingPatchPaths(pending.patch, extractPathFromCode(pending.codeText, pending.element))) {
+          pendingPathFills.splice(index, 1);
+        }
+      }
+    }
     function processCodeBlock(pre) {
       if (processedSet.has(pre) || pre.getAttribute("data-ggh-processed") === "true") {
         return;
@@ -2121,6 +2186,7 @@ Fix Instructions:
       btn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
+        refreshPatchPathFromDom(currentPatch, codeText, pre);
         onInlineApply(currentPatch);
       };
       const codeHeader = Array.from(
@@ -2135,6 +2201,9 @@ Fix Instructions:
         btn.style.top = "8px";
         btn.style.right = "40px";
         pre.appendChild(btn);
+      }
+      if (canInheritPathFromHeading(currentPatch)) {
+        pendingPathFills.push({ element: pre, codeText, patch: currentPatch });
       }
       onPatchHarvested(currentPatch);
     }
@@ -2201,6 +2270,7 @@ Fix Instructions:
       });
     }
     function scanDOM() {
+      refreshPendingPathFills();
       const blocks = document.querySelectorAll(
         "code-block:not([data-ggh-processed]), pre:not([data-ggh-processed])"
       );
