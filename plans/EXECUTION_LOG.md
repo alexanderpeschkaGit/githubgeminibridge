@@ -813,3 +813,10 @@
 - **Validierung:** HUD `tsc --noEmit` PASS; `test-hud-update-check.mjs` PASS; `run-regressions.mjs --include-smoke` PASS (14/14 Suiten, `worker-smoke` 14/14).
 - **Push:** `6cc4e56..374b694 main -> main` — `92b0340` (Account-Switch + Owner-Erkennung, `2.0.13`), `fa9ddaa` (dieser Fix, `2.0.14`), `374b694` (`env.account2` in `wrangler.jsonc`, Plan 08 Step 3, separater Commit). GitHub-API: `main` => `@version 2.0.14` (Blob-SHA `fff955c1`).
 - **CDN:** `raw.githubusercontent.com` liefert fuer ~1-5 min weiterhin `2.0.11`; der HUD-Check bustet den Cache via `?t=`.
+### [2026-10-21T18:20:00+02:00] | Update-Overlay bleibt nach dem Install-Klick stehen (`2.0.15`, `#solve`)
+- **Befund:** Nach dem angenommenen Update verschwand das Banner nicht. Ursache: der Install-Klick aenderte nie den Banner-Zustand, und die laufende Skript-Instanz lebt bis zum Seiten-Reload weiter; zusaetzlich war das manuelle `✅ HUD is up to date` seit `2.0.14` persistent.
+- **Fix:** `packages/userscript-hud/src/ui/updateBanner.ts` — Install-Klick schliesst das Banner, oeffnet die Tampermonkey-Seite und zeigt nur noch den transienten Hinweis "Reload this page after installing vX"; "up to date" ist wieder ein Toast; `HudUpdateBannerDeps.check` macht den Check fuer den Node-Harness injizierbar; expliziter `display: none`-Init.
+- **Regression:** NEU `scripts/patches_and_tests/test-hud-update-banner.mjs` (Fake-DOM + Fake-Timer, 4 Szenarien) + Registrierung in `run-regressions.mjs`.
+- **Doku:** `.agents/rules/userscript-shadow-hud.md` (Update-Bullet) um das neue Banner-Verhalten ergaenzt.
+- **Validierung:** HUD `tsc --noEmit` PASS; `test-hud-update-banner.mjs` PASS; `run-regressions.mjs --include-smoke` PASS (15/15); Userscript `2.0.15`, `dist` <=> Root byte-identisch (SHA-256 `A02EF739…`).
+- **Offen:** Commit + Push nach `origin/main` (Push = Hard Stop).

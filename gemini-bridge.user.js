@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.14
+// @version      2.0.15
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -1532,19 +1532,23 @@ Fix Instructions:
 
   // packages/userscript-hud/src/ui/updateBanner.ts
   var TRANSIENT_MESSAGE_MS = 6e3;
-  function initHudUpdateBanner(dom) {
+  function initHudUpdateBanner(dom, deps = {}) {
+    const check = deps.check ?? checkForScriptUpdate;
     let hideTimer = null;
     let installUrl = "";
+    let installVersion = "";
     const runningVersion = getRunningScriptVersion();
     if (runningVersion) {
       dom.updateCheckBtn.title = `Check published userscript version (running v${runningVersion})`;
     }
+    dom.updateBanner.style.display = "none";
     const hide = () => {
       if (hideTimer) {
         clearTimeout(hideTimer);
         hideTimer = null;
       }
       installUrl = "";
+      installVersion = "";
       dom.updateBanner.style.display = "none";
     };
     const show = (message, tone, action, persistent = false) => {
@@ -1553,6 +1557,7 @@ Fix Instructions:
         hideTimer = null;
       }
       installUrl = action ? action.url : "";
+      installVersion = action ? action.version : "";
       dom.updateBanner.className = `hud-update-banner ${tone}`;
       dom.updateBannerText.textContent = message;
       dom.updateBannerBtn.textContent = action ? action.label : "\xD7";
@@ -1567,12 +1572,21 @@ Fix Instructions:
         hide();
         return;
       }
-      window.open(installUrl, "_blank", "noopener");
+      const targetUrl = installUrl;
+      const targetVersion = installVersion;
+      hide();
+      if (typeof window !== "undefined" && typeof window.open === "function") {
+        window.open(targetUrl, "_blank", "noopener");
+      }
+      show(
+        targetVersion ? `\u2139\uFE0F Reload this page after installing v${targetVersion} to activate it.` : "\u2139\uFE0F Reload this page after installing the update to activate it.",
+        "ok"
+      );
     });
     const runCheck = async (force) => {
       dom.updateCheckBtn.disabled = true;
       try {
-        const info = await checkForScriptUpdate({ force });
+        const info = await check({ force });
         if (!info) return;
         if (!info.currentVersion) {
           const message = `\u26A0\uFE0F Running version unknown \u2014 published is v${info.latestVersion}. Reinstall the userscript if this persists.`;
@@ -1589,12 +1603,13 @@ Fix Instructions:
             "update",
             {
               label: `\u2B06 Install v${info.latestVersion}`,
-              url: buildUpdateUrl(info.latestVersion)
+              url: buildUpdateUrl(info.latestVersion),
+              version: info.latestVersion
             },
             true
           );
         } else if (force) {
-          show(`\u2705 HUD is up to date (v${info.currentVersion}).`, "ok", void 0, true);
+          show(`\u2705 HUD is up to date (v${info.currentVersion}).`, "ok");
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

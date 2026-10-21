@@ -9,19 +9,30 @@ type BannerTone = 'update' | 'ok' | 'error';
 interface BannerAction {
   label: string;
   url: string;
+  version: string;
+}
+
+export interface HudUpdateBannerDeps {
+  /** Injectable for the Node regression harness; defaults to the real checker. */
+  check?: typeof checkForScriptUpdate;
 }
 
 /**
  * Surfaces the self-update state inside the panel. The raw-URL button only opens
  * Tampermonkey's install page — updates are never triggered programmatically.
  */
-export function initHudUpdateBanner(dom: HudDomElements): void {
+export function initHudUpdateBanner(dom: HudDomElements, deps: HudUpdateBannerDeps = {}): void {
+  const check = deps.check ?? checkForScriptUpdate;
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
   let installUrl = '';
+  let installVersion = '';
   const runningVersion = getRunningScriptVersion();
   if (runningVersion) {
     dom.updateCheckBtn.title = `Check published userscript version (running v${runningVersion})`;
   }
+  // The panel stylesheet starts the banner hidden; keep that state explicit so a
+  // silent background check never leaves a visible empty banner behind.
+  dom.updateBanner.style.display = 'none';
 
   const hide = () => {
     if (hideTimer) {
@@ -29,6 +40,7 @@ export function initHudUpdateBanner(dom: HudDomElements): void {
       hideTimer = null;
     }
     installUrl = '';
+    installVersion = '';
     dom.updateBanner.style.display = 'none';
   };
 
@@ -43,6 +55,7 @@ export function initHudUpdateBanner(dom: HudDomElements): void {
       hideTimer = null;
     }
     installUrl = action ? action.url : '';
+    installVersion = action ? action.version : '';
     dom.updateBanner.className = `hud-update-banner ${tone}`;
     dom.updateBannerText.textContent = message;
     dom.updateBannerBtn.textContent = action ? action.label : '×';
@@ -58,13 +71,26 @@ export function initHudUpdateBanner(dom: HudDomElements): void {
       hide();
       return;
     }
-    window.open(installUrl, '_blank', 'noopener');
+    const targetUrl = installUrl;
+    const targetVersion = installVersion;
+    // This instance keeps executing until the page reloads; leaving the banner up
+    // would keep claiming an update that Tampermonkey already installed.
+    hide();
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(targetUrl, '_blank', 'noopener');
+    }
+    show(
+      targetVersion
+        ? `ℹ️ Reload this page after installing v${targetVersion} to activate it.`
+        : 'ℹ️ Reload this page after installing the update to activate it.',
+      'ok'
+    );
   });
 
   const runCheck = async (force: boolean) => {
     dom.updateCheckBtn.disabled = true;
     try {
-      const info = await checkForScriptUpdate({ force });
+      const info = await check({ force });
       if (!info) return; // throttled background check
 
       if (!info.currentVersion) {
@@ -86,12 +112,14 @@ export function initHudUpdateBanner(dom: HudDomElements): void {
           {
             label: `⬆ Install v${info.latestVersion}`,
             url: buildUpdateUrl(info.latestVersion),
+            version: info.latestVersion,
           },
           true
         );
       } else if (force) {
-        // A 6 s toast is easy to miss right after clicking, so a manual result stays put.
-        show(`✅ HUD is up to date (v${info.currentVersion}).`, 'ok', undefined, true);
+        // A manual "up to date" stays a toast: a sticky all-clear banner would
+        // outlive its usefulness and just sit in the panel.
+        show(`✅ HUD is up to date (v${info.currentVersion}).`, 'ok');
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

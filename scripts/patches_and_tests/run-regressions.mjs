@@ -53,6 +53,11 @@ const LOCAL_SUITES = [
     finding: 'HUD detects published userscript updates (metadata parse, numeric semver order, update URL)',
   },
   {
+    id: 'hud-update-banner',
+    script: 'test-hud-update-banner.mjs',
+    finding: 'Install click retires the update banner; manual check results never stick in the panel',
+  },
+  {
     id: 'account-profiles',
     script: 'test-account-profiles.mjs',
     finding: 'Profile-scoped storage, migration seeds, foreign-owner classification and typed-wins account switch',

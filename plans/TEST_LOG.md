@@ -474,3 +474,10 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (14/14 Suiten; `worker-smoke` 14/14).
 - **Push-Verifikation:** `git push origin main` => `6cc4e56..374b694`; GitHub-Contents-API `main/gemini-bridge.user.js` = `@version 2.0.14` (Blob-SHA `fff955c1f9ab44ffa6ca72f36f50c6870b66f243`). Raw-CDN lieferte unmittelbar danach noch `2.0.11` (Propagation).
 - **GESAMTSTATUS:** `PASS`.
+### [2026-10-21T18:19:00+02:00] | Update-Banner-Zuruecknahme (`2.0.15`)
+- `node packages/edge-worker/node_modules/typescript/lib/tsc.js --noEmit -p packages/userscript-hud/tsconfig.json`: `PASS`.
+- `node scripts/patches_and_tests/test-hud-update-banner.mjs`: `PASS` — Update-Banner bleibt bis zur Aktion stehen (kein Auto-Hide); Klick auf `⬆ Install v2.0.15` oeffnet `…gemini-bridge.user.js?v=2.0.15` mit `_blank`/`noopener`, Banner wechselt auf den transienten Reload-Hinweis und verschwindet beim Timer; manuelles "up to date" laeuft ab; unbekannte Laufzeitversion bleibt als Fehler-Diagnose stehen; gedrosselter Check laesst den Button nicht haengen.
+- `node scripts/patches_and_tests/test-hud-update-check.mjs`: `PASS`.
+- `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (15/15 Suiten; `worker-smoke` inkl. Probe 10/14).
+- Bundle: `2.0.15`, `dist` <=> Root byte-identisch (SHA-256 `A02EF73900DF9E32BFD08C2A7B6692D4109BE8F0A62E93FBEC224F1E7D303211`).
+- **GESAMTSTATUS:** `PASS` (Code + Bundle). Push nach `origin/main` offen (Hard Stop).
