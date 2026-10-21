@@ -6,5 +6,21 @@
   "account_id": "9b109aa9587252172ccb60f664f603f0",
   "observability": {
     "enabled": true
+  },
+  // Named environment for the second GitHub account: deploys the same worker
+  // code as a separate Worker service (`gemini-git-bridge-account2`). Its
+  // secrets (GITHUB_PAT + WORKER_SECRET) are provisioned exclusively via
+  // `npx wrangler secret put <NAME> --env account2` and never stored here.
+  // NOTE: Worker 2 runs in the SAME Cloudflare account as the Worker above, so
+  // the `account_id` is inherited. Isolation between the two bridges comes from
+  // the distinct Worker name + its own secrets — not from the Cloudflare account.
+  // Add an `account_id` override here only if Worker 2 must move to a different
+  // Cloudflare account.
+  // Always pass `--env account2`: without it, a deploy would target (and
+  // overwrite) the default Worker `gemini-git-bridge`.
+  "env": {
+    "account2": {
+      "name": "gemini-git-bridge-account2"
+    }
   }
 }
