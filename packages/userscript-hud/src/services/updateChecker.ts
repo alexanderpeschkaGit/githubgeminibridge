@@ -115,14 +115,30 @@ export async function fetchLatestScriptVersion(): Promise<string> {
 }
 
 /**
- * Returns `null` when the check is throttled or the running version is unknown
- * (e.g. the Node test harness). Errors are propagated for caller-side reporting.
+ * An unknown running version (`''`, e.g. no `GM_info`) must never report an
+ * update — comparing against an empty string would always look "newer".
+ */
+export function evaluateUpdateState(
+  currentVersion: string,
+  latestVersion: string
+): ScriptUpdateInfo {
+  const running = (currentVersion || '').trim();
+  const latest = (latestVersion || '').trim();
+  return {
+    currentVersion: running,
+    latestVersion: latest,
+    hasUpdate: Boolean(running) && compareVersions(latest, running) > 0,
+  };
+}
+
+/**
+ * Returns `null` only when the check is throttled. An unknown running version is
+ * reported via `currentVersion: ''` so the caller can surface it instead of
+ * leaving a manual click without any feedback. Errors propagate for reporting.
  */
 export async function checkForScriptUpdate(
   options: { force?: boolean } = {}
 ): Promise<ScriptUpdateInfo | null> {
-  const currentVersion = getRunningScriptVersion();
-  if (!currentVersion) return null;
   if (!options.force && !isUpdateCheckDue()) return null;
 
   const latestVersion = await fetchLatestScriptVersion();
@@ -130,9 +146,5 @@ export async function checkForScriptUpdate(
   // stay silent for hours after one failed attempt.
   setStoredValue(LAST_CHECK_KEY, String(Date.now()));
 
-  return {
-    currentVersion,
-    latestVersion,
-    hasUpdate: compareVersions(latestVersion, currentVersion) > 0,
-  };
+  return evaluateUpdateState(getRunningScriptVersion(), latestVersion);
 }

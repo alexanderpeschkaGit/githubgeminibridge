@@ -25,7 +25,7 @@ const build = await esbuild.build({
   platform: 'node',
 });
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(build.outputFiles[0].text).toString('base64')}`;
-const { parseUserscriptVersion, compareVersions, buildUpdateUrl, SCRIPT_SOURCE_URL } =
+const { parseUserscriptVersion, compareVersions, buildUpdateUrl, evaluateUpdateState, SCRIPT_SOURCE_URL } =
   await import(moduleUrl);
 
 // ---------------------------------------------------------------------------
@@ -53,6 +53,23 @@ assert.equal(compareVersions('2.0.10', '2.0.10'), 0);
 assert.equal(compareVersions('2.1', '2.0.99'), 1);
 assert.equal(compareVersions('2.0', '2.0.0'), 0);
 assert.equal(compareVersions('  2.0.10 ', '2.0.10'), 0);
+
+// ---------------------------------------------------------------------------
+// 2b. An unknown running version must never fake an update
+// ---------------------------------------------------------------------------
+assert.deepEqual(evaluateUpdateState('2.0.13', '2.0.14'), {
+  currentVersion: '2.0.13',
+  latestVersion: '2.0.14',
+  hasUpdate: true,
+});
+assert.equal(evaluateUpdateState('2.0.14', '2.0.14').hasUpdate, false);
+assert.equal(evaluateUpdateState('2.0.14', '2.0.13').hasUpdate, false);
+assert.equal(evaluateUpdateState('', '2.0.14').hasUpdate, false, 'unknown version is not an update');
+assert.deepEqual(evaluateUpdateState(' 2.0.13 ', ' 2.0.14 '), {
+  currentVersion: '2.0.13',
+  latestVersion: '2.0.14',
+  hasUpdate: true,
+});
 
 // ---------------------------------------------------------------------------
 // 3. Update URL mirrors the published metadata block

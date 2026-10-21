@@ -1,5 +1,6 @@
 import type { HudDomElements } from './hudStylesAndDom';
 import { buildUpdateUrl, checkForScriptUpdate } from '../services/updateChecker';
+import { getRunningScriptVersion } from '../services/runtimeInfo';
 
 const TRANSIENT_MESSAGE_MS = 6_000;
 
@@ -8,7 +9,6 @@ type BannerTone = 'update' | 'ok' | 'error';
 interface BannerAction {
   label: string;
   url: string;
-  persistent: boolean;
 }
 
 /**
@@ -18,6 +18,10 @@ interface BannerAction {
 export function initHudUpdateBanner(dom: HudDomElements): void {
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
   let installUrl = '';
+  const runningVersion = getRunningScriptVersion();
+  if (runningVersion) {
+    dom.updateCheckBtn.title = `Check published userscript version (running v${runningVersion})`;
+  }
 
   const hide = () => {
     if (hideTimer) {
@@ -28,7 +32,12 @@ export function initHudUpdateBanner(dom: HudDomElements): void {
     dom.updateBanner.style.display = 'none';
   };
 
-  const show = (message: string, tone: BannerTone, action?: BannerAction) => {
+  const show = (
+    message: string,
+    tone: BannerTone,
+    action?: BannerAction,
+    persistent: boolean = false
+  ) => {
     if (hideTimer) {
       clearTimeout(hideTimer);
       hideTimer = null;
@@ -39,7 +48,7 @@ export function initHudUpdateBanner(dom: HudDomElements): void {
     dom.updateBannerBtn.textContent = action ? action.label : '×';
     dom.updateBannerBtn.title = action ? 'Open the Tampermonkey update page' : 'Dismiss';
     dom.updateBanner.style.display = 'flex';
-    if (!action || !action.persistent) {
+    if (!persistent) {
       hideTimer = setTimeout(hide, TRANSIENT_MESSAGE_MS);
     }
   };
@@ -56,7 +65,19 @@ export function initHudUpdateBanner(dom: HudDomElements): void {
     dom.updateCheckBtn.disabled = true;
     try {
       const info = await checkForScriptUpdate({ force });
-      if (!info) return;
+      if (!info) return; // throttled background check
+
+      if (!info.currentVersion) {
+        // Without GM_info the comparison is impossible; a manual click must still
+        // report something instead of looking dead.
+        const message = `⚠️ Running version unknown — published is v${info.latestVersion}. Reinstall the userscript if this persists.`;
+        if (force) {
+          show(message, 'error', undefined, true);
+        } else {
+          console.warn('[Gemini Edge HUD]', message);
+        }
+        return;
+      }
 
       if (info.hasUpdate) {
         show(
@@ -65,11 +86,12 @@ export function initHudUpdateBanner(dom: HudDomElements): void {
           {
             label: `⬆ Install v${info.latestVersion}`,
             url: buildUpdateUrl(info.latestVersion),
-            persistent: true,
-          }
+          },
+          true
         );
       } else if (force) {
-        show(`✅ HUD is up to date (v${info.currentVersion}).`, 'ok');
+        // A 6 s toast is easy to miss right after clicking, so a manual result stays put.
+        show(`✅ HUD is up to date (v${info.currentVersion}).`, 'ok', undefined, true);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
