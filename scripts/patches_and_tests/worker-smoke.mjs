@@ -477,7 +477,9 @@ async function main() {
     const hasDefault85k = chunkerContent.includes('DEFAULT_MAX_CHUNK_CHARS = 85_000') || chunkerContent.includes('85000');
     const hasMaxParts10 = chunkerContent.includes('MAX_GEMINI_PARTS = 10');
     const hasTxtExtension = chunkerContent.includes('repo-mix.part${partNum}.txt') && injectorContent.includes("type: 'text/plain'") && injectorContent.includes("'repo-mix.txt'");
-    const hasSkipMarker = chunkerContent.includes('[SKIPPED: >100k chars for Gemini Chat limit]');
+    const hasExplicitOversizeRejection =
+      chunkerContent.includes('if (blockedFiles.length > 0)') &&
+      chunkerContent.includes('RepoMix cannot preserve');
     const hasIgnoreUtils = tarUtilsContent.includes('export function parseIgnoreLines') && tarUtilsContent.includes('export function matchesIgnorePattern');
     const hasDynamicIgnoreInMixer = mixerContent.includes('dynamicIgnorePatterns') && mixerContent.includes('.repomixignore.cf') && mixerContent.includes('.venv');
     const storageSupports2M = storageContent.includes('2000000');
@@ -510,10 +512,7 @@ async function main() {
         const fileXml = formatFileXml(f);
         const standaloneXml = buildPartXml(1, 1, f.path, [fileXml]);
         if (standaloneXml.length > hardLimit) {
-          const idx = treeEntries.indexOf(f.path);
-          const marker = `${f.path} [SKIPPED: >100k chars for Gemini Chat limit]`;
-          if (idx !== -1) treeEntries[idx] = marker;
-          else treeEntries.push(marker);
+          throw new Error(`RepoMix cannot preserve oversized file: ${f.path}`);
         } else {
           validFiles.push({ path: f.path, content: f.content, fileXml });
         }
@@ -583,14 +582,17 @@ async function main() {
     const part1HasFullTree = resA.parts[0].tree.includes('src/a.ts') && resA.parts[0].tree.includes('src/c.ts');
     const part2HasCompactTree = resA.parts[1].tree.includes('# Part 2/');
 
-    // Test B: File > 100k chars skipped
+    // Test B: File > 100k chars is rejected rather than silently skipped
     const testFilesB = [
       { path: 'src/huge.ts', content: 'H'.repeat(105000) },
       { path: 'src/small.ts', content: 'console.log("ok");' }
     ];
-    const resB = simulateChunking(testFilesB, ['src/huge.ts', 'src/small.ts'], 85000, 100000);
-    const hugeSkipped = resB.treeEntries.some((e) => e.includes('src/huge.ts [SKIPPED: >100k chars for Gemini Chat limit]'));
-    const hugeNotInFiles = resB.validFiles.every((f) => f.path !== 'src/huge.ts');
+    let oversizedFileRejected = false;
+    try {
+      simulateChunking(testFilesB, ['src/huge.ts', 'src/small.ts'], 85000, 100000);
+    } catch (err) {
+      oversizedFileRejected = err.message.includes('RepoMix cannot preserve oversized file');
+    }
 
     // Test C: 10-parts Guardrail (25 files of 20k chars each)
     const testFilesC = Array.from({ length: 25 }, (_, i) => ({
@@ -638,10 +640,10 @@ async function main() {
       !matchesIgnoreTest('src/index.ts', testPats) &&
       !matchesIgnoreTest('nested/root_only.txt', testPats);
 
-    const functionalBudgetPass = partsUnder85k && part1HasFullTree && part2HasCompactTree && hugeSkipped && hugeNotInFiles;
+    const functionalBudgetPass = partsUnder85k && part1HasFullTree && part2HasCompactTree && oversizedFileRejected;
 
     const pass = hasBuildChunked && hasInjectParts && hasDefault85k && hasMaxParts10 &&
-      hasTxtExtension && hasSkipMarker && hasIgnoreUtils && hasDynamicIgnoreInMixer &&
+      hasTxtExtension && hasExplicitOversizeRejection && hasIgnoreUtils && hasDynamicIgnoreInMixer &&
       storageSupports2M && bundleHasInjectParts && bundleHasIncludePaths &&
       bundleHasMaxChunkChars && bundleHasTxtMime && functionalBudgetPass && guardrailPass && ignorePass;
 
@@ -652,7 +654,7 @@ async function main() {
       hasDefault85k,
       hasMaxParts10,
       hasTxtExtension,
-      hasSkipMarker,
+      hasExplicitOversizeRejection,
       hasIgnoreUtils,
       hasDynamicIgnoreInMixer,
       storageSupports2M,
@@ -743,11 +745,15 @@ async function main() {
     const chunkerCapsMetadata = chunkerContent.includes('export function capRecentCommitsText') &&
       chunkerContent.includes('MAX_RECENT_COMMITS_CHARS') &&
       chunkerContent.includes('RECENT_COMMITS_TRUNCATION_MARKER');
-    const chunkerUsesCappedMetadata = chunkerContent.includes('cappedRecentCommitsText.length + 1') &&
-      chunkerContent.includes('cappedRecentCommitsText.length;') &&
+    const chunkerUsesCappedMetadata = chunkerContent.includes(
+      'const cappedRecentCommitsText = capRecentCommitsText(input.recentCommitsText, metadataBudget)'
+    ) &&
       !/recentCommitsText:\s*input\.recentCommitsText/.test(chunkerContent);
-    const chunkerEnforcesHardLimit = chunkerContent.includes('xml.length > HARD_GEMINI_CHAR_LIMIT') &&
-      chunkerContent.includes('[SKIPPED: exceeds 100k part limit]');
+    const chunkerEnforcesHardLimit = chunkerContent.includes('partXml.length > HARD_GEMINI_CHAR_LIMIT') &&
+      chunkerContent.includes('xml.length > HARD_GEMINI_CHAR_LIMIT') &&
+      chunkerContent.includes('exceeding the ${HARD_GEMINI_CHAR_LIMIT}-character limit');
+    const chunkerEnforcesPartCount = chunkerContent.includes('chunkBuckets.length > MAX_GEMINI_PARTS') &&
+      chunkerContent.includes('needs more than ${MAX_GEMINI_PARTS} parts');
 
     // 6. Verify Userscript bundle wiring
     const bundleHasRecentCommitsCheck = rootUserScript.includes('recentCommitsCheck') && rootUserScript.includes('includeRecentCommits');
@@ -756,7 +762,7 @@ async function main() {
                  mixerImportsRecent && mixerPassesTextToChunker && mixerOptInOnly &&
                  hudDefaultOff && hudMigration &&
                  chunkerHasInputProp && chunkerCapsMetadata && chunkerUsesCappedMetadata &&
-                 chunkerEnforcesHardLimit &&
+                 chunkerEnforcesHardLimit && chunkerEnforcesPartCount &&
                  bundleHasRecentCommitsCheck;
 
     return {
@@ -774,6 +780,7 @@ async function main() {
       chunkerCapsMetadata,
       chunkerUsesCappedMetadata,
       chunkerEnforcesHardLimit,
+      chunkerEnforcesPartCount,
       bundleHasRecentCommitsCheck
     };
   }));

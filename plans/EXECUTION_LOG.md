@@ -797,7 +797,7 @@
 - **START Step 9** `run-regressions.mjs`: Suite `account-profiles` registriert. **DONE Step 9**.
 
 ### [2026-10-21T18:10:00+02:00] | Userscript `2.0.13`: Account-Switch-Buttons & Owner-Erkennung mit Fremd-Owner-Patch-Guard
-- **Anlass:** Plan 09 � Ein-Klick-Wechsel zwischen den beiden GitHub-Accounts im HUD plus Owner-Erkennung aus dem Repo-Feld; fremde Owner werden gewarnt, oeffentliche Fremd-Repos bleiben mix-bar, Patches auf Fremd-Owner werden im HUD blockiert.
+- **Anlass:** Plan 09 � Ein-Klick-Wechsel zwischen den beiden GitHub-Accounts im HUD plus Owner-Erkennung aus dem Repo-Feld; fremde Owner werden gewarnt, oeffentliche Fremd-Repos bleiben mix-bar, Patches auf Fremd-Owner werden im HUD blockiert.
 - **Aenderungen:** `types.ts` (`owner`), `storage.ts` (Profil-Keys `active_profile` + `account1_*`/`account2_*`, einmalige Migration `account_profiles_migration_v1`, profil-first Load ohne Account-2-Fallback), NEU `services/accountProfiles.ts` + `ui/hudAccountSwitch.ts`, `hudDomTree.ts` (Owner-Feld, `?? Account 1/2`-Buttons, Inline-Hinweis), `hudStylesAndDom.ts` (Typ + `.hud-account-hint` CSS), `shadowHud.ts` (Binding + Fremd-Owner-Patch-Guard vor dem `try`), `hudConfigBindings.ts` (Owner-Feld-Binding). NEU Regression `scripts/patches_and_tests/test-account-profiles.mjs` im Aggregat-Gate. Userscript `2.0.12 -> 2.0.13` (`npm run release:patch`), `dist` <=> Root byte-identisch.
 - **Validierung:** HUD `tsc --noEmit` PASS; `run-regressions.mjs` PASS (13/13 inkl. `account-profiles`); `worker-smoke.mjs` PASS (14/14, Probe 10: 38 TS-Dateien, 0 >= 500 Zeilen, Bundle byte-identisch, Live-/health 2.0.4); `worker-baseline.json`-Diff nur additiv/erwartet (neue Dateien, Zeilenzahl-Drift, Bundle-Groesse).
 - **Abnahmekriterien:** Root-`gemini-bridge.user.js` = 2.0.13 mit Account-Buttons + Owner-Feld; kein `github_pat_`-Literal in HUD-Quellen (nur die PAT_REGEX-Guardrail); kein `ui/`-Import in `accountProfiles.ts`; Edge-Worker/Wrangler/Secrets unveraendert.
@@ -820,3 +820,25 @@
 - **Doku:** `.agents/rules/userscript-shadow-hud.md` (Update-Bullet) um das neue Banner-Verhalten ergaenzt.
 - **Validierung:** HUD `tsc --noEmit` PASS; `test-hud-update-banner.mjs` PASS; `run-regressions.mjs --include-smoke` PASS (15/15); Userscript `2.0.15`, `dist` <=> Root byte-identisch (SHA-256 `A02EF739…`).
 - **Offen:** Commit + Push nach `origin/main` (Push = Hard Stop).
+### [2026-10-23T10:42:00+02:00] | START Plan 10 — RepoMix hard part-size enforcement
+- **Anlass:** Reproduzierbarer Split-Output mit Parts von 185k–293k Zeichen trotz 100k-Ceiling; die Reproduktion tritt mit und ohne Recent-Commits-Metadaten auf.
+- **Batch:** Ein serieller FLASH-Batch (Score 6/10) für Chunker, regressionssichere Grenzfalltests und Architekturregel; Plan: `plans/10_REPOMIX_HARD_LIMIT_EXECUTION_PLAN.md`.
+- **Entscheidung:** Jeder vollständig serialisierte Part muss <= 100.000 Zeichen sein. Die 10-Part-Grenze darf diese Invariante nicht aufheben; unmögliche vollständige Ausgabe wird explizit abgelehnt.
+- **DONE:** `mixChunker.ts` partitioniert nach vollständiger Serialisierung samt Folgepart-Pfaden, prüft jeden finalen Part und lehnt über zehn benötigte Parts oder nicht passende Einzeldateien explizit ab. Die Regression umfasst lange Pfade mit/ohne Metadaten; die Architekturregel und Probe 13 wurden synchronisiert.
+- **Validierung:** Hard-limit Regression PASS (long-path max 84,990 chars, 7 parts ohne Metadaten / 8 mit Metadaten; 5,000 lange Pfade werden mit und ohne Metadaten jenseits der 10-Part-Grenze explizit abgelehnt); `test-recent-commits-opt-in.mjs` PASS; Edge Worker `tsc --noEmit` PASS; `worker-smoke.mjs` PASS (14/14, Live health PASS); aktive TypeScript-Dateien 41/41 unter 500 Zeilen; `git diff --check` PASS. Der erste Smoke-Lauf deckte eine veraltete Probe-13-Quelltextannahme auf; die Assertion wurde auf die neue Hard-Limit-/Part-Count-Invariante angepasst und der Lauf danach vollständig bestanden.
+- **Abschluss:** Keine Commits oder Pushes. Das Deployment wurde auf ausdrückliche User-Anweisung am 2026-10-23 als nachgelagerter Schritt ausgeführt; Details siehe folgenden Eintrag.
+
+### [2026-10-23T11:59:11+02:00] | Plan 10 Live-Deployment (User-Freigabe)
+- **Ziel:** Default Worker `gemini-git-bridge` unter `https://gemini-git-bridge.sikanda.workers.dev`; `account2` nicht angetastet.
+- **Deployment:** `wrangler deploy` PASS; Cloudflare Version ID `dc6ab9af-baae-41fa-a2e0-1936e9a8e877`.
+- **Post-Deploy:** `/health` PASS (`status: ok`, `version: 2.0.4`, beide Secrets vorhanden).
+- **Pre-Deploy Gate:** Edge Worker TypeScript PASS; Hard-Limit-Regression PASS; Recent-Commits-Opt-in PASS; Worker-Smoke PASS (14/14). Die Probe-12-Assertion wurde auf den expliziten Oversize-Reject-Vertrag aktualisiert; der erste Lauf hatte nur die veraltete Skip-Marker-Erwartung beanstandet.
+- **Git:** Kein Commit oder Push; Plan-10-Änderungen bleiben lokal.
+
+### [2026-10-23T12:04:35+02:00] | Account2 Worker Deployment (User bestätigt gleicher Cloudflare-Account)
+- **Ziel:** Benanntes Wrangler-Environment `account2`, Worker `gemini-git-bridge-account2`; Default-Worker nicht überschrieben.
+- **Preflight:** `wrangler secret list --env account2` zeigt `GITHUB_PAT` und `WORKER_SECRET`; Dry-Run PASS.
+- **Deployment:** `wrangler deploy --env account2` PASS; URL `https://gemini-git-bridge-account2.sikanda.workers.dev`; Cloudflare Version ID `220e7461-a549-4fe4-84a4-1025559e0785`.
+- **Live-Verifikation:** Account-1 und Account-2 `/health` liefern `status: ok`, Version `2.0.4`, `hasBridgeSecret: true`, `hasGithubToken: true`. Secret-Listen bestätigen Account-1 `GITHUB_TOKEN`/`BRIDGE_SECRET` (zusätzlich `WORKER_SECRET`) und Account-2 `GITHUB_PAT`/`WORKER_SECRET`; keine Secret-Werte gelesen.
+- **Offen:** Die Health- und Secret-Key-Prüfung beweist nicht die GitHub-Identität des PAT. Dafür ist eine authentifizierte `POST /graphql`-`viewer { login }`-Abfrage je Worker nötig; Bridge-Secrets wurden nicht erfragt oder offengelegt.
+- **Git:** Kein Commit oder Push; Plan-10-Änderungen bleiben lokal.

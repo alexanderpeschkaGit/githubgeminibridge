@@ -481,3 +481,23 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - `node scripts/patches_and_tests/run-regressions.mjs --include-smoke`: `PASS` (15/15 Suiten; `worker-smoke` inkl. Probe 10/14).
 - Bundle: `2.0.15`, `dist` <=> Root byte-identisch (SHA-256 `A02EF73900DF9E32BFD08C2A7B6692D4109BE8F0A62E93FBEC224F1E7D303211`).
 - **GESAMTSTATUS:** `PASS` (Code + Bundle). Push nach `origin/main` offen (Hard Stop).
+### [2026-10-23T10:46:00+02:00] | Plan 10 — RepoMix hard part-size enforcement
+- `node scripts/patches_and_tests/test-metadata-budget-hard-limit.mjs`: **PASS** — every measured output is <=100,000 chars; long paths max 84,990 chars across 7 parts without metadata and 8 with metadata; 5,000 long paths are explicitly rejected beyond the 10-part limit both with and without metadata.
+- `node scripts/patches_and_tests/test-recent-commits-opt-in.mjs`: **PASS** — opt-in defaults/migration/HUD wiring preserved.
+- `node packages/edge-worker/node_modules/typescript/bin/tsc --noEmit -p packages/edge-worker/tsconfig.json`: **PASS**.
+- `node scripts/patches_and_tests/worker-smoke.mjs`: **PASS (14/14)**, including live health check. Probe 13 updated to enforce the metadata cap, absolute part-size ceiling and max-part behavior; first run identified the now-obsolete skip-marker source assertion, corrected before the passing run.
+- Active TypeScript line-size audit: **PASS**, 41 files below 500 lines.
+- `git diff --check`: **PASS**. No commit, push, or deploy.
+
+### [2026-10-23T11:59:11+02:00] | Plan 10 Live-Deployment Verification
+- `node scripts/patches_and_tests/worker-smoke.mjs`: **PASS (14/14)** before deployment. The initial run found only a stale Probe 12 expectation for skipped oversized files; the probe now matches the explicit rejection behavior and passes.
+- `https://gemini-git-bridge.sikanda.workers.dev/health`: **PASS** after deployment (`status: ok`, `version: 2.0.4`, `hasBridgeSecret: true`, `hasGithubToken: true`).
+- Wrangler deployment: **PASS**, Cloudflare Version ID `dc6ab9af-baae-41fa-a2e0-1936e9a8e877`; default Worker only.
+- Changes remain uncommitted; no push. `account2` was not deployed.
+
+### [2026-10-23T12:04:35+02:00] | Account2 Worker Deployment Verification
+- `npx wrangler deploy --config packages/edge-worker/wrangler.jsonc --env account2`: **PASS**; account2 Version ID `220e7461-a549-4fe4-84a4-1025559e0785`.
+- Account-1 `/health`: **PASS**, `version: 2.0.4`, both secret-presence flags true.
+- Account-2 `/health`: **PASS**, `version: 2.0.4`, both secret-presence flags true.
+- Wrangler secret-name listings: Account 1 has `GITHUB_TOKEN`, `BRIDGE_SECRET` (and `WORKER_SECRET`); Account 2 has `GITHUB_PAT`, `WORKER_SECRET`. Secret values were not read.
+- GitHub account identity has **not** yet been verified via authenticated GraphQL `viewer { login }`; health only confirms secret presence. No commit or push.

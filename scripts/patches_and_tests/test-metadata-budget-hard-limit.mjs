@@ -60,6 +60,13 @@ function padFiles(count, size, prefix = 'src/mod') {
   }));
 }
 
+function makeLongPathFiles(count) {
+  return Array.from({ length: count }, (_, i) => ({
+    path: `src/${'long-directory-name/'.repeat(8)}${String(i).padStart(5, '0')}.ts`,
+    content: `export const file${i} = ${i};\n`,
+  }));
+}
+
 function measuredParts(result) {
   if (Array.isArray(result.parts) && result.parts.length > 0) {
     return result.parts.map((p) => ({
@@ -145,29 +152,78 @@ const worstCase = [];
   console.log(`PASS: maxChunkChars=500000 is clamped to ${HARD_GEMINI_CHAR_LIMIT} (${parts.length} parts, max ${Math.max(...parts.map((p) => p.length))})`);
 }
 
-// --- Case 3: pathological metadata + indivisible large files still conform with a visible signal ---
+// --- Case 3: pathogenic single-file oversize fails explicitly instead of silently dropping it ---
+{
+  const file = {
+    path: 'src/oversized.ts',
+    content: 'export const x = ' + 'X'.repeat(150_000) + ';\n',
+  };
+  assert.throws(
+    () => buildChunkedMixXml(makeInput([file])),
+    /cannot preserve 1 file\(s\).*character limit/i,
+    'oversized single files fail explicitly rather than silently disappearing from the output'
+  );
+  console.log('PASS: oversized single file fails explicitly instead of silently dropping data');
+}
+
+// --- Case 3b: pathological metadata + indivisible files reject impossible complete output ---
 {
   const metadata = makeHugeMetadata(12_000);
   const files = padFiles(12, 60_000);
-  const result = buildChunkedMixXml(makeInput(files, { recentCommitsText: metadata, maxChunkChars: 500_000 }));
-  const parts = assertConforming('pathological metadata + large files', result, worstCase);
-  assert.ok(parts.length <= MAX_GEMINI_PARTS, `the ${MAX_GEMINI_PARTS}-part guardrail holds, got ${parts.length}`);
-  const hasVisibleSignal = parts.some(
-    (p) => p.content.includes(RECENT_COMMITS_TRUNCATION_MARKER) || p.content.includes(SKIP_MARKER)
+  assert.throws(
+    () => buildChunkedMixXml(makeInput(files, { recentCommitsText: metadata, maxChunkChars: 500_000 })),
+    new RegExp(`more than ${MAX_GEMINI_PARTS} parts`),
+    'indivisible files that cannot fit within ten parts fail instead of being silently dropped'
   );
-  assert.ok(hasVisibleSignal, 'oversized content is resolved with a visible skip or truncation marker');
-  const droppedFiles = files.length - result.stats.fileCount;
-  if (droppedFiles > 0) {
-    assert.ok(
-      parts.some((p) => p.content.includes(SKIP_MARKER)),
-      `${droppedFiles} skipped file(s) must be annotated with "${SKIP_MARKER}"`
+  console.log(`PASS: pathological metadata + large files explicitly reject output beyond ${MAX_GEMINI_PARTS} parts`);
+}
+
+// --- Case 3c: long continuation file trees are included in the measured size ---
+{
+  const files = makeLongPathFiles(1_500);
+  const result = buildChunkedMixXml(makeInput(files));
+  const parts = assertConforming('long paths without metadata', result, worstCase);
+  assert.ok(parts.length > 1 && parts.length <= MAX_GEMINI_PARTS, 'long paths split into conforming parts');
+  assert.equal(result.stats.fileCount, files.length, 'all long-path files are preserved without metadata');
+  assert.equal(
+    result.parts.reduce((count, part) => count + part.stats.fileCount, 0),
+    files.length,
+    'per-part file accounting includes every long-path file'
+  );
+  console.log(`PASS: long paths without metadata preserve ${files.length} files (${parts.length} parts)`);
+}
+
+// --- Case 3c: metadata remains opt-in, capped, and confined to Part 1 with long paths ---
+{
+  const files = makeLongPathFiles(1_500);
+  const result = buildChunkedMixXml(makeInput(files, { recentCommitsText: makeHugeMetadata() }));
+  const parts = assertConforming('long paths with metadata', result, worstCase);
+  assert.ok(parts.length > 1 && parts.length <= MAX_GEMINI_PARTS, 'metadata does not bypass the part limit');
+  assert.equal(result.stats.fileCount, files.length, 'all long-path files are preserved with metadata');
+  assert.ok(parts[0].content.includes(RECENT_COMMITS_TRUNCATION_MARKER), 'Part 1 visibly marks capped metadata');
+  const metadataSection = parts[0].content.slice(
+    parts[0].content.indexOf('<recent_commits>'),
+    parts[0].content.indexOf('</recent_commits>') + '</recent_commits>'.length
+  );
+  assert.ok(metadataSection.length <= MAX_RECENT_COMMITS_CHARS, 'Part 1 metadata remains within its cap');
+  assert.ok(
+    parts.slice(1).every((part) => !part.content.includes('<recent_commits>')),
+    'continuation parts do not repeat metadata'
+  );
+  console.log(`PASS: long paths with capped Part 1 metadata preserve ${files.length} files (${parts.length} parts)`);
+}
+
+// --- Case 3d: the ten-part guardrail rejects long-path output that cannot fit completely ---
+{
+  for (const metadata of [undefined, makeHugeMetadata()]) {
+    const files = makeLongPathFiles(5_000);
+    assert.throws(
+      () => buildChunkedMixXml(makeInput(files, { recentCommitsText: metadata })),
+      new RegExp(`more than ${MAX_GEMINI_PARTS} parts`),
+      `5,000 long paths ${metadata ? 'with' : 'without'} metadata must fail explicitly`
     );
   }
-  assert.ok(
-    parts.some((p) => p.content.includes(SKIP_MARKER)) || result.stats.fileCount === files.length,
-    'either declared skips or full file preservation signal the resolution'
-  );
-  console.log(`PASS: pathological combination conforms (${parts.length} parts, max ${Math.max(...parts.map((p) => p.length))}, fileCount ${result.stats.fileCount})`);
+  console.log(`PASS: long-path output beyond ${MAX_GEMINI_PARTS} parts is rejected with and without metadata`);
 }
 
 // --- Case 4a: normal small input keeps single-part behavior and stats ---
