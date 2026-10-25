@@ -9,7 +9,7 @@ Dieses Regelwerk definiert die standardisierten Betriebsmodi zur Ausführung von
 
 ---
 
-## 1. Die drei Betriebsmodi (Mode A, Mode B, Mode C)
+## 1. Die Betriebsmodi (Mode A-E)
 
 ### Mode A: Native Multi-Model Subagents (z. B. Google Antigravity)
 - **Architektur:** Vollwertige Unterstützung für `invoke_subagent` mit variabler Modell-Zuweisung (`flash_lite`, `flash`, `pro`).
@@ -32,6 +32,18 @@ Dieses Regelwerk definiert die standardisierten Betriebsmodi zur Ausführung von
 - **Kontext-Disziplin:** Lade jeweils nur die im aktuellen Batch spezifizierten Zieldateien.
 - **Single-Action Protocol:** Strikt ein Terminal-Befehl pro Schritt, keine Verkettung mit `&&` oder `;`.
 - **Modell-Switch-Hinweis:** Vor dem Start von `Tier: PRO`-Batches (Komplexität >= 7) empfiehlt der Agent einen Modellwechsel auf ein Pro-Modell oder führt einen expliziten Self-Review-Pass durch.
+
+### Mode D: Cursor Task Subagents
+- **Architektur:** Cursor `Task` (`generalPurpose` für Implementierer, `explore` für Read-Only-Audits); `model: "inherit"` als Default.
+- **Mapping:** `invoke_subagent` → `Task`; `flash_lite`, `flash` und `pro` sind keine gültigen Cursor-Modell-Slugs.
+- **Verlinkung:** `[Name](agent-id)`; Pläne und Reports liegen in `.tmp/`.
+
+### Mode E: Kilo Code (native `task`-Subagenten und Skill-Tags)
+- **Architektur:** Subagenten laufen über das `task`-Tool (`subagent_type: explore` für Read-Only-Audits, `general` für Implementierer); `background: true` nur für disjunkte, nicht blockierende Arbeit.
+- **Modell-Vererbung:** `model`, `provider` und `variant` werden weggelassen, damit der Subagent das aktive Modell erbt (entspricht `Model: 'inherit'`). Overrides ausschließlich auf ausdrücklichen Nutzerwunsch; `TypeName`- und `Model`-Enums existieren nicht.
+- **Tag-Routing:** Die `#...`-Tags sind Prompt-Marker, keine eigenen Slash-Commands. Das Skill selbst ist als `/flash` verfügbar und wird über das `skill`-Tool geladen; Routing siehe `.agents/WORKFLOWS.md`.
+- **Verlinkung:** Kein `conversation://` und kein Transcript-Pfad-Fallback. Der `task`-Aufruf liefert eine `task_id`; Agent-Manager-Sessions (`ses_...`) nur nutzen, wenn der Nutzer sie ausdrücklich startet.
+- **Shell:** PowerShell 5.1 unterstützt kein `&&`. Zustandsändernde Befehle strikt einzeln ausführen, keine Verkettung mit `;` (Projektregel).
 
 ---
 

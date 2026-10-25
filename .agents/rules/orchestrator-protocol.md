@@ -15,8 +15,8 @@ description: "Apply this rule when orchestrating multi-stage tasks, delegating t
    - **Tier 2 (`flash` — Score 4–6, Default):** Standard-Implementierungen (<= 3–4 Dateien, klare Interfaces, Scoped Features, Unit-Tests in Dateien < 500 Zeilen) mit aktivem `/flash` Single-Action Protocol (keine `&&`/`;`-Verkettung).
    - **Tier 3 (`pro` / `inherit` — Score 7–10):** Hohe Komplexität, architekturkritische Eingriffe, Cross-Package-Refactorings oder Pro Decomposition.
 3. **Multi-IDE & Live-Streaming Deep-Links:**
-   - In Mode A (Google Antigravity) erzeugt der Orchestrator bei jedem Subagent-Start sofort einen klickbaren Stream-Link: `[⚡ Watch Stream](conversation://<conversation-id>)`.
-   - Die Multi-IDE-Betriebsmodi (Mode A, Mode B, Mode C) sind verbindlich in [.agents/rules/multi-ide-setup.md](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/.agents/rules/multi-ide-setup.md) definiert.
+   - In Mode A (Google Antigravity) erzeugt der Orchestrator bei jedem Subagent-Start sofort einen klickbaren Stream-Link: `[⚡ Watch Stream](conversation://<conversation-id>)`. In Mode E (Kilo Code) entfällt der Link; der `task`-Aufruf liefert eine `task_id`, die im Bericht genannt wird.
+   - Die Multi-IDE-Betriebsmodi (Mode A-E) sind verbindlich in [.agents/rules/multi-ide-setup.md](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/.agents/rules/multi-ide-setup.md) definiert.
 
 ---
 

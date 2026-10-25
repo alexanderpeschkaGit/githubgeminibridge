@@ -38,9 +38,9 @@ description: >-
          - Complexity `4–6` $\rightarrow$ `flash` model with Single-Action Protocol.
          - Complexity `7–10` $\rightarrow$ `pro` (plus a Reviewer at `>= 8`).
          - Fallback $\rightarrow$ `inherit`.
-       - **Zero-PRO Guard (`--no-pro` / `--no-pro-escalation`):** When flagged, PRO escalation is suppressed; a failed targeted repair halts in **Graceful Pause (Dirty Inspection)** with modified files preserved.
+       - **Budget Mode (Zero-PRO; `--no-pro`, `--no-pro-escalation`, `#dflash`, or explicit user instruction):** PRO escalation is suppressed; a failed targeted repair halts in **Graceful Pause (Dirty Inspection)** with modified files preserved.
     3. **Subagent Invocation & Prompts:** Spawn `Artifact Executor` instructing it to read `.tmp/solve_report.md`, execute all steps thoroughly adhering to `flash/SKILL.md` (Single-Action Protocol), perform validation (`npm run typecheck` in every touched package plus `node scripts/patches_and_tests/worker-smoke.mjs`), and finalize `.tmp/solve_report.md`.
-    4. **Handoff & Monitoring:** Inform the user with the subagent session link (Mode A: `[View Subagent Stream](conversation://<subagent-conversation-id>)`; Mode D Cursor: `[Name](agent-id)`) and the local report link (`[📋 View Execution Plan & Report](file:///<workspace-path>/.tmp/solve_report.md)`). Stop calling tools and wait for the subagent to report back.
+    4. **Handoff & Monitoring:** Inform the user with the subagent session link (Mode A: `[View Subagent Stream](conversation://<subagent-conversation-id>)`; Mode D Cursor: `[Name](agent-id)`; Mode E Kilo: the returned `task_id`) and the local report link (`[📋 View Execution Plan & Report](file:///<workspace-path>/.tmp/solve_report.md)`). Stop calling tools and wait for the subagent to report back.
 
 - **Step 4: Finalize Living Change Report (Audit & Completion)**
   - When the subagent completes (or upon inline completion in Mode C, or Cursor `Task` return in Mode D), the Coordinator MUST execute a **Combo Anti-Phantom Diff Audit** before declaring completion:
