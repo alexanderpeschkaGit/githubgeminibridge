@@ -10,3 +10,9 @@ Thumbs.db
 .dev.vars.*
 
 .tmp/
+
+# large/generated artifacts
+repmixBridge.txt
+plans/EXECUTION_LOG.md
+plans/TEST_LOG.md
+plans/STATE.md
