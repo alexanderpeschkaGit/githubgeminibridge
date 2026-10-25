@@ -842,3 +842,22 @@
 - **Live-Verifikation:** Account-1 und Account-2 `/health` liefern `status: ok`, Version `2.0.4`, `hasBridgeSecret: true`, `hasGithubToken: true`. Secret-Listen bestätigen Account-1 `GITHUB_TOKEN`/`BRIDGE_SECRET` (zusätzlich `WORKER_SECRET`) und Account-2 `GITHUB_PAT`/`WORKER_SECRET`; keine Secret-Werte gelesen.
 - **Offen:** Die Health- und Secret-Key-Prüfung beweist nicht die GitHub-Identität des PAT. Dafür ist eine authentifizierte `POST /graphql`-`viewer { login }`-Abfrage je Worker nötig; Bridge-Secrets wurden nicht erfragt oder offengelegt.
 - **Git:** Kein Commit oder Push; Plan-10-Änderungen bleiben lokal.
+
+### [2026-10-25T21:05:00Z] | DONE - `#dflash`-Profil auf Kilo-Kontext umgestellt
+- **Anlass:** Die Evaluation des `#dflash`-Profils zeigte modellbezogene Lücken (keine Anti-Halluzinations-Pflicht, kein Fehlerbudget) und Anweisungen, die in Kilo nicht ausführbar sind (`invoke_subagent`, `Model`-Enums, `conversation://`, `<thought>`, `kilo.jsonc`, CLI-Flag-Semantik).
+- **Änderung:** `.agents/skills/flash/SKILL.md` - `#dflash`-Profil neu gefasst: Runtime-Modell-IDs, Verify-before-edit, Batch-/Tier-Grenzen, Fehlerbudget, P1-Gate, Kilo-Subagent-Mapping via `task`, Output-Disziplin; `<thought>`-, 1M-Kontext- und `tool-suppression`-Behauptungen entfernt; 500-Zeilen-Ausnahme präzisiert; `#wave-exec`-Tippfehler korrigiert; Mojibake beseitigt.
+- **Konsistenz:** `.agents/rules/multi-ide-setup.md` um Mode D (Cursor) und Mode E (Kilo) ergänzt; `exec`, `exec-wave`, `delegate` und `solve` nutzen "Budget Mode" statt CLI-Flag-Semantik, gaten `conversation://` auf Mode A und nennen in Kilo die `task_id`; `WORKFLOWS.md`, `agents.md` und `orchestrator-protocol.md` synchronisiert.
+- **Entscheidung:** Kein `.kilo/command`-Wrapper angelegt; Skills sind in Kilo als `/skill-name` verfügbar, `#dflash` bleibt Prompt-Tag mit Description-Match.
+- **Validierung:** Alle 9 Dateien < 500 Zeilen; `git diff --check` PASS; gezielte Suche bestätigt den Entfall der inkompatiblen Begriffe. Kein Commit, kein Push.
+
+### [2026-10-25T21:10:42Z] | PLAN_START - `#exec-wave #dflash` Decomposition Wave 1
+- **Auftrag:** Wave 1 Scan (read-only) aller `packages/*/src` + `shared/`; Gate `>= 500` (Pflicht) / `300-499` (Warnzone). Wave 2-4 nur bei Gate-Treffer bzw. proaktiver Hochrisiko-Dekomposition.
+- **Befund (Methodik):** `Measure-Object -Line` zaehlt nur nicht-leere Zeilen und unterschaetzt die Dateien; die verbindliche Messung von Probe 10 (`split('\n').length`) wurde nachgezogen. Echte Groessen: `shadowHud.ts` 488, `mixer.ts` 484, `github.ts` 481, `patcher.ts` 440, `mixChunkner.ts` 439. **Keine Datei `>= 500`** - kein Pflicht-Gate ausgeloest.
+- **Risiko:** `shadowHud.ts` lag mit 12 Zeilen Abstand an der harten Grenze und ist Orchestrierungs-Hotspot; proaktive Dekomposition nach Plan-Empfehlung beschlossen (Flash-Mikro-Batch, kein PRO).
+
+### [2026-10-25T21:10:42Z] | DONE - Wave 2 Mikro-Batch: Pure Render-Extraktion (`hudRender.ts`)
+- **Aenderung:** `renderState`-Body (Status-Badge, OID-Badge, Retry-Indikator, Linter-Fehlerliste inkl. Self-Healing-Button, Patch-Queue-DOM) nach NEU `packages/userscript-hud/src/ui/hudRender.ts` (`renderHudState` + `HudRenderDeps`) verschoben. `shadowHud.ts` behaelt die Funktion als duenne Deps-Bruecke (`updateState`/`onApplyPatch` als Closures, damit die `controller`-TDZ unberuehrt bleibt).
+- **Paritaet:** Keine Logik-, Selektor-, CSS- oder Textaenderung; `createHudElement`-Re-Export und alle Importe aus `shadowHud.ts` bleiben stabil. Entfernte Imports: `injectPromptText`, `buildSelfHealingPrompt` (nur im verschobenen Render-Pfad genutzt).
+- **Groessen:** `shadowHud.ts` 488 -> 402 Zeilen, NEU `hudRender.ts` 109 Zeilen (Gesetz `< 500` eingehalten).
+- **Bundle:** `gemini-bridge.user.js` neu gebaut (`dist` <=> Root synchron, Version unveraendert `2.0.15`).
+- **Nicht ausgefuehrt (Gate):** Wave 3/3b (mixer/patcher/github/stateful HUD) bleiben Plan-only, da kein File `>= 500`; Map/Seams dokumentiert im Wave-1-Report.

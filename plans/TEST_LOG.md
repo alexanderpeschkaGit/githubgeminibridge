@@ -501,3 +501,18 @@ Nicht verifizierbar in dieser Umgebung (Automations-Browser ohne Tampermonkey-Ex
 - Account-2 `/health`: **PASS**, `version: 2.0.4`, both secret-presence flags true.
 - Wrangler secret-name listings: Account 1 has `GITHUB_TOKEN`, `BRIDGE_SECRET` (and `WORKER_SECRET`); Account 2 has `GITHUB_PAT`, `WORKER_SECRET`. Secret values were not read.
 - GitHub account identity has **not** yet been verified via authenticated GraphQL `viewer { login }`; health only confirms secret presence. No commit or push.
+
+### [2026-10-25T21:05:00Z] | `#dflash` Kilo-Kontext - Dokumentations- und Routing-Prüfung
+- `Select-String` über die 9 geänderten Dateien: **PASS** - keine Treffer für `kilo.jsonc`, `<thought>`, `1M context`, `tool-suppression`, `V4.1-Flash-1017`, `If the command includes`, `Zero-PRO Token Guard`.
+- `git diff --check`: **PASS** - nur CRLF-Hinweise, keine Whitespace-Fehler.
+- Zeilen-Audit: **PASS** - flash 46, exec 60, exec-wave 77, delegate 41, solve 64, multi-ide-setup 53, orchestrator-protocol 61, WORKFLOWS 19, agents.md 68 (alle < 500).
+- Skill-Frontmatter: **PASS** - `name: flash` entspricht dem Verzeichnis; die `description` nennt `#dflash`.
+- Kein Code, kein Build, kein Deployment; keine Laufzeittests erforderlich.
+
+### [2026-10-25T21:10:42Z] | `#exec-wave #dflash` Render-Extraktion - Verifikation
+- Zeilen-Audit (verbindliche Methode `split('\n').length`): **PASS** - `shadowHud.ts` 403 (488 -> 402 per `Get-Content`/`.Count`), `hudRender.ts` 109; keine aktive Quelldatei `>= 500`.
+- HUD TypeScript: **PASS** - `node packages/edge-worker/node_modules/typescript/bin/tsc --noEmit -p packages/userscript-hud/tsconfig.json` (kein Output; `tsc` ist in diesem Paket nicht auf PATH).
+- Userscript Build: **PASS** - `npm run build` in `packages/userscript-hud`, Bundle 99.1 KB, `dist` und Root synchron, Version `2.0.15` unveraendert.
+- Aggregat-Gate: **PASS** - `node scripts/patches_and_tests/run-regressions.mjs` 14/14 Suiten.
+- Smoke-Suite: **PASS** - `node scripts/patches_and_tests/worker-smoke.mjs` 14/14 Probes inkl. Live-`/health` und Probe 10 (0 Dateien `>= 500`).
+- Paritaet: **PASS** - reine Codeverschiebung ohne geaenderte Selektoren/Texte; `git diff` zeigt nur Extract + Import-Anpassung.

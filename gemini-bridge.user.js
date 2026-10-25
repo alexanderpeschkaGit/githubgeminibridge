@@ -41,7 +41,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
-  // packages/userscript-hud/src/services/storage.ts
+  // src/services/storage.ts
   var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
@@ -250,7 +250,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // packages/userscript-hud/src/services/workerClient.ts
+  // src/services/workerClient.ts
   async function gmRequestJson(url, method, secret, body) {
     const headers = {
       "Accept": "application/json",
@@ -401,7 +401,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
 
-  // packages/userscript-hud/src/dom/injector.ts
+  // src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
     const geminiSelectors = [
@@ -506,7 +506,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return true;
   }
 
-  // packages/userscript-hud/src/services/selfHealing.ts
+  // src/services/selfHealing.ts
   var MAX_SELF_HEALING_RETRIES = 3;
   function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt) {
     const formattedErrors = errors.map((err, idx) => {
@@ -613,7 +613,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/patchOidState.ts
+  // src/services/patchOidState.ts
   var OID_REGEX2 = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
@@ -674,7 +674,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/runtimeInfo.ts
+  // src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
   function getRunningScriptVersion() {
     if (typeof GM_info === "undefined" || !GM_info || !GM_info.script) {
@@ -708,7 +708,7 @@ Fix Instructions:
     document.body.appendChild(box);
   }
 
-  // packages/userscript-hud/src/services/patchOidStore.ts
+  // src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
       headOidScope: getStoredValue("head_oid_scope", ""),
@@ -748,7 +748,7 @@ Fix Instructions:
     }
   }
 
-  // packages/userscript-hud/src/services/patchIdentity.ts
+  // src/services/patchIdentity.ts
   function canonicalize(value) {
     if (Array.isArray(value)) {
       return value.map((entry) => canonicalize(entry));
@@ -779,7 +779,7 @@ Fix Instructions:
     return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
   }
 
-  // packages/userscript-hud/src/services/patchQueue.ts
+  // src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
   function isDuplicatePatch(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
@@ -810,7 +810,7 @@ Fix Instructions:
     return { applied, total };
   }
 
-  // shared/repoPaths.ts
+  // ../../shared/repoPaths.ts
   function normalizeRepoPath(input) {
     return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
   }
@@ -832,7 +832,7 @@ Fix Instructions:
     return null;
   }
 
-  // packages/userscript-hud/src/services/patchPaths.ts
+  // src/services/patchPaths.ts
   function resolvePatchPaths(payload, prompt) {
     const patches = (payload.patches || []).map((patch) => ({
       ...patch,
@@ -858,7 +858,7 @@ Fix Instructions:
     return { payload: { ...payload, patches }, cancelled: false };
   }
 
-  // packages/userscript-hud/src/services/accountProfiles.ts
+  // src/services/accountProfiles.ts
   var ACCOUNT_PROFILES = [
     { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
     { id: "account2", label: "Account 2", workerName: "gemini-git-bridge-account2" }
@@ -891,7 +891,7 @@ Fix Instructions:
     return "foreign";
   }
 
-  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
+  // src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -1213,7 +1213,7 @@ Fix Instructions:
     return el;
   }
 
-  // packages/userscript-hud/src/ui/hudDomTree.ts
+  // src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -1435,7 +1435,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/updateChecker.ts
+  // src/services/updateChecker.ts
   var SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js";
   var LAST_CHECK_KEY = "script_update_last_check";
   var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
@@ -1530,7 +1530,7 @@ Fix Instructions:
     return evaluateUpdateState(getRunningScriptVersion(), latestVersion);
   }
 
-  // packages/userscript-hud/src/ui/updateBanner.ts
+  // src/ui/updateBanner.ts
   var TRANSIENT_MESSAGE_MS = 6e3;
   function initHudUpdateBanner(dom, deps = {}) {
     const check = deps.check ?? checkForScriptUpdate;
@@ -1625,7 +1625,7 @@ Fix Instructions:
     void runCheck(false);
   }
 
-  // packages/userscript-hud/src/ui/hudConfigBindings.ts
+  // src/ui/hudConfigBindings.ts
   function bindHudConfigInputs(deps) {
     const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, renderState } = deps;
     dom.repoInput.onchange = () => {
@@ -1729,7 +1729,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/hudAccountSwitch.ts
+  // src/ui/hudAccountSwitch.ts
   var activeDeps = null;
   function profileInfo(id) {
     return ACCOUNT_PROFILES.find((p) => p.id === id) ?? ACCOUNT_PROFILES[0];
@@ -1831,7 +1831,95 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/shadowHud.ts
+  // src/ui/hudRender.ts
+  function renderHudState({ dom, state, config, updateState, onApplyPatch }) {
+    dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
+    dom.triggerBadge.textContent = state.status;
+    if (state.headOid) {
+      dom.oidBadge.textContent = state.headOid;
+      dom.oidBadge.style.color = "#6ee7b7";
+    } else {
+      dom.oidBadge.textContent = "(Not mixed yet)";
+      dom.oidBadge.style.color = "#94a3b8";
+    }
+    dom.retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
+    const statusClasses = {
+      ERROR: "error",
+      PREFLIGHT_FAILED: "error",
+      GIT_CONFLICT: "error",
+      COMMITTED: "success",
+      MIXING: "info",
+      PATCHING: "info"
+    };
+    dom.statusBox.className = `hud-status-box ${statusClasses[state.status] || "idle"}`;
+    dom.statusBox.textContent = "";
+    const mainMsg = createHudElement("div", void 0, state.statusMessage);
+    dom.statusBox.appendChild(mainMsg);
+    if (state.lastErrors && state.lastErrors.length > 0) {
+      const errList = createHudElement("ul");
+      errList.style.cssText = "margin: 6px 0 0 16px; padding: 0; font-size: 11px;";
+      state.lastErrors.forEach((err) => {
+        const li = createHudElement("li", void 0, `[${err.stage}] ${err.file}: ${err.message}`);
+        errList.appendChild(li);
+      });
+      dom.statusBox.appendChild(errList);
+      const healBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F527} Send Self-Healing Prompt to Chat");
+      healBtn.style.cssText = "margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;";
+      healBtn.onclick = () => {
+        const nextRetry = (state.retryCount || 0) + 1;
+        const prompt = buildSelfHealingPrompt(
+          state.lastErrors,
+          config.repo,
+          config.branch,
+          state.headOid,
+          nextRetry
+        );
+        injectPromptText(prompt, false);
+        updateState({
+          retryCount: nextRetry,
+          statusMessage: `\u{1F527} Injected self-healing prompt (Turn ${nextRetry}/${MAX_SELF_HEALING_RETRIES}) into chat.`
+        });
+      };
+      dom.statusBox.appendChild(healBtn);
+    }
+    const patchCount = state.harvestedPatches.length;
+    const isBusy = state.status === "PATCHING" || state.status === "MIXING";
+    dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
+    dom.applyAllBtn.textContent = patchCount > 0 ? `\u26A1 Apply All (${patchCount})` : "\u26A1 Apply All";
+    dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
+    dom.patchQueueEl.textContent = "";
+    if (state.harvestedPatches.length === 0) {
+      dom.patchQueueEl.appendChild(dom.emptyQueueMsg);
+    } else {
+      state.harvestedPatches.forEach((patch) => {
+        const item = createHudElement("div", "hud-patch-item");
+        const meta = createHudElement("div", "hud-patch-item-meta");
+        const paths = (patch.payload.patches || []).map((p) => p.path);
+        const pathLabel = paths.length > 0 ? paths.join(", ") : patch.commitMessage;
+        const itemTitle = createHudElement(
+          "div",
+          "hud-patch-item-title",
+          `${patch.mode === "v2_json" ? "\u26A1" : "\u{1F4DD}"} ${pathLabel}`
+        );
+        itemTitle.title = pathLabel;
+        const itemSub = createHudElement("div", "hud-patch-item-sub", patch.commitMessage);
+        itemSub.title = patch.commitMessage;
+        const applyBtn = createHudElement("button", "hud-btn hud-btn-primary", "Apply");
+        applyBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
+        applyBtn.disabled = isBusy;
+        applyBtn.onclick = () => {
+          onApplyPatch(patch);
+        };
+        meta.appendChild(itemTitle);
+        meta.appendChild(itemSub);
+        item.appendChild(meta);
+        item.appendChild(applyBtn);
+        dom.patchQueueEl.appendChild(item);
+      });
+    }
+  }
+
+  // src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -1862,90 +1950,15 @@ Fix Instructions:
       });
     }
     function renderState() {
-      dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
-      dom.triggerBadge.textContent = state.status;
-      if (state.headOid) {
-        dom.oidBadge.textContent = state.headOid;
-        dom.oidBadge.style.color = "#6ee7b7";
-      } else {
-        dom.oidBadge.textContent = "(Not mixed yet)";
-        dom.oidBadge.style.color = "#94a3b8";
-      }
-      dom.retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
-      const statusClasses = {
-        ERROR: "error",
-        PREFLIGHT_FAILED: "error",
-        GIT_CONFLICT: "error",
-        COMMITTED: "success",
-        MIXING: "info",
-        PATCHING: "info"
-      };
-      dom.statusBox.className = `hud-status-box ${statusClasses[state.status] || "idle"}`;
-      dom.statusBox.textContent = "";
-      const mainMsg = createHudElement("div", void 0, state.statusMessage);
-      dom.statusBox.appendChild(mainMsg);
-      if (state.lastErrors && state.lastErrors.length > 0) {
-        const errList = createHudElement("ul");
-        errList.style.cssText = "margin: 6px 0 0 16px; padding: 0; font-size: 11px;";
-        state.lastErrors.forEach((err) => {
-          const li = createHudElement("li", void 0, `[${err.stage}] ${err.file}: ${err.message}`);
-          errList.appendChild(li);
-        });
-        dom.statusBox.appendChild(errList);
-        const healBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F527} Send Self-Healing Prompt to Chat");
-        healBtn.style.cssText = "margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;";
-        healBtn.onclick = () => {
-          const nextRetry = (state.retryCount || 0) + 1;
-          const prompt = buildSelfHealingPrompt(
-            state.lastErrors,
-            config.repo,
-            config.branch,
-            state.headOid,
-            nextRetry
-          );
-          injectPromptText(prompt, false);
-          controller.updateState({
-            retryCount: nextRetry,
-            statusMessage: `\u{1F527} Injected self-healing prompt (Turn ${nextRetry}/${MAX_SELF_HEALING_RETRIES}) into chat.`
-          });
-        };
-        dom.statusBox.appendChild(healBtn);
-      }
-      const patchCount = state.harvestedPatches.length;
-      const isBusy = state.status === "PATCHING" || state.status === "MIXING";
-      dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
-      dom.applyAllBtn.textContent = patchCount > 0 ? `\u26A1 Apply All (${patchCount})` : "\u26A1 Apply All";
-      dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
-      dom.patchQueueEl.textContent = "";
-      if (state.harvestedPatches.length === 0) {
-        dom.patchQueueEl.appendChild(dom.emptyQueueMsg);
-      } else {
-        state.harvestedPatches.forEach((patch) => {
-          const item = createHudElement("div", "hud-patch-item");
-          const meta = createHudElement("div", "hud-patch-item-meta");
-          const paths = (patch.payload.patches || []).map((p) => p.path);
-          const pathLabel = paths.length > 0 ? paths.join(", ") : patch.commitMessage;
-          const itemTitle = createHudElement(
-            "div",
-            "hud-patch-item-title",
-            `${patch.mode === "v2_json" ? "\u26A1" : "\u{1F4DD}"} ${pathLabel}`
-          );
-          itemTitle.title = pathLabel;
-          const itemSub = createHudElement("div", "hud-patch-item-sub", patch.commitMessage);
-          itemSub.title = patch.commitMessage;
-          const applyBtn = createHudElement("button", "hud-btn hud-btn-primary", "Apply");
-          applyBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
-          applyBtn.disabled = isBusy;
-          applyBtn.onclick = () => {
-            controller.handleApplyPatch(patch);
-          };
-          meta.appendChild(itemTitle);
-          meta.appendChild(itemSub);
-          item.appendChild(meta);
-          item.appendChild(applyBtn);
-          dom.patchQueueEl.appendChild(item);
-        });
-      }
+      renderHudState({
+        dom,
+        state,
+        config,
+        updateState: (partial) => controller.updateState(partial),
+        onApplyPatch: (patch) => {
+          controller.handleApplyPatch(patch);
+        }
+      });
     }
     const openPanel = () => {
       dom.panel.classList.add("open");
@@ -2187,7 +2200,7 @@ Fix Instructions:
     return controller;
   }
 
-  // packages/userscript-hud/src/dom/pathHints.ts
+  // src/dom/pathHints.ts
   var FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
   var LABELED_HEADER_PATH = /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
   var PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
@@ -2302,7 +2315,7 @@ Fix Instructions:
     fillMissingPatchPaths(patch, extractPathFromCode(codeText, element));
   }
 
-  // packages/userscript-hud/src/dom/harvester.ts
+  // src/dom/harvester.ts
   function isSearchReplace(text) {
     return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
   }
@@ -2589,7 +2602,7 @@ Fix Instructions:
     return observer;
   }
 
-  // packages/userscript-hud/src/index.ts
+  // src/index.ts
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {

@@ -11,10 +11,9 @@ import {
   requestBranchHead,
   requestWorkerPatch
 } from '../services/workerClient';
-import { injectRepoMixFile, injectRepoMixParts, injectPromptText } from '../dom/injector';
+import { injectRepoMixFile, injectRepoMixParts } from '../dom/injector';
 import {
   executeSelfHealingTurn,
-  buildSelfHealingPrompt,
   MAX_SELF_HEALING_RETRIES,
 } from '../services/selfHealing';
 import {
@@ -43,6 +42,7 @@ import { buildHudDomTree } from './hudDomTree';
 import { initHudUpdateBanner } from './updateBanner';
 import { bindHudConfigInputs } from './hudConfigBindings';
 import { bindAccountSwitch } from './hudAccountSwitch';
+import { renderHudState } from './hudRender';
 
 export {
   HUD_STYLES,
@@ -102,99 +102,13 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
   // Helper to re-render UI state
   function renderState() {
-    dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
-    dom.triggerBadge.textContent = state.status;
-
-    if (state.headOid) {
-      dom.oidBadge.textContent = state.headOid;
-      dom.oidBadge.style.color = '#6ee7b7';
-    } else {
-      dom.oidBadge.textContent = '(Not mixed yet)';
-      dom.oidBadge.style.color = '#94a3b8';
-    }
-
-    dom.retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
-
-    const statusClasses: Record<string, string> = {
-      ERROR: 'error', PREFLIGHT_FAILED: 'error', GIT_CONFLICT: 'error',
-      COMMITTED: 'success', MIXING: 'info', PATCHING: 'info'
-    };
-    dom.statusBox.className = `hud-status-box ${statusClasses[state.status] || 'idle'}`;
-
-    // Render status and any linter errors cleanly without innerHTML
-    dom.statusBox.textContent = '';
-    const mainMsg = createHudElement('div', undefined, state.statusMessage);
-    dom.statusBox.appendChild(mainMsg);
-
-    if (state.lastErrors && state.lastErrors.length > 0) {
-      const errList = createHudElement('ul');
-      errList.style.cssText = 'margin: 6px 0 0 16px; padding: 0; font-size: 11px;';
-      state.lastErrors.forEach((err) => {
-        const li = createHudElement('li', undefined, `[${err.stage}] ${err.file}: ${err.message}`);
-        errList.appendChild(li);
-      });
-      dom.statusBox.appendChild(errList);
-
-      const healBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🔧 Send Self-Healing Prompt to Chat');
-      healBtn.style.cssText =
-        'margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;';
-      healBtn.onclick = () => {
-        const nextRetry = (state.retryCount || 0) + 1;
-        const prompt = buildSelfHealingPrompt(
-          state.lastErrors,
-          config.repo,
-          config.branch,
-          state.headOid,
-          nextRetry
-        );
-        injectPromptText(prompt, false);
-        controller.updateState({
-          retryCount: nextRetry,
-          statusMessage: `🔧 Injected self-healing prompt (Turn ${nextRetry}/${MAX_SELF_HEALING_RETRIES}) into chat.`,
-        });
-      };
-      dom.statusBox.appendChild(healBtn);
-    }
-
-    const patchCount = state.harvestedPatches.length;
-    const isBusy = state.status === 'PATCHING' || state.status === 'MIXING';
-    dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
-    dom.applyAllBtn.textContent = patchCount > 0 ? `⚡ Apply All (${patchCount})` : '⚡ Apply All';
-    dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
-
-    // Render Patch Queue
-    dom.patchQueueEl.textContent = '';
-    if (state.harvestedPatches.length === 0) {
-      dom.patchQueueEl.appendChild(dom.emptyQueueMsg);
-    } else {
-      state.harvestedPatches.forEach((patch) => {
-        const item = createHudElement('div', 'hud-patch-item');
-        const meta = createHudElement('div', 'hud-patch-item-meta');
-        const paths = (patch.payload.patches || []).map((p) => p.path);
-        const pathLabel = paths.length > 0 ? paths.join(', ') : patch.commitMessage;
-        const itemTitle = createHudElement(
-          'div',
-          'hud-patch-item-title',
-          `${patch.mode === 'v2_json' ? '⚡' : '📝'} ${pathLabel}`
-        );
-        itemTitle.title = pathLabel;
-        const itemSub = createHudElement('div', 'hud-patch-item-sub', patch.commitMessage);
-        itemSub.title = patch.commitMessage;
-
-        const applyBtn = createHudElement('button', 'hud-btn hud-btn-primary', 'Apply');
-        applyBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
-        applyBtn.disabled = isBusy;
-        applyBtn.onclick = () => {
-          controller.handleApplyPatch(patch);
-        };
-
-        meta.appendChild(itemTitle);
-        meta.appendChild(itemSub);
-        item.appendChild(meta);
-        item.appendChild(applyBtn);
-        dom.patchQueueEl.appendChild(item);
-      });
-    }
+    renderHudState({
+      dom,
+      state,
+      config,
+      updateState: (partial) => controller.updateState(partial),
+      onApplyPatch: (patch) => { controller.handleApplyPatch(patch); },
+    });
   }
 
   // Toggle Panel

@@ -117,3 +117,13 @@
 - **Regression:** NEU `scripts/patches_and_tests/test-hud-update-banner.mjs` (Fake-DOM + Fake-Timer, 4 Szenarien: Update-Banner persistent bis zum Klick, Install-Klick zieht es zurueck, "up to date" laeuft ab, unbekannte Version bleibt als Diagnose stehen) im Aggregat-Gate.
 - **Verifikation:** HUD `tsc --noEmit` PASS; `run-regressions.mjs --include-smoke` PASS (15/15 Suiten); Userscript `2.0.15`, `dist` <=> Root byte-identisch (SHA-256 `A02EF73900DF…`).
 - **Offen:** Push nach `origin/main` (Hard Stop) — erst danach kann Tampermonkey `2.0.15` anbieten.
+### Governance-Update `#dflash` / Mode E (2026-10-25, `DONE`)
+- **Ziel:** `#dflash`-Profil und die Workflow-Skills an den Kilo-Kontext anpassen, ohne die Multi-IDE-Modi A-D zu entfernen.
+- **Umsetzung:** `flash/SKILL.md` neu gefasst (Verify-before-edit, Fehlerbudget, Tier-Slicing, P1-Gate, Kilo-`task`-Mapping); `multi-ide-setup.md` um Mode D und Mode E ergänzt; `exec`, `exec-wave`, `delegate` und `solve` nutzen "Budget Mode" und liefern in Kilo die `task_id`; `WORKFLOWS.md`, `agents.md` und `orchestrator-protocol.md` synchronisiert.
+- **Verifikation:** Alle geänderten Regel- und Skill-Dateien < 500 Zeilen; `git diff --check` PASS; keine Treffer für die entfernten Kilo-inkompatiblen Begriffe.
+- **Offen:** Kein Commit, kein Push.
+### Decomposition Wave (`#exec-wave #dflash`, 2026-10-25, `DONE`)
+- **Gate:** Wave 1 Scan ueber `packages/*/src` + `shared/`. Verbindliche Zeilenmessung (`split('\n')`, Probe 10): `shadowHud.ts` 488, `mixer.ts` 484, `github.ts` 481, `patcher.ts` 440, `mixChunker.ts` 439. **Keine Datei `>= 500`**, daher kein Pflicht-Gate; Wave 3/3b (stateful/network) bleiben Plan-only.
+- **Mikro-Batch:** `renderState` aus `shadowHud.ts` nach NEU `ui/hudRender.ts` extrahiert (`renderHudState`, `HudRenderDeps`); `shadowHud.ts` 488 -> 402, `hudRender.ts` 109 Zeilen. 100 % Paritaet (keine Logik-/Selektor-/Textaenderung), Bundle neu gebaut (`2.0.15`, `dist` <=> Root).
+- **Verifikation:** HUD `tsc --noEmit` PASS; `run-regressions.mjs` 14/14; `worker-smoke.mjs` 14/14 inkl. Live-Health und Probe 10.
+- **Offen:** Kein Commit, kein Push (Checkpoint-Policy der Welle).
