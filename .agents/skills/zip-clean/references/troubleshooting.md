@@ -22,5 +22,11 @@ Windows standard paths use backslashes (`\`), but ZIP file specifications requir
   This ensures compatibility when opening the resulting archive on Linux, macOS, Android, or cloud servers.
 
 ## 5. Secret Protection
-`git ls-files --exclude-standard` strictly obeys `.gitignore`. However, if someone forgot to add a secret file (like a newly created `.env.local` that isn't ignored yet), it might get picked up.
-- Use `-AdditionalExcludes @('*.env*', '*.pem', '*.key')` or add the file to `.gitignore` first.
+`git ls-files --exclude-standard` strictly obeys `.gitignore`, and `-AdditionalExcludes` now defaults to `@('*.zip', '*.tmp', '.env*', '*.pem', '*.key')`, so stray secrets are filtered even when a rule is missing from `.gitignore`.
+- For other secret naming schemes (e.g. `*.p12`, `*.pfx`, `id_rsa*`), append patterns: `-AdditionalExcludes @('*.zip','*.tmp','.env*','*.pem','*.key','*.p12','id_rsa*')`.
+- The exclude list is a safety net, not a replacement for ignore rules — always add the file to `.gitignore` as well.
+
+## 6. Non-Git Fallback Enumeration
+When `git ls-files` yields nothing, the script falls back to `Get-ChildItem -Recurse -File`.
+- The fallback skips `.git`, `node_modules`, `dist`, `.wrangler`, `.tmp`, and every `repomix*` directory (e.g. `repomix-output/`) before `-AdditionalExcludes` runs, so it never packages dependencies, build output, local Wrangler state, or bundler dumps. Root-level runner files (`repomix.ps1`, `repomix.bat`, `repomix.config.json`) remain packaged.
+- If a new heavy directory still appears in a fallback archive, add it to `$excludedDirs` in `zip-clean.ps1` or extend `-AdditionalExcludes`.

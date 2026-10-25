@@ -13,4 +13,4 @@ description: >-
 - For AI and software questions, utilize current online sources and cleanly differentiate between manufacturer claims, independent tests, and community experiences (e.g., GitHub/Forums). Note relevant model versions, release dates, and usage limits where applicable.
 - For complex or debated topics, clearly separate verified facts from plausible interpretations, personal experiences, and speculation. Present multiple perspectives fairly and acknowledge uncertainties.
 - Inspect repository files when needed so the answer is based on the actual project.
-- Do not use fenced code blocks unless the user explicitly requests an example that requires one.
+- Do not use fenced code blocks unless the user explicitly requests an example that requires one. Short illustrative snippets (1–10 lines) are allowed when they materially clarify the explanation — never dump complete files or long implementations.

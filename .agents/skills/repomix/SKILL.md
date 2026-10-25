@@ -2,7 +2,7 @@
 name: repomix
 description: >-
   Pack and split the codebase into AI-friendly context chunks with a strict maximum limit of 130,000 characters per file, semantically partitioned by directory boundaries, followed by an automated character audit.
-  Triggered by #repomix, /repomix, or requests to bundle or split the repository.
+  Triggered by #repomix, /repomix, #bundle, /bundle, #repomix-split, /repomix-split, or requests to bundle or split the repository.
 ---
 
 # Repomix Codebase Chunking & Bundler Workflow
@@ -11,12 +11,14 @@ Pack the repository into semantically partitioned chunks with a strict maximum l
 
 ## Core Architecture & 130k Partitioning Strategy
 
+> [!IMPORTANT] **Two different limits — do not confuse them.** The `#repomix` / `#bundle` CLI workflow below targets **130,000 characters per chunk** for generic LLM context. The **edge-worker's own** RepoMix generator (`packages/edge-worker/src/modules/mixChunker.ts`) is stricter because it feeds the Gemini Web UI: `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, `MAX_GEMINI_PARTS = 10`. Never raise those constants to the 130k CLI budget.
+
 1. **Semantic Grouping (Preserving Code Context):**
    Repomix uses top-level directory boundaries to group files logically. A single file or function is **never sliced down the middle** across chunks.
 2. **Buffer Margin for 130,000 Characters:**
-   In `repomix.config.json`, `splitOutput` is set to `120000` (bytes). This 10,000-character safety margin accounts for XML wrapping, file headers, directory trees, and token metrics, ensuring the final files remain strictly `<= 130,000 characters`.
+   `splitOutput` is set to `120000` (bytes). This 10,000-character safety margin accounts for XML wrapping, file headers, directory trees, and token metrics, ensuring the final files remain strictly `<= 130,000 characters`.
 3. **Automated Audit:**
-   Every bundling run is immediately verified by `scripts/patches_and_tests/repomix-audit.ps1`, reporting the exact character count, byte size, and pass/fail status per chunk.
+   Every bundling run must be verified by counting characters per generated chunk and confirming each stays `<= 130,000`. This repository ships no audit script; use the inline check in Option A.
 
 ---
 
@@ -28,13 +30,7 @@ From PowerShell or Terminal:
 
 ```powershell
 # Non-interactive execution (safe for agent automation, no pause prompts)
-.\repomix.bat --non-interactive
-```
-
-Or execute via npm:
-
-```powershell
-npm run repomix -- --non-interactive
+npx --yes repomix --non-interactive
 ```
 
 Or run via explicit CLI commands:
@@ -43,11 +39,14 @@ Or run via explicit CLI commands:
 # 1. Clean previous chunks
 if (Test-Path repomix-output) { Remove-Item -Recurse -Force repomix-output\* }
 
-# 2. Run Repomix using the calibrated repomix.config.json
-npx --yes repomix
+# 2. Run Repomix with an explicit 120kb split budget
+npx --yes repomix --split-output 120kb --output "repomix-output/bundle.txt"
 
-# 3. Execute strict character audit (verifies <= 130,000 characters)
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\patches_and_tests\repomix-audit.ps1
+# 3. Strict character audit (verifies <= 130,000 characters per chunk)
+Get-ChildItem repomix-output\bundle*.txt | ForEach-Object {
+  $len = (Get-Content $_.FullName -Raw).Length
+  "{0,-40} {1,8} chars  {2}" -f $_.Name, $len, $(if ($len -le 130000) { '[OK] <= 130k' } else { '[FAIL] > 130k' })
+}
 ```
 
 ---
@@ -57,12 +56,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\patches_and_tests\re
 When you only need to pack agent instructions, workflows, project rules, and architecture docs into a single, compact XML file without source code:
 
 ```powershell
-npm run repomix:agents
-# or directly:
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\patches_and_tests\repomix-agents.ps1
+npx --yes repomix --include "agents.md,.agents/**/*.md,plans/**/*.md,REPOMIX_INSTRUCTIONS.md" --output "repomix-output/agents.xml"
 ```
 
-This outputs `repomix-output.xml` containing `AGENTS.md`, `.agents/WORKFLOWS.md`, `.agents/rules/*.md`, `.agents/skills/**/*.md`, and related architectural documentation.
+This outputs `repomix-output/agents.xml` containing `agents.md`, `.agents/WORKFLOWS.md`, `.agents/rules/*.md`, `.agents/skills/**/*.md`, and related architectural documentation.
 
 ---
 
@@ -80,9 +77,25 @@ npx --yes repomix --split-output 120kb --compress --remove-comments --output "re
 
 ---
 
+### Option D: Custom Destination Folder & Flag Passthrough
+
+> [!NOTE] This repository does **not** ship `repomix.ps1` / `repomix.bat` runners or a `repomix.config.json`. Use the `npx` form below; it needs no local install and no runner script.
+
+```powershell
+# Named output folder (keep the repomix_ prefix so .gitignore can exclude it)
+npx --yes repomix --output "repomix_my_chunk/bundle.txt"
+
+# Any additional Repomix CLI flags pass straight through
+npx --yes repomix --no-security-check
+```
+
+Add `repomix_*/` to `.gitignore` before creating ad-hoc bundles so they never pollute Git status.
+
+---
+
 ## Configuration Reference (`repomix.config.json`)
 
-The workspace configuration controls the packaging behavior:
+This repository has no committed `repomix.config.json`; pass flags on the CLI instead. If you add one, this is the calibrated shape:
 
 ```json
 {
@@ -105,7 +118,9 @@ The workspace configuration controls the packaging behavior:
       "*.zip",
       "*bundle*.txt",
       "repomix-output/**",
-      "repomix-output*"
+      "repomix-output*",
+      "_v1_backup/**",
+      "cf-gemini-git-bridge/**"
     ]
   },
   "security": {
@@ -114,6 +129,8 @@ The workspace configuration controls the packaging behavior:
 }
 ```
 
+> [!WARNING] `_v1_backup/` and `cf-gemini-git-bridge/` are read-only legacy trees. Always exclude them from bundles so the model never proposes edits there.
+
 ---
 
 ## Verification & Audit Checklist
@@ -121,5 +138,5 @@ The workspace configuration controls the packaging behavior:
 After running the bundler, always verify:
 1. **File Count & Naming:** Check `repomix-output/` contains sequential files (`bundle.1.txt`, `bundle.2.txt`, ...).
 2. **Character Count Gate:** Confirm the audit table in the terminal outputs `[OK] <= 130k` for all chunks.
-3. **Context Integrity:** Ensure key files (such as `src/`, `server.ts`, etc.) are captured without truncation.
+3. **Context Integrity:** Ensure key files (such as `packages/edge-worker/src/`, `shared/`, `gemini-bridge.user.js`, etc.) are captured without truncation.
 4. **Security Check:** Confirm no secrets, API keys, or `.env` entries were bundled.

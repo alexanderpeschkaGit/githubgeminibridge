@@ -48,7 +48,7 @@ When the user asks to create a zip or triggers `#zip-clean`:
 
 3. **Verify Archive Integrity:**
    - Confirm file exists and size is greater than 0 bytes.
-   - Verify that excluded paths (`node_modules`, `.git`, `.env`, `dist`) are absent from the archive entries.
+   - Verify that excluded paths (`node_modules`, `.git`, `.env*`, `dist`, `.wrangler`, `.tmp`, `repomix*`) and secret artifacts (`*.pem`, `*.key`) are absent from the archive entries.
    - Note file count, uncompressed size, compressed size, and elapsed time.
 
 4. **Deliver Concise Summary:**
@@ -91,9 +91,11 @@ git archive -o "archive_HEAD.zip" HEAD
 | `-OutputPath` | `string` | `<Repo>_v<Ver>_<Timestamp>.zip` | Target `.zip` path. Relative or absolute. |
 | `-Mode` | `string` | `'WorkingTree'` | Selection mode: `'WorkingTree'`, `'Head'`, or `'TrackedOnly'`. |
 | `-Prefix` | `string` | `''` | Optional root directory folder name inside the archive. |
-| `-AdditionalExcludes` | `string[]` | `@('*.zip', '*.tmp')` | Extra glob patterns to exclude from packaging. |
+| `-AdditionalExcludes` | `string[]` | `@('*.zip', '*.tmp', '.env*', '*.pem', '*.key')` | Extra glob patterns to exclude from packaging. |
 | `-DryRun` | `switch` | `false` | Lists files and counts without writing any file to disk. |
 | `-Force` | `switch` | `false` | Overwrites destination `.zip` if it already exists. |
+
+> [!NOTE] **Non-Git Fallback:** When `git ls-files` returns nothing (no repository, or an empty index), the script enumerates the directory tree directly and skips `.git`, `node_modules`, `dist`, `.wrangler`, `.tmp`, and every `repomix*` directory (such as `repomix-output/`) before applying `-AdditionalExcludes`. Fallback archives therefore never include dependencies, build output, local Wrangler state, or bundler dumps.
 
 ---
 

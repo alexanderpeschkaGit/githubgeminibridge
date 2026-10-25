@@ -61,7 +61,8 @@ Transform the extracted content into a clean Antigravity skill that matches the 
 ## Phase 5: Collision Check
 
 - Check if `.agents/skills/<name>/` already exists in the workspace.
-- **If it exists:** Abort immediately. Inform the user that a skill with this name already exists at the target path. Do not overwrite.
+- **If it exists (default):** Abort immediately. Inform the user that a skill with this name already exists at the target path.
+- **Explicit overwrite/update path (`--force` / `--update`):** Only when the request carries `--force` or `--update`, or the user explicitly confirms an overwrite, re-import in place: back up the existing `SKILL.md` to `.tmp/skills-backup/<name>-<timestamp>.md`, then overwrite `SKILL.md` and refresh `references/`. `--update` keeps the existing `.agents/WORKFLOWS.md` trigger registration untouched; `--force` re-registers it.
 - **If clear:** Proceed to write.
 
 ## Phase 6: Write to Workspace & Auto-Register
@@ -77,7 +78,7 @@ Transform the extracted content into a clean Antigravity skill that matches the 
 
 - Re-read the written `SKILL.md` file.
 - Verify that YAML frontmatter contains valid `name` and un-truncated `description` fields.
-- **AST / Import Validation on Code Assets:** If the skill generates runnable helper scripts (in `scripts/`) or code templates, run the project's deterministic terminal check (`npm run lint` or `tsc --noEmit`) to verify syntax and import integrity instead of trusting model output.
+- **AST / Import Validation on Code Assets:** If the skill generates runnable helper scripts (in `scripts/`) or code templates, run the project's deterministic terminal check (`npm run typecheck` in the relevant package or `node scripts/patches_and_tests/worker-smoke.mjs`) to verify syntax and import integrity instead of trusting model output.
 - If validation fails, fix the issues and re-write.
 
 ## Phase 8: Confirm

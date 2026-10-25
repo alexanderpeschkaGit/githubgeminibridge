@@ -15,6 +15,6 @@ description: >-
 - **Checklist-Driven Audit Mode (`#review #flash`):**
   When a review is triggered with an `Acceptance & Invariant Checklist` (from a plan or prompt), systematically audit each target file against every specified invariant (Point-by-Point Evaluation). Structure the audit report into:
   1. **Invariant Evaluation Table / Findings:** For each criterion, state `[PASS | FAIL | WARNING]` with file:line citations and root-cause analysis.
-  2. **Targeted Polish / Remediation (when explicitly requested):** If the user requests fixing issues found during review (e.g. "Post-Audit Polish"), apply targeted fixes directly under the Single-Action Protocol from `flash/SKILL.md`, followed by sequential verification (`npm run lint`, `npm test`, `npm run build`).
+  2. **Targeted Polish / Remediation (when explicitly requested):** If the user requests fixing issues found during review (e.g. "Post-Audit Polish"), apply targeted fixes directly under the Single-Action Protocol from `flash/SKILL.md`, followed by sequential verification (`npm run typecheck` in every touched package, then `node scripts/patches_and_tests/worker-smoke.mjs`).
 - State clearly when no material issues are found and mention any validation limits.
 - Small illustrative excerpts are allowed when necessary, but do not rewrite complete files.

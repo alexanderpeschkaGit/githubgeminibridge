@@ -7,7 +7,7 @@ When a user request begins with a command, read the corresponding local skill fi
 - `#plan` (or `/plan`): `.agents/skills/plan/SKILL.md`
 - `#exec` (or `/exec`): `.agents/skills/exec/SKILL.md`
 - `#exec-wave` (or `/exec-wave`, `#wave-exec`, `/wave-exec`): `.agents/skills/exec-wave/SKILL.md`
-- `#flash` (or `/flash`): `.agents/skills/flash/SKILL.md`
+- `#flash` (or `/flash`, `#dflash`, `/dflash`): `.agents/skills/flash/SKILL.md`
 - `#review` (or `/review`): `.agents/skills/review/SKILL.md`
 - `#refactor` (or `/refactor`): `.agents/skills/refactor/SKILL.md`
 - `#delegate` (or `/delegate`, `#deligate`, `/deligate`): `.agents/skills/delegate/SKILL.md`

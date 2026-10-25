@@ -9,3 +9,4 @@ Thumbs.db
 .dev.vars
 .dev.vars.*
 
+.tmp/

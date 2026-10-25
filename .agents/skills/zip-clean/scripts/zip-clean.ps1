@@ -8,6 +8,7 @@
     - Anything ignored by .gitignore (e.g., node_modules, dist, .cache, .env, build artifacts)
     - The internal .git/ directory itself
     - Any destination *.zip files (preventing recursive inclusion)
+    - Additional artifacts matched by -AdditionalExcludes (default: *.zip, *.tmp, .env*, *.pem, *.key)
 
 .PARAMETER OutputPath
     The target ZIP file path. Defaults to <RepoRoot>/<RepoName>_v<Version>_<Timestamp>.zip.
@@ -54,7 +55,7 @@ param (
     [string]$Prefix = '',
 
     [Parameter()]
-    [string[]]$AdditionalExcludes = @('*.zip', '*.tmp'),
+    [string[]]$AdditionalExcludes = @('*.zip', '*.tmp', '.env*', '*.pem', '*.key'),
 
     [Parameter()]
     [switch]$DryRun,
@@ -130,9 +131,17 @@ try {
 
     if (-not $files -or $files.Count -eq 0) {
         Write-Warning "No files returned by git command. Checking directory fallback..."
-        $files = Get-ChildItem -Recurse -File | ForEach-Object {
-            $rel = Resolve-Path -Relative $_.FullName
-            $rel.TrimStart('.\')
+        $excludedDirs = @('.git', 'node_modules', 'dist', '.wrangler', '.tmp')
+        $files = Get-ChildItem -Recurse -File | Where-Object {
+            $relative = $_.FullName.Substring($repoRoot.Length).TrimStart('\')
+            $segments = $relative -split '[\\/]'
+            $inExcludedDir = $false
+            for ($i = 0; $i -lt ($segments.Count - 1); $i++) {
+                if ($excludedDirs -contains $segments[$i] -or $segments[$i] -like 'repomix*') { $inExcludedDir = $true; break }
+            }
+            (-not $inExcludedDir)
+        } | ForEach-Object {
+            $_.FullName.Substring($repoRoot.Length).TrimStart('\')
         }
     }
 } finally {
