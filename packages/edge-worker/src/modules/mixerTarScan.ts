@@ -46,7 +46,7 @@ export function shouldSkipTarEntry(
   size: number,
   typeflag: string,
   includePaths?: string[]
-): { skip: boolean; reason?: 'DIR_OR_NON_FILE' | 'IGNORED_PATH' | 'OVERSIZED' | 'NOT_INCLUDED' } {
+): { skip: boolean; reason?: 'DIR_OR_NON_FILE' | 'IGNORED_PATH' | 'OVERSIZED' | 'NOT_INCLUDED' | 'GENERATED_BUNDLE' } {
   // 1. Directories, extended headers or non-regular files
   // In POSIX/USTAR tar: '0', '', '\0' are regular files. '5' is directory, 'g' PAX global, 'x' PAX extended.
   if (
@@ -67,6 +67,12 @@ export function shouldSkipTarEntry(
 
   const segments = normalized.split('/');
   const filename = segments[segments.length - 1];
+
+  // Skip generated bundle artifacts explicitly with clear logging
+  if (filename === 'gemini-bridge.user.js') {
+    console.log(`[RepoMix] Skipping generated bundle: ${normalized} (path: ${normalized}, filename: ${filename})`);
+    return { skip: true, reason: 'GENERATED_BUNDLE' };
+  }
 
   // 3. Ignored directory paths (e.g. .venv, node_modules, dist, .git via DEFAULT_IGNORED_DIR_NAMES)
   for (let i = 0; i < segments.length - 1; i++) {
@@ -291,6 +297,8 @@ export async function scanTarGzipStream(
       if (filterDecision.skip) {
         if (filterDecision.reason === 'OVERSIZED') {
           fileTreeEntries.push(`${relPath} [SKIPPED: >512KB]`);
+        } else if (filterDecision.reason === 'GENERATED_BUNDLE') {
+          console.log(`[RepoMix] Skipped file: path=${relPath}, filename=gemini-bridge.user.js`);
         }
         await discardBytes(paddedSize);
         continue;
