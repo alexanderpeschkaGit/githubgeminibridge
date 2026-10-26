@@ -70,8 +70,16 @@ async function main() {
   // Probe 3: GitHub GraphQL Batch-Read, Single-File Commit & Branch Ref Helpers Check
   results.push(await runProbe(3, 'GitHub Connector V2 Extensions (Batch-Read, Single Commit & Branch Ref)', async () => {
     const githubPath = path.join(ROOT_DIR, 'packages/edge-worker/src/utils/github.ts');
+    const githubModulePaths = [
+      'githubRepo.ts',
+      'githubGraphQL.ts',
+      'githubBatchRead.ts',
+      'githubCommit.ts'
+    ].map((name) => path.join(ROOT_DIR, 'packages/edge-worker/src/utils', name));
     const typesPath = path.join(ROOT_DIR, 'shared/types.ts');
-    const content = fs.readFileSync(githubPath, 'utf-8');
+    const content = [githubPath, ...githubModulePaths]
+      .map((p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : ''))
+      .join('\n');
     const typesContent = fs.readFileSync(typesPath, 'utf-8');
     const hasBatchRead = content.includes('export async function fetchMultipleFilesViaGraphQL');
     const hasSingleCommit = content.includes('export async function commitSingleFileViaGraphQL');
@@ -119,12 +127,15 @@ async function main() {
   // Probe 6: Stage 1 Mixer Module & Filter/CDATA Contracts
   results.push(await runProbe(6, 'Stage 1 Mixer Module & Filter/CDATA Contracts', async () => {
     const mixerPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixer.ts');
+    const mixerScanPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixerTarScan.ts');
     const indexPath = path.join(ROOT_DIR, 'packages/edge-worker/src/index.ts');
     const mixerExists = fs.existsSync(mixerPath);
     if (!mixerExists) {
       return { pass: false, error: 'mixer.ts does not exist' };
     }
-    const mixerContent = fs.readFileSync(mixerPath, 'utf-8');
+    const mixerContent = [mixerPath, mixerScanPath]
+      .map((p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : ''))
+      .join('\n');
     const indexContent = fs.readFileSync(indexPath, 'utf-8');
 
     const hasHandleMix = mixerContent.includes('export async function handleMixRequest');
@@ -458,6 +469,7 @@ async function main() {
     const chunkerPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixChunker.ts');
     const tarUtilsPath = path.join(ROOT_DIR, 'packages/edge-worker/src/utils/tarUtils.ts');
     const mixerPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixer.ts');
+    const mixerScanPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixerTarScan.ts');
     const injectorPath = path.join(ROOT_DIR, 'packages/userscript-hud/src/dom/injector.ts');
     const storagePath = path.join(ROOT_DIR, 'packages/userscript-hud/src/services/storage.ts');
     const rootUserScriptPath = path.join(ROOT_DIR, 'gemini-bridge.user.js');
@@ -467,7 +479,9 @@ async function main() {
 
     const chunkerContent = fs.readFileSync(chunkerPath, 'utf-8');
     const tarUtilsContent = fs.readFileSync(tarUtilsPath, 'utf-8');
-    const mixerContent = fs.readFileSync(mixerPath, 'utf-8');
+    const mixerContent = [mixerPath, mixerScanPath]
+      .map((p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : ''))
+      .join('\n');
     const injectorContent = fs.readFileSync(injectorPath, 'utf-8');
     const storageContent = fs.readFileSync(storagePath, 'utf-8');
     const rootUserScript = fs.readFileSync(rootUserScriptPath, 'utf-8');

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-25T21:12:32.194Z",
+  "timestamp": "2026-10-26T10:29:31.945Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -106,8 +106,8 @@
       "id": 10,
       "name": "File-Size Modularity Audit (<500 lines) & End-to-End Artifact Completeness",
       "pass": true,
-      "totalTsFilesAudited": 39,
-      "warningZoneFilesCount": 10,
+      "totalTsFilesAudited": 44,
+      "warningZoneFilesCount": 9,
       "overLimitFilesCount": 0,
       "bundleByteIdentical": true,
       "bundleSize": 101529,
@@ -117,8 +117,8 @@
           "lines": 440
         },
         {
-          "file": "packages/edge-worker/src/modules/mixer.ts",
-          "lines": 485
+          "file": "packages/edge-worker/src/modules/mixerTarScan.ts",
+          "lines": 349
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
@@ -135,10 +135,6 @@
         {
           "file": "packages/edge-worker/src/modules/webhookHandler.ts",
           "lines": 317
-        },
-        {
-          "file": "packages/edge-worker/src/utils/github.ts",
-          "lines": 482
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
@@ -169,7 +165,11 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
-          "lines": 485
+          "lines": 184
+        },
+        {
+          "file": "packages/edge-worker/src/modules/mixerTarScan.ts",
+          "lines": 349
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
@@ -201,7 +201,23 @@
         },
         {
           "file": "packages/edge-worker/src/utils/github.ts",
-          "lines": 482
+          "lines": 17
+        },
+        {
+          "file": "packages/edge-worker/src/utils/githubBatchRead.ts",
+          "lines": 121
+        },
+        {
+          "file": "packages/edge-worker/src/utils/githubCommit.ts",
+          "lines": 166
+        },
+        {
+          "file": "packages/edge-worker/src/utils/githubGraphQL.ts",
+          "lines": 184
+        },
+        {
+          "file": "packages/edge-worker/src/utils/githubRepo.ts",
+          "lines": 17
         },
         {
           "file": "packages/edge-worker/src/utils/tarUtils.ts",

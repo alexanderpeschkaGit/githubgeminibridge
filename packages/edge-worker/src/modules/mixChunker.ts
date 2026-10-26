@@ -1,5 +1,5 @@
 import type { MixPart } from '../types';
-import { escapeCdata } from './mixer';
+import { escapeCdata } from './mixerTarScan';
 
 export const DEFAULT_MAX_CHUNK_CHARS = 85_000;     // 85k Chars (15% buffer below Gemini's 100k char cutoff)
 export const HARD_GEMINI_CHAR_LIMIT = 100_000;     // Hard 100k character cutoff in Gemini Web UI

@@ -43,7 +43,7 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
 
 ## 3. Technische Modul-Gesetze (Stufe 1, 2, 4, 5 & 6)
 
-### A. Untertool A: `src/modules/mixer.ts` (1-Subrequest Tarball-Stream + Repomix-Filterlogik)
+### A. Untertool A: `src/modules/mixer.ts` & `src/modules/mixerTarScan.ts` (1-Subrequest Tarball-Stream + Repomix-Filterlogik)
 1. **1-Subrequest Tarball Streaming (`uithub`-Pattern):**
    - Lade das Repository in einem einzigen HTTP-Subrequest via `GET https://api.github.com/repos/{owner}/{repo}/tarball/{branch}` und dekomprimiere es on-the-fly mit `response.body.pipeThrough(new DecompressionStream('gzip'))`.
    - **Verboten:** Einzelabrufe über die GitHub Contents API in einer Schleife (sprengt das Limit von 50 Subrequests auf Cloudflare Workers).
@@ -69,7 +69,7 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - **10-Parts-Guardrail:** Die Anzahl der Parts ist maximal `MAX_GEMINI_PARTS = 10`. Kann der vollständige Inhalt nicht in höchstens zehn jeweils <=100.000 Zeichen große Parts partitioniert werden, wird die Anfrage explizit abgelehnt; Buckets dürfen nicht ungemessen zusammengeführt werden und die 10-Part-Grenze hebt das Hard-Limit nicht auf.
    - Part 1 enthält den vollständigen Repository `<file_tree>` (bis max. 14k Zeichen gedeckelt), Folgeparts `2..N` einen kompakten Teilbaum nur für die im jeweiligen Part enthaltenen Dateien.
    - **Invariante:** Einzelne Dateien werden **niemals** mitten im Quellcode zerschnitten. Jeder Part ist ein in sich geschlossenes Dokument mit Metadaten und Filetree.
-   - Low-Level TAR-Header-Parsing (`concatBuffers`, `parseAsciiString`, `parseOctal`) ist in `src/utils/tarUtils.ts` ausgelagert, um das `< 500`-Zeilen-Gesetz für `mixer.ts` strikt einzuhalten.
+   - Low-Level TAR-Header-Parsing (`concatBuffers`, `parseAsciiString`, `parseOctal`) ist in `src/utils/tarUtils.ts` ausgelagert; der gzip-/PAX-/Filter-Stream-Scan (`scanTarGzipStream`, `escapeCdata`, `shouldSkipTarEntry`, `extractHeadOidFromPaxHeader`, `TarScanError`) liegt in `src/modules/mixerTarScan.ts`. `mixer.ts` bleibt der HTTP-/Persistenz-Orchestrator (`handleMixRequest`), damit das `< 500`-Zeilen-Gesetz strikt eingehalten wird.
 7. **Recent Commits & Volatile Files sind strikt Opt-In:**
    - `fetchRecentCommitsAndVolatileFiles` (`recentCommits.ts`) wird ausschließlich bei `req.includeRecentCommits === true` aufgerufen. Fehlende (`undefined`) und `false`-Werte lösen **keinen** GitHub-API-Aufruf aus und liefern keine `recentCommitsCount`/`volatileFilesCount`-Stats.
    - Bei Opt-In bleibt das bestehende Verhalten erhalten: Metadaten-XML landet in Part 1, `recentCommitsCount` (Default 3, max 5) steuert die Analysetiefe.
@@ -79,9 +79,9 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Der V1-Fallback verlangt explizit, dass die `// filepath:`-Zeile die **erste Zeile innerhalb** des Codeblocks ist (vor `<<<<<<< SEARCH`), dass der Dateiname **niemals außerhalb** des Blocks steht (keine Markdown-Überschrift, kein `3. \`src/datei.ts\``, keine Backtick-Zeile darüber) und dass jede Datei ihren eigenen Codeblock mit eigenem Header erhält.
    - Die Instruktionsliste bleibt ein `join('\n')`-String-Array **ohne** `<`/`&`-Zeichen, damit der XML-Block valide bleibt; `scripts/patches_and_tests/test-v2-prompt-contract.mjs` erzwingt beides. Standalone-Spiegel: `gemini_prompt_instructions.txt` und `REPOMIX_INSTRUCTIONS.md`.
 
-### B. Untertool B: `src/modules/patcher.ts` & `src/modules/patchInMemory.ts` & `src/utils/github.ts` (Stufe 2)
+### B. Untertool B: `src/modules/patcher.ts` & `src/modules/patchInMemory.ts` & `src/utils/github*.ts` (Stufe 2)
 1. **1-Subrequest GraphQL Batch-Read:**
-   - Nutze `fetchMultipleFilesViaGraphQL` in `src/utils/github.ts`, um alle zu patchenden Dateien über dynamische GraphQL-Aliases (`f0: object(expression: $exp_0) { ... on Blob { text isTruncated } }`) in **einem einzigen** Subrequest zu laden.
+   - Nutze `fetchMultipleFilesViaGraphQL` in `src/utils/githubBatchRead.ts`, um alle zu patchenden Dateien über dynamische GraphQL-Aliases (`f0: object(expression: $exp_0) { ... on Blob { text isTruncated } }`) in **einem einzigen** Subrequest zu laden. `src/utils/github.ts` bleibt eine stabile Fassade; die Implementierung ist aufgeteilt in `githubRepo.ts` (`parseRepoOwner`), `githubGraphQL.ts` (`executeGraphQL`, `getBranchHeadOid`, `createBranchRef`, `fetchFileContent`, `BranchNotFoundError`), `githubBatchRead.ts` und `githubCommit.ts` (`createCommitOnBranch`, `commitSingleFileViaGraphQL`).
    - **Pfad-Kanonisierung (`shared/repoPaths.ts`):** `object(expression: "<oid>:<path>")` ist strikt — `./src/a.ts`, `/src/a.ts` und `src\a.ts` lösen alle zu `null` auf und sehen wie „Datei existiert nicht“ aus. `handlePatchRequest` normalisiert daher jeden `patches[].path` via `normalizeRepoPath` (Trim, `\` → `/`, führende `./` bzw. `/` entfernen, doppelte und abschließende Slashes entfernen) **vor** Batch-Read und Commit; `fetchMultipleFilesViaGraphQL` und `createCommitOnBranch` normalisieren zusätzlich defensiv. Leere Pfade, `..`/`.`-Segmente und Drive-Pfade werden über `findRepoPathIssue` als `PREFLIGHT_FAILED` (`stage: "SEARCH_REPLACE"`) abgewiesen, **bevor** GitHub kontaktiert wird. Der Fehlertext nennt Basisrevision und `action: "create"` als Alternative.
 2. **Multi-Strategy Search/Replace (`applySearchReplace`):**
    - Behalte die 3-stufige Matching-Kaskade aus V1 bei:
