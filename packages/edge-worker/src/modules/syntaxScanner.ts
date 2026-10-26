@@ -231,7 +231,7 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
       if (allowsJsx && lastNonWhitespaceChar === '<') {
         lastNonWhitespaceChar = ch; i++; currentCol++; continue;
       }
-      const regexPreceders = '=([{:;,?!&|+-*^~<>%\n';
+      const regexPreceders = '=([{:;,?!&|+-*^~<%';
       const isRegex = lastNonWhitespaceChar === '' || regexPreceders.includes(lastNonWhitespaceChar);
       if (isRegex) {
         state = 'REGEX'; inRegexCharClass = false; stringStartLine = currentLine; stringStartCol = currentCol;
@@ -243,7 +243,7 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
     // delimiters; only the letter-quote-letter shape is treated as literal text.
     if (allowsJsx && (ch === "'" || ch === '"')) {
       const prevChar = i > 0 ? content[i - 1] : '';
-      if (/[A-Za-z]/.test(prevChar) && /[A-Za-z]/.test(nextCh)) {
+      if (/[A-Za-z0-9]/.test(prevChar) && /[A-Za-z0-9]/.test(nextCh)) {
         lastNonWhitespaceChar = ch; i++; currentCol++; continue;
       }
     }

@@ -34,6 +34,8 @@ const TEST_ENV = {
   WORKER_SECRET: 'bridge-secret-12345',
   GITHUB_TOKEN: 'fake-gh-token'
 };
+// Without a token executeWorkerWorkflow returns immediately instead of hitting GitHub/Gemini.
+const TEST_ENV_NO_TOKEN = { ...TEST_ENV, GITHUB_TOKEN: '', GITHUB_PAT: '' };
 
 // Helper to compute HMAC-SHA256 signature
 async function computeSignature(payloadString, secret) {
@@ -50,6 +52,41 @@ async function computeSignature(payloadString, secret) {
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
   return `sha256=${hex}`;
+}
+
+async function postSignedWebhook(payloadObject, { env = TEST_ENV, ctx } = {}) {
+  const payload = JSON.stringify(payloadObject);
+  const signature = await computeSignature(payload, env.GITHUB_WEBHOOK_SECRET || TEST_SECRET);
+  const req = new Request('https://worker.local/api/webhook/github', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-hub-signature-256': signature
+    },
+    body: payload
+  });
+  return worker.fetch(req, env, ctx);
+}
+
+function createDeferredCtx() {
+  const scheduled = [];
+  return {
+    ctx: { waitUntil: (promise) => { scheduled.push(promise); } },
+    settle: async () => { await Promise.allSettled(scheduled); }
+  };
+}
+
+function associationPayload(authorAssociation) {
+  const payload = {
+    action: 'created',
+    repository: { full_name: 'sikanda/test-repo', default_branch: 'main' },
+    issue: { number: 202, comments_url: 'https://api.github.com/repos/sikanda/test-repo/issues/202/comments' },
+    comment: { body: '@gemini please patch authentication handler to use bcrypt' }
+  };
+  if (authorAssociation !== undefined) {
+    payload.comment.author_association = authorAssociation;
+  }
+  return payload;
 }
 
 // 2. Test HMAC computation helper
@@ -191,6 +228,38 @@ assert(validSignature.startsWith('sha256=') && validSignature.length === 71, 'HM
   assert(data.message?.includes('execution scheduled'), 'Response message confirms execution scheduled');
   assert(waitUntilInvoked === true, 'P1 Invariant: Worker calls ctx.waitUntil() to decouple background execution from 10s webhook response');
   assert(scheduledPromise instanceof Promise, 'Background workflow task is a valid Promise');
+}
+
+// 11. Test Missing author_association (fail-open when GitHub omits the field)
+{
+  const { ctx, settle } = createDeferredCtx();
+  const res = await postSignedWebhook(associationPayload(undefined), { env: TEST_ENV_NO_TOKEN, ctx });
+  assert(res.status === 202, 'POST with @gemini and missing author_association returns 202 Accepted');
+  const data = await res.json();
+  assert(data.status === 'ACCEPTED', 'Missing author_association is treated as authorized (ACCEPTED)');
+  await settle();
+}
+
+// 12-14. Test restricted author_association values
+for (const association of ['NONE', 'FIRST_TIMER', 'CONTRIBUTOR']) {
+  const res = await postSignedWebhook(associationPayload(association));
+  assert(res.status === 200, `POST with author_association "${association}" returns 200 OK`);
+  const data = await res.json();
+  assert(data.status === 'IGNORED', `author_association "${association}" is ignored`);
+  assert(
+    typeof data.message === 'string' && data.message.toLowerCase().includes('association'),
+    `author_association "${association}" response message cites the association guard`
+  );
+}
+
+// 15. Test allowed author_association (OWNER)
+{
+  const { ctx, settle } = createDeferredCtx();
+  const res = await postSignedWebhook(associationPayload('OWNER'), { env: TEST_ENV_NO_TOKEN, ctx });
+  assert(res.status === 202, 'POST with author_association "OWNER" returns 202 Accepted');
+  const data = await res.json();
+  assert(data.status === 'ACCEPTED', 'author_association "OWNER" is accepted');
+  await settle();
 }
 
 console.log(`\n🎉 Stufe III Test abgeschlossen: ${passCount}/${totalCount} Assertions bestanden!`);

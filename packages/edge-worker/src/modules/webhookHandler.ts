@@ -169,9 +169,10 @@ export async function executeWorkerWorkflow(
 Given a repository XML context and an issue prompt, return ONLY a valid JSON object strictly conforming to the GeminiPatchPayload schema.
 Do NOT output markdown fences or additional text.`;
 
-    const contextText = mixResult.xmlContent || (Array.isArray(mixResult.parts)
-      ? mixResult.parts.map((p: any) => p.xmlContent || '').join('\n\n')
-      : '');
+    const contextText =
+      Array.isArray(mixResult.parts) && mixResult.parts.length > 0
+        ? mixResult.parts.map((p: any) => p.xmlContent || '').join('\n\n')
+        : (mixResult.xmlContent || '');
 
     const userQuery = `Task Instruction:\n${prompt}\n\nRepository Context:\n${contextText}`;
 

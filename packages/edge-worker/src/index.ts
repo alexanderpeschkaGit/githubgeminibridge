@@ -6,6 +6,20 @@ import { handleGithubWebhookRequest } from './modules/webhookHandler';
 import { getBranchHeadOid, fetchFileContent, createCommitOnBranch, executeGraphQL, parseRepoOwner } from './utils/github';
 import { normalizeRepoPath, findRepoPathIssue } from '../../../shared/repoPaths';
 
+class ClientValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ClientValidationError';
+  }
+}
+
+class UpstreamRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UpstreamRequestError';
+  }
+}
+
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -124,7 +138,7 @@ export default {
       // 4. V1 Commit / Push Relay Endpoint (Supports POST /push, /commit, /api/commit)
       if (request.method === 'POST' && (path === '/push' || path === '/commit' || path === '/api/commit' || path === '/')) {
         const body = (await request.json().catch(() => {
-          throw new Error('Malformed JSON payload');
+          throw new ClientValidationError('Malformed JSON payload');
         })) as CommitRequest;
 
         let owner = '';
@@ -134,12 +148,12 @@ export default {
           owner = parsed.owner;
           repo = parsed.repo;
         } catch {
-          return errorResponse('Missing required fields: Repository must be specified as "owner/repo" or separate "owner" and "repo".');
+          throw new ClientValidationError('Missing required fields: Repository must be specified as "owner/repo" or separate "owner" and "repo".');
         }
 
         const commitMessage = body.commitMessage || body.message;
         if (!commitMessage) {
-          return errorResponse('Missing required field: "commitMessage" (or "message") must be specified.');
+          throw new ClientValidationError('Missing required field: "commitMessage" (or "message") must be specified.');
         }
 
         const targetBranch = body.targetBranch || body.branch || 'main';
@@ -147,7 +161,7 @@ export default {
         const deletions = body.deletions || [];
 
         if (fileChanges.length === 0 && deletions.length === 0) {
-          return errorResponse('Commit must include at least one entry in "changes" or "files" or "deletions".');
+          throw new ClientValidationError('Commit must include at least one entry in "changes" or "files" or "deletions".');
         }
 
         // 4a. Resolve HEAD Commit OID for target branch to prevent race conditions
@@ -169,15 +183,27 @@ export default {
         for (const fileInput of fileChanges) {
           const pathIssue = findRepoPathIssue(fileInput.path);
           if (pathIssue) {
-            throw new Error(pathIssue);
+            throw new ClientValidationError(pathIssue);
           }
           const filePath = normalizeRepoPath(fileInput.path);
 
           const contentFetcher = async (requestedPath: string) => {
-            return await fetchFileContent(owner, repo, resolvedBranch, requestedPath, githubToken);
+            try {
+              return await fetchFileContent(owner, repo, resolvedBranch, requestedPath, githubToken);
+            } catch (err: any) {
+              throw new UpstreamRequestError(err?.message || 'Failed to fetch existing file from GitHub');
+            }
           };
 
-          const resolvedText = await resolveFileContent({ ...fileInput, path: filePath }, contentFetcher);
+          let resolvedText: string;
+          try {
+            resolvedText = await resolveFileContent({ ...fileInput, path: filePath }, contentFetcher);
+          } catch (err: any) {
+            if (err instanceof UpstreamRequestError) {
+              throw err;
+            }
+            throw new ClientValidationError(err?.message || 'Invalid file change payload');
+          }
           const encodedBase64 = utf8ToBase64(resolvedText);
 
           additions.push({
@@ -191,7 +217,7 @@ export default {
           const rawPath = typeof del === 'string' ? del : del.path;
           const pathIssue = findRepoPathIssue(rawPath);
           if (pathIssue) {
-            throw new Error(pathIssue);
+            throw new ClientValidationError(pathIssue);
           }
           return { path: normalizeRepoPath(rawPath) };
         });
@@ -253,6 +279,9 @@ export default {
 
       return errorResponse(`Endpoint not found: ${request.method} ${path}`, 404);
     } catch (err: any) {
+      if (err instanceof ClientValidationError) {
+        return errorResponse(err.message, 400);
+      }
       console.error('Request processing error:', err);
       return errorResponse(err.message || 'Internal server error', 500);
     }

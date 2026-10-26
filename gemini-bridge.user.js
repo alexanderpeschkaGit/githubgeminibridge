@@ -1186,7 +1186,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, renderState } = deps;
     dom.repoInput.onchange = () => {
       try {
-        const sanitized = sanitizeNoGithubPat(dom.repoInput.value.trim(), "repo");
+        const sanitized = sanitizeRepo(sanitizeNoGithubPat(dom.repoInput.value.trim(), "repo"));
         const previousRepo = config.repo;
         config.repo = sanitized;
         saveHudConfig({ repo: sanitized });
@@ -1721,6 +1721,16 @@ Fix Instructions:
   }
 
   // src/services/workerClient.ts
+  function isV2ErrorPayload(data) {
+    if (!data || typeof data !== "object") {
+      return false;
+    }
+    const payload = data;
+    return typeof payload.status === "string" || typeof payload.errorMessage === "string" || Array.isArray(payload.errors);
+  }
+  function shouldResolveV2Error(status, data) {
+    return (status === 400 || status === 409) && isV2ErrorPayload(data);
+  }
   async function gmRequestJson(url, method, secret, body) {
     const headers = {
       "Accept": "application/json",
@@ -1743,6 +1753,8 @@ Fix Instructions:
             try {
               const data = JSON.parse(res.responseText);
               if (res.status >= 200 && res.status < 300) {
+                resolve(data);
+              } else if (shouldResolveV2Error(res.status, data)) {
                 resolve(data);
               } else {
                 const errMsg = data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`;
@@ -1777,6 +1789,9 @@ Fix Instructions:
         if (res.status >= 200 && res.status < 300) {
           return data;
         }
+        if (shouldResolveV2Error(res.status, data)) {
+          return data;
+        }
         throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`);
       } catch (e) {
         if (res.status >= 200 && res.status < 300) {
@@ -1799,6 +1814,9 @@ Fix Instructions:
         data = text;
       }
       if (res.ok) {
+        return data;
+      }
+      if (shouldResolveV2Error(res.status, data)) {
         return data;
       }
       throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${text}`);
@@ -1980,6 +1998,14 @@ Fix Instructions:
       return onApplyPatchCustom(patch);
     }
     openPanel();
+    const ownerMatch = classifyRepoOwner(config);
+    if (ownerMatch === "foreign") {
+      updateState({
+        status: "ERROR",
+        statusMessage: `\u274C Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden, aber Commits brauchen einen PAT f\xFCr diesen Owner.`
+      });
+      return false;
+    }
     const resolvedPaths = resolvePatchPaths(patch.payload, (index, total) => {
       if (typeof window === "undefined" || typeof window.prompt !== "function") {
         return null;
@@ -2004,14 +2030,6 @@ Fix Instructions:
       status: "PATCHING",
       statusMessage: `\u23F3 Applying patch: "${patch.commitMessage}"...`
     });
-    const ownerMatch = classifyRepoOwner(config);
-    if (ownerMatch === "foreign") {
-      updateState({
-        status: "ERROR",
-        statusMessage: `\u274C Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden, aber Commits brauchen einen PAT f\xFCr diesen Owner.`
-      });
-      return false;
-    }
     try {
       if (!isPatchSnapshotReady(state)) {
         updateState({

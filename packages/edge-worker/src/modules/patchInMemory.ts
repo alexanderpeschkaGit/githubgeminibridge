@@ -158,14 +158,16 @@ export async function applyPatchesInMemory(
   const additions: { path: string; content: string }[] = [];
   const deletions: { path: string }[] = [];
   const errors: LinterError[] = [];
-  let hasEffectiveChanges = false;
-  const resultingFiles: { path: string; content: string }[] = [];
+  const workingFiles: Record<string, string | null> = { ...existingFiles };
+  const resultingFiles = new Map<string, string>();
 
   for (const op of patches) {
     if (op.action === 'delete') {
-      if (existingFiles[op.path] !== null) {
-        deletions.push({ path: op.path });
-        hasEffectiveChanges = true;
+      const current = Object.prototype.hasOwnProperty.call(workingFiles, op.path)
+        ? workingFiles[op.path]
+        : null;
+      if (current !== null) {
+        workingFiles[op.path] = null;
       }
       continue;
     }
@@ -185,12 +187,8 @@ export async function applyPatchesInMemory(
         errors.push(...phErrors);
       }
 
-      const existing = existingFiles[op.path];
-      if (existing !== op.fullContent) {
-        additions.push({ path: op.path, content: op.fullContent });
-        hasEffectiveChanges = true;
-      }
-      resultingFiles.push({ path: op.path, content: op.fullContent });
+      workingFiles[op.path] = op.fullContent;
+      resultingFiles.set(op.path, op.fullContent);
       continue;
     }
 
@@ -202,17 +200,16 @@ export async function applyPatchesInMemory(
           errors.push(...phErrors);
         }
 
-        const existing = existingFiles[op.path];
-        if (existing !== op.fullContent) {
-          additions.push({ path: op.path, content: op.fullContent });
-          hasEffectiveChanges = true;
-        }
-        resultingFiles.push({ path: op.path, content: op.fullContent });
+        workingFiles[op.path] = op.fullContent;
+        resultingFiles.set(op.path, op.fullContent);
         continue;
       }
 
-      // Search/replace blocks modification
-      const existing = existingFiles[op.path];
+      // Search/replace blocks modification: read the current working buffer so
+      // multi-operation payloads chain sequentially instead of overwriting.
+      const existing = Object.prototype.hasOwnProperty.call(workingFiles, op.path)
+        ? workingFiles[op.path]
+        : null;
       if (existing === null || existing === undefined) {
         errors.push({
           file: op.path,
@@ -235,6 +232,25 @@ export async function applyPatchesInMemory(
       let hasError = false;
 
       for (const block of op.blocks) {
+        if (typeof block.search !== 'string' || block.search.trim().length === 0) {
+          errors.push({
+            file: op.path,
+            stage: 'SEARCH_REPLACE',
+            message: 'Patch block "search" must be a non-empty string.'
+          });
+          hasError = true;
+          continue;
+        }
+        if (typeof block.replace !== 'string') {
+          errors.push({
+            file: op.path,
+            stage: 'SEARCH_REPLACE',
+            message: 'Patch block "replace" must be a string.'
+          });
+          hasError = true;
+          continue;
+        }
+
         const phErrors = checkPlaceholderErrors(block.replace, op.path);
         if (phErrors.length > 0) {
           errors.push(...phErrors);
@@ -272,20 +288,32 @@ export async function applyPatchesInMemory(
       }
 
       if (!hasError) {
-        if (currentContent !== existing) {
-          additions.push({ path: op.path, content: currentContent });
-          hasEffectiveChanges = true;
-        }
-        resultingFiles.push({ path: op.path, content: currentContent });
+        workingFiles[op.path] = currentContent;
+        resultingFiles.set(op.path, currentContent);
       }
     }
   }
+
+  for (const [path, content] of Object.entries(workingFiles)) {
+    const baseContent = Object.prototype.hasOwnProperty.call(existingFiles, path)
+      ? existingFiles[path]
+      : null;
+    if (content === null) {
+      if (baseContent !== null) {
+        deletions.push({ path });
+      }
+    } else if (content !== baseContent) {
+      additions.push({ path, content });
+    }
+  }
+  const hasEffectiveChanges = additions.length > 0 || deletions.length > 0;
+  const resultingFileList = Array.from(resultingFiles, ([path, content]) => ({ path, content }));
 
   // Stage 4 preflight linter hook (oxc-parser / AST syntax checks + custom rules)
   const effectiveHook = preflightHook ?? runPreflightLinter;
   if (effectiveHook) {
     try {
-      const hookErrors = await effectiveHook(resultingFiles, preflight);
+      const hookErrors = await effectiveHook(resultingFileList, preflight);
       if (Array.isArray(hookErrors) && hookErrors.length > 0) {
         errors.push(...hookErrors);
       }

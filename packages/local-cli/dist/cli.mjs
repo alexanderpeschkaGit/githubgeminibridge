@@ -362,7 +362,7 @@ async function validateSyntaxInWorker(filePath, content) {
         currentCol++;
         continue;
       }
-      const regexPreceders = "=([{:;,?!&|+-*^~<>%\n";
+      const regexPreceders = "=([{:;,?!&|+-*^~<%";
       const isRegex = lastNonWhitespaceChar === "" || regexPreceders.includes(lastNonWhitespaceChar);
       if (isRegex) {
         state = "REGEX";
@@ -376,7 +376,7 @@ async function validateSyntaxInWorker(filePath, content) {
     }
     if (allowsJsx && (ch === "'" || ch === '"')) {
       const prevChar = i > 0 ? content[i - 1] : "";
-      if (/[A-Za-z]/.test(prevChar) && /[A-Za-z]/.test(nextCh)) {
+      if (/[A-Za-z0-9]/.test(prevChar) && /[A-Za-z0-9]/.test(nextCh)) {
         lastNonWhitespaceChar = ch;
         i++;
         currentCol++;
@@ -665,13 +665,13 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
   const additions = [];
   const deletions = [];
   const errors = [];
-  let hasEffectiveChanges = false;
-  const resultingFiles = [];
+  const workingFiles = { ...existingFiles };
+  const resultingFiles = /* @__PURE__ */ new Map();
   for (const op of patches) {
     if (op.action === "delete") {
-      if (existingFiles[op.path] !== null) {
-        deletions.push({ path: op.path });
-        hasEffectiveChanges = true;
+      const current = Object.prototype.hasOwnProperty.call(workingFiles, op.path) ? workingFiles[op.path] : null;
+      if (current !== null) {
+        workingFiles[op.path] = null;
       }
       continue;
     }
@@ -688,12 +688,8 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
       if (phErrors.length > 0) {
         errors.push(...phErrors);
       }
-      const existing = existingFiles[op.path];
-      if (existing !== op.fullContent) {
-        additions.push({ path: op.path, content: op.fullContent });
-        hasEffectiveChanges = true;
-      }
-      resultingFiles.push({ path: op.path, content: op.fullContent });
+      workingFiles[op.path] = op.fullContent;
+      resultingFiles.set(op.path, op.fullContent);
       continue;
     }
     if (op.action === "modify") {
@@ -702,15 +698,11 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         if (phErrors.length > 0) {
           errors.push(...phErrors);
         }
-        const existing2 = existingFiles[op.path];
-        if (existing2 !== op.fullContent) {
-          additions.push({ path: op.path, content: op.fullContent });
-          hasEffectiveChanges = true;
-        }
-        resultingFiles.push({ path: op.path, content: op.fullContent });
+        workingFiles[op.path] = op.fullContent;
+        resultingFiles.set(op.path, op.fullContent);
         continue;
       }
-      const existing = existingFiles[op.path];
+      const existing = Object.prototype.hasOwnProperty.call(workingFiles, op.path) ? workingFiles[op.path] : null;
       if (existing === null || existing === void 0) {
         errors.push({
           file: op.path,
@@ -730,6 +722,24 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
       let currentContent = existing;
       let hasError = false;
       for (const block of op.blocks) {
+        if (typeof block.search !== "string" || block.search.trim().length === 0) {
+          errors.push({
+            file: op.path,
+            stage: "SEARCH_REPLACE",
+            message: 'Patch block "search" must be a non-empty string.'
+          });
+          hasError = true;
+          continue;
+        }
+        if (typeof block.replace !== "string") {
+          errors.push({
+            file: op.path,
+            stage: "SEARCH_REPLACE",
+            message: 'Patch block "replace" must be a string.'
+          });
+          hasError = true;
+          continue;
+        }
         const phErrors = checkPlaceholderErrors(block.replace, op.path);
         if (phErrors.length > 0) {
           errors.push(...phErrors);
@@ -759,18 +769,27 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         hasError = true;
       }
       if (!hasError) {
-        if (currentContent !== existing) {
-          additions.push({ path: op.path, content: currentContent });
-          hasEffectiveChanges = true;
-        }
-        resultingFiles.push({ path: op.path, content: currentContent });
+        workingFiles[op.path] = currentContent;
+        resultingFiles.set(op.path, currentContent);
       }
     }
   }
+  for (const [path3, content] of Object.entries(workingFiles)) {
+    const baseContent = Object.prototype.hasOwnProperty.call(existingFiles, path3) ? existingFiles[path3] : null;
+    if (content === null) {
+      if (baseContent !== null) {
+        deletions.push({ path: path3 });
+      }
+    } else if (content !== baseContent) {
+      additions.push({ path: path3, content });
+    }
+  }
+  const hasEffectiveChanges = additions.length > 0 || deletions.length > 0;
+  const resultingFileList = Array.from(resultingFiles, ([path3, content]) => ({ path: path3, content }));
   const effectiveHook = preflightHook ?? runPreflightLinter;
   if (effectiveHook) {
     try {
-      const hookErrors = await effectiveHook(resultingFiles, preflight);
+      const hookErrors = await effectiveHook(resultingFileList, preflight);
       if (Array.isArray(hookErrors) && hookErrors.length > 0) {
         errors.push(...hookErrors);
       }

@@ -40,7 +40,7 @@ export interface MixRequest {
 
 export interface SkippedFile {
   path: string;
-  reason: 'too_large' | 'ignored' | 'over_hard_limit' | 'would_exceed_parts';
+  reason: 'too_large';
   bytes?: number;
   chars?: number;
 }

@@ -165,11 +165,7 @@ export async function handleMixRequest(
       persistedCommitOid = commitRes.oid;
       headOid = commitRes.oid;
     } catch (err: any) {
-      const aggregatedSkipped = [
-        ...(scan.skippedFiles || []),
-        ...(mixResult.skippedFiles || [])
-      ];
-      const skippedFiles = aggregatedSkipped.length > 0 ? aggregatedSkipped : undefined;
+      const skippedFiles = scan.skippedFiles && scan.skippedFiles.length > 0 ? scan.skippedFiles : undefined;
       return {
         status: 'ERROR',
         headOid,
@@ -186,11 +182,7 @@ export async function handleMixRequest(
     }
   }
 
-  const aggregatedSkipped = [
-    ...(scan.skippedFiles || []),
-    ...(mixResult.skippedFiles || [])
-  ];
-  const skippedFiles = aggregatedSkipped.length > 0 ? aggregatedSkipped : undefined;
+  const skippedFiles = scan.skippedFiles && scan.skippedFiles.length > 0 ? scan.skippedFiles : undefined;
 
   return {
     status: 'OK',

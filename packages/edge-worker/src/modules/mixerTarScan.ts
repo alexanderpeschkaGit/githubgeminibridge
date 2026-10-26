@@ -13,7 +13,7 @@ export interface TarScanResult {
   headOid: string | null;
   fileTreeEntries: string[];
   files: { path: string; content: string }[];
-  skippedFiles?: Array<{ path: string; reason: 'too_large' | 'ignored' | 'over_hard_limit' | 'would_exceed_parts'; bytes?: number; chars?: number }>;
+  skippedFiles?: Array<{ path: string; reason: 'too_large'; bytes?: number; chars?: number }>;
 }
 
 /**
@@ -148,7 +148,7 @@ export async function scanTarGzipStream(
   const files: { path: string; content: string }[] = [];
   const dynamicIgnorePatterns: string[] = [];
   const textDecoder = new TextDecoder();
-  const skippedFiles: Array<{ path: string; reason: 'too_large' | 'ignored' | 'over_hard_limit' | 'would_exceed_parts'; bytes?: number; chars?: number }> = [];
+  const skippedFiles: Array<{ path: string; reason: 'too_large'; bytes?: number; chars?: number }> = [];
 
   // Read next chunk into buffer if needed
   async function ensureBytes(count: number): Promise<boolean> {
@@ -302,11 +302,6 @@ export async function scanTarGzipStream(
           skippedFiles.push({ path: relPath, reason: 'too_large', bytes: size });
         } else if (filterDecision.reason === 'GENERATED_BUNDLE') {
           console.log(`[RepoMix] Skipped file: path=${relPath}, filename=gemini-bridge.user.js`);
-          skippedFiles.push({ path: relPath, reason: 'ignored', bytes: size });
-        } else if (filterDecision.reason === 'IGNORED_PATH' || filterDecision.reason === 'DIR_OR_NON_FILE') {
-          skippedFiles.push({ path: relPath, reason: 'ignored', bytes: size });
-        } else if (filterDecision.reason === 'NOT_INCLUDED') {
-          skippedFiles.push({ path: relPath, reason: 'ignored', bytes: size });
         }
         await discardBytes(paddedSize);
         continue;

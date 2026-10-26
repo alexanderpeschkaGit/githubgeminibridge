@@ -378,30 +378,32 @@ async function main() {
       }
     }
 
-    // Check bundle synchronization
+    // Check bundle content synchronization (CRLF-normalized; byte identity is
+    // intentionally not required because Git may check bundles out with CRLF).
     const distBundlePath = path.join(ROOT_DIR, 'packages/userscript-hud/dist/gemini-bridge.user.js');
     const rootBundlePath = path.join(ROOT_DIR, 'gemini-bridge.user.js');
 
     const distExists = fs.existsSync(distBundlePath);
     const rootExists = fs.existsSync(rootBundlePath);
 
-    let bundleByteIdentical = false;
+    let bundleContentIdentical = false;
     let bundleSize = 0;
     if (distExists && rootExists) {
-      const distBuf = fs.readFileSync(distBundlePath);
-      const rootBuf = fs.readFileSync(rootBundlePath);
-      bundleSize = rootBuf.length;
-      bundleByteIdentical = distBuf.length > 0 && distBuf.equals(rootBuf);
+      const normalize = (text) => text.replace(/\r\n/g, '\n');
+      const distText = normalize(fs.readFileSync(distBundlePath, 'utf-8'));
+      const rootText = normalize(fs.readFileSync(rootBundlePath, 'utf-8'));
+      bundleContentIdentical = distText.length > 0 && distText === rootText;
+      bundleSize = rootText.length;
     }
 
-    const pass = allTsFiles.length > 0 && overLimitZone.length === 0 && distExists && rootExists && bundleByteIdentical && bundleSize > 0;
+    const pass = allTsFiles.length > 0 && overLimitZone.length === 0 && distExists && rootExists && bundleContentIdentical && bundleSize > 0;
 
     return {
       pass,
       totalTsFilesAudited: allTsFiles.length,
       warningZoneFilesCount: warningZone.length,
       overLimitFilesCount: overLimitZone.length,
-      bundleByteIdentical,
+      bundleContentIdentical,
       bundleSize,
       warningZone,
       overLimitZone,

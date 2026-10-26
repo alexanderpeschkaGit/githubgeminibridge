@@ -41,7 +41,10 @@ const validJsx = {
   'self closing': 'export const A = () => <img src="x" alt="y" />;',
   'jsx comment': 'export const A = () => (<div>{/* don\'t break */}</div>);',
   contractions: 'export function A() { return <p>Don\'t stop — it\'s fine</p>; }',
+  'numeric contraction': 'export const A = () => <p>In the 1990\'s it\'s fine</p>;',
   'quoted text': 'export const A = () => <p>He said "hi"</p>;',
+  'regex after greater-than': 'const ok = a > /x/.test(s);',
+  'escaped regex slash': 'const r = /a\\/b/;',
 };
 for (const [name, code] of Object.entries(validJsx)) {
   const found = await errors(TSX, code);

@@ -89,7 +89,6 @@ export interface ChunkMixResult {
     estimatedTokens: number;
     charCount: number;
   };
-  skippedFiles?: Array<{ path: string; reason: 'too_large' | 'ignored' | 'over_hard_limit' | 'would_exceed_parts'; bytes?: number; chars?: number }>;
 }
 
 /**
@@ -172,7 +171,6 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
   const treeEntries = [...fileTreeEntries];
   const validFiles: Array<{ path: string; content: string; fileXml: string }> = [];
   const blockedFiles: string[] = [];
-  const skippedFiles: Array<{ path: string; reason: 'too_large' | 'ignored' | 'over_hard_limit' | 'would_exceed_parts'; bytes?: number; chars?: number }> = [];
 
   for (const f of files) {
     const fileXml = formatFileXml(f);
@@ -190,7 +188,6 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
 
     if (standaloneXml.length > HARD_GEMINI_CHAR_LIMIT) {
       blockedFiles.push(f.path);
-      skippedFiles.push({ path: f.path, reason: 'over_hard_limit', chars: standaloneXml.length });
       continue;
     }
 
@@ -438,6 +435,5 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
       estimatedTokens: Math.ceil(totalChars / 4),
       charCount: totalChars,
     },
-    skippedFiles: skippedFiles.length > 0 ? skippedFiles : undefined,
   };
 }

@@ -10,6 +10,27 @@ import type {
 export type { SkippedFile } from '../types';
 
 /**
+ * V2 responses carry a machine-readable payload even on failure (status/errors/
+ * errorMessage). They must reach the caller instead of collapsing into a generic
+ * Error; transport-level failures (401/403/404/500) still reject.
+ */
+export function isV2ErrorPayload(data: unknown): boolean {
+  if (!data || typeof data !== 'object') {
+    return false;
+  }
+  const payload = data as Record<string, unknown>;
+  return (
+    typeof payload.status === 'string' ||
+    typeof payload.errorMessage === 'string' ||
+    Array.isArray(payload.errors)
+  );
+}
+
+function shouldResolveV2Error(status: number, data: unknown): boolean {
+  return (status === 400 || status === 409) && isV2ErrorPayload(data);
+}
+
+/**
  * CSP-Bypass Invariant (P1 Komponente 5):
  * All requests to the Cloudflare Worker MUST use GM_xmlhttpRequest (or GM.xmlHttpRequest)
  * to bypass the host site's strict connect-src Content Security Policy.
@@ -44,6 +65,8 @@ export async function gmRequestJson<T>(
           try {
             const data = JSON.parse(res.responseText);
             if (res.status >= 200 && res.status < 300) {
+              resolve(data as T);
+            } else if (shouldResolveV2Error(res.status, data)) {
               resolve(data as T);
             } else {
               const errMsg =
@@ -81,6 +104,9 @@ export async function gmRequestJson<T>(
       if (res.status >= 200 && res.status < 300) {
         return data as T;
       }
+      if (shouldResolveV2Error(res.status, data)) {
+        return data as T;
+      }
       throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`);
     } catch (e: any) {
       if (res.status >= 200 && res.status < 300) {
@@ -105,6 +131,9 @@ export async function gmRequestJson<T>(
       data = text;
     }
     if (res.ok) {
+      return data as T;
+    }
+    if (shouldResolveV2Error(res.status, data)) {
       return data as T;
     }
     throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${text}`);

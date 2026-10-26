@@ -1,5 +1,5 @@
 import type { HudConfig, HudState } from '../types';
-import { saveHudConfig, sanitizeNoGithubPat } from '../services/storage';
+import { saveHudConfig, sanitizeNoGithubPat, sanitizeRepo } from '../services/storage';
 import type { HudDomElements } from './hudStylesAndDom';
 
 export interface HudConfigBindingDeps {
@@ -18,7 +18,7 @@ export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
 
   dom.repoInput.onchange = () => {
     try {
-      const sanitized = sanitizeNoGithubPat(dom.repoInput.value.trim(), 'repo');
+      const sanitized = sanitizeRepo(sanitizeNoGithubPat(dom.repoInput.value.trim(), 'repo'));
       const previousRepo = config.repo;
       config.repo = sanitized;
       saveHudConfig({ repo: sanitized });

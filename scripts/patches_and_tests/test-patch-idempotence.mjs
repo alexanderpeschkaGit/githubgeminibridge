@@ -163,4 +163,66 @@ assert.equal(isAlreadyAppliedReplacement('const x = 1;', 'x'), false, 'a one-cha
 assert.equal(isAlreadyAppliedReplacement('const x = 1;', 'const x = 1;'), true, 'a full statement is trusted');
 assert.equal(isAlreadyAppliedReplacement('const x = 1;', '  con st  '), false, 'whitespace does not inflate the marker');
 
+// 8. Two modify operations on the same file chain sequentially inside one call.
+const chained = await applyPatchesInMemory(
+  [
+    { path: FILE, action: 'modify', blocks: [INSERT_STYLE] },
+    {
+      path: FILE,
+      action: 'modify',
+      blocks: [{
+        search: SOCIAL_LINE,
+        replace: [SOCIAL_LINE, '      set({ chained: true });'].join('\n'),
+      }],
+    },
+  ],
+  { [FILE]: BASE },
+  undefined,
+  noLint
+);
+assert.equal(chained.errors.length, 0, 'chained modify operations must not report errors');
+assert.equal(chained.hasEffectiveChanges, true, 'chained modify operations change the file');
+assert.equal(chained.additions.length, 1, 'chained modify operations produce exactly one addition');
+assert.equal(count(chained.additions[0].content, SOCIAL_LINE), 1, 'chained insert-style block is not duplicated');
+assert.ok(chained.additions[0].content.includes('set({ chained: true });'), 'second operation anchors on first operation output');
+
+// 9. An empty search string is rejected before any patching happens.
+const emptySearch = await apply(BASE, [{ search: '', replace: 'const invalid = true;' }]);
+assert.ok(emptySearch.errors.length > 0, 'empty search string produces a SEARCH_REPLACE error');
+assert.match(emptySearch.errors[0].message, /non-empty string/i);
+assert.equal(emptySearch.hasEffectiveChanges, false, 'empty search does not report effective changes');
+assert.equal(emptySearch.additions.length, 0, 'empty search does not produce an addition');
+
+// 10. Three modify operations on the same file collapse into one addition with all changes.
+const threeOps = await applyPatchesInMemory(
+  [
+    { path: FILE, action: 'modify', blocks: [INSERT_STYLE] },
+    {
+      path: FILE,
+      action: 'modify',
+      blocks: [{
+        search: SOCIAL_LINE,
+        replace: [SOCIAL_LINE, '      set({ second: true });'].join('\n'),
+      }],
+    },
+    {
+      path: FILE,
+      action: 'modify',
+      blocks: [{
+        search: 'function run(data) {',
+        replace: ['function run(data) {', '  const prepared = true;'].join('\n'),
+      }],
+    },
+  ],
+  { [FILE]: BASE },
+  undefined,
+  noLint
+);
+assert.equal(threeOps.errors.length, 0, 'three chained modify operations stay error-free');
+assert.equal(threeOps.additions.length, 1, 'three chained operations produce exactly one addition');
+const threeOpsContent = threeOps.additions[0].content;
+assert.equal(count(threeOpsContent, SOCIAL_LINE), 1, 'social line is inserted exactly once');
+assert.ok(threeOpsContent.includes('set({ second: true });'), 'second operation is present');
+assert.ok(threeOpsContent.includes('const prepared = true;'), 'third operation is present');
+
 console.log('PASS: insert-style patches are idempotent, replace-style idempotency needs a specific marker');

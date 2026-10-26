@@ -1,28 +1,54 @@
 #!/usr/bin/env node
 /**
  * Plan Registry Helper
- * Manages plans/PLAN_REGISTRY.json for multi-plan support
+ * Manages the ephemeral .tmp/plan-registry.json for multi-plan support.
+ * The previous tracked location plans/PLAN_REGISTRY.json is migrated once.
  */
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
+import { dirname, join } from 'path';
 
-const REGISTRY_PATH = join(process.cwd(), 'plans', 'PLAN_REGISTRY.json');
+const REGISTRY_PATH = join(process.cwd(), '.tmp', 'plan-registry.json');
+const LEGACY_PATH = join(process.cwd(), 'plans', 'PLAN_REGISTRY.json');
 
 function loadRegistry() {
-  if (!existsSync(REGISTRY_PATH)) {
-    writeFileSync(REGISTRY_PATH, JSON.stringify({}, null, 2));
-    return {};
+  mkdirSync(dirname(REGISTRY_PATH), { recursive: true });
+
+  if (existsSync(REGISTRY_PATH)) {
+    const content = readFileSync(REGISTRY_PATH, 'utf8');
+    try {
+      return JSON.parse(content);
+    } catch (err) {
+      throw new Error(`Failed to parse plan registry at ${REGISTRY_PATH}`, { cause: err });
+    }
   }
-  const content = readFileSync(REGISTRY_PATH, 'utf8');
-  try {
-    return JSON.parse(content);
-  } catch (err) {
-    throw new Error(`Failed to parse plan registry at ${REGISTRY_PATH}`, { cause: err });
+
+  if (existsSync(LEGACY_PATH)) {
+    const legacyContent = readFileSync(LEGACY_PATH, 'utf8');
+    if (legacyContent.trim().length > 0) {
+      let legacy;
+      try {
+        legacy = JSON.parse(legacyContent);
+      } catch (err) {
+        throw new Error(`Failed to parse legacy plan registry at ${LEGACY_PATH}`, { cause: err });
+      }
+      if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
+        saveRegistry(legacy);
+        console.warn('[plan-registry] migrated legacy plans/PLAN_REGISTRY.json → .tmp/plan-registry.json');
+        return legacy;
+      }
+    }
   }
+
+  const empty = {};
+  saveRegistry(empty);
+  return empty;
 }
 
 function saveRegistry(registry) {
-  writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  mkdirSync(dirname(REGISTRY_PATH), { recursive: true });
+  const tmpFile = `${REGISTRY_PATH}.${process.pid}.tmp`;
+  writeFileSync(tmpFile, JSON.stringify(registry, null, 2));
+  renameSync(tmpFile, REGISTRY_PATH);
 }
 
 function generatePlanId() {

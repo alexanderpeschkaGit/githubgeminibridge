@@ -42,6 +42,18 @@ export async function applyHudPatch(
 
   openPanel();
 
+  // Foreign-owner guard: mixing public foreign repos stays allowed, but commits
+  // need a PAT for that owner which no registered account provides. This must run
+  // before any prompt, status switch or network/OID lookup.
+  const ownerMatch = classifyRepoOwner(config);
+  if (ownerMatch === 'foreign') {
+    updateState({
+      status: 'ERROR',
+      statusMessage: `❌ Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. Öffentliche Repos können weiterhin gemischt werden, aber Commits brauchen einen PAT für diesen Owner.`,
+    });
+    return false;
+  }
+
   // A patch without a detected path can never succeed. Ask once, keep the answer in
   // the queue entry so a retry/self-healing round does not prompt again.
   const resolvedPaths = resolvePatchPaths(patch.payload, (index, total) => {
@@ -69,17 +81,6 @@ export async function applyHudPatch(
     status: 'PATCHING',
     statusMessage: `⏳ Applying patch: "${patch.commitMessage}"...`,
   });
-
-  // Foreign-owner guard: mixing public foreign repos stays allowed, but commits
-  // need a PAT for that owner which no registered account provides.
-  const ownerMatch = classifyRepoOwner(config);
-  if (ownerMatch === 'foreign') {
-    updateState({
-      status: 'ERROR',
-      statusMessage: `❌ Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. Öffentliche Repos können weiterhin gemischt werden, aber Commits brauchen einen PAT für diesen Owner.`,
-    });
-    return false;
-  }
 
   try {
     // A missing snapshot (fresh install, cleared OID, repo switch, browser restart)

@@ -10,7 +10,7 @@ description: >-
 - Inspect the relevant repository context before proposing changes.
 - Do not modify files or execute state-changing actions.
 - Follow the global preflight, scope, and decision-gate contract in `AGENTS.md`.
-- **Plan Identity (Multi-Plan Safe):** Generate a unique `planId` at plan start (`plan-YYYYMMDDHHmmss-xxxx` via `node scripts/plan-registry.mjs generate-id`). Write the full plan to `.tmp/plans/<planId>.md` (artifact SSOT). Register the plan in `plans/PLAN_REGISTRY.json` via `node scripts/plan-registry.mjs register` with `baseSha = git rev-parse HEAD` (read-only). Log `PLAN_START <planId>` and `PLAN_DONE <planId>` to `plans/EXECUTION_LOG.md`.
+- **Plan Identity (Multi-Plan Safe):** Generate a unique `planId` at plan start (`plan-YYYYMMDDHHmmss-xxxx` via `node scripts/plan-registry.mjs generate-id`). Write the full plan to `.tmp/plans/<planId>.md` (artifact SSOT). Register the plan in `.tmp/plan-registry.json` via `node scripts/plan-registry.mjs register` with `baseSha = git rev-parse HEAD` (read-only). Log `PLAN_START <planId>` and `PLAN_DONE <planId>` to `plans/EXECUTION_LOG.md`.
 - **Interactive Ambiguity Check (Auto-Grill):** If any part of the request or requirements contains unresolved architecture/logic choices, high-risk trade-offs, or open dependencies, trigger the `/grillme` workflow first. Interview the user using indexed/sequential questions to resolve open choices before rendering the final plan.
 - **Mandatory Execution Metadata Header:** Every generated plan (whether written to a file or output in chat) MUST start with this exact markdown block at the very top:
 

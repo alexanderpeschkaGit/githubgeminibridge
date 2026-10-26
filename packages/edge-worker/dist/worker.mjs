@@ -508,13 +508,13 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
   const additions = [];
   const deletions = [];
   const errors = [];
-  let hasEffectiveChanges = false;
-  const resultingFiles = [];
+  const workingFiles = { ...existingFiles };
+  const resultingFiles = /* @__PURE__ */ new Map();
   for (const op of patches) {
     if (op.action === "delete") {
-      if (existingFiles[op.path] !== null) {
-        deletions.push({ path: op.path });
-        hasEffectiveChanges = true;
+      const current = Object.prototype.hasOwnProperty.call(workingFiles, op.path) ? workingFiles[op.path] : null;
+      if (current !== null) {
+        workingFiles[op.path] = null;
       }
       continue;
     }
@@ -531,12 +531,8 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
       if (phErrors.length > 0) {
         errors.push(...phErrors);
       }
-      const existing = existingFiles[op.path];
-      if (existing !== op.fullContent) {
-        additions.push({ path: op.path, content: op.fullContent });
-        hasEffectiveChanges = true;
-      }
-      resultingFiles.push({ path: op.path, content: op.fullContent });
+      workingFiles[op.path] = op.fullContent;
+      resultingFiles.set(op.path, op.fullContent);
       continue;
     }
     if (op.action === "modify") {
@@ -545,15 +541,11 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         if (phErrors.length > 0) {
           errors.push(...phErrors);
         }
-        const existing2 = existingFiles[op.path];
-        if (existing2 !== op.fullContent) {
-          additions.push({ path: op.path, content: op.fullContent });
-          hasEffectiveChanges = true;
-        }
-        resultingFiles.push({ path: op.path, content: op.fullContent });
+        workingFiles[op.path] = op.fullContent;
+        resultingFiles.set(op.path, op.fullContent);
         continue;
       }
-      const existing = existingFiles[op.path];
+      const existing = Object.prototype.hasOwnProperty.call(workingFiles, op.path) ? workingFiles[op.path] : null;
       if (existing === null || existing === void 0) {
         errors.push({
           file: op.path,
@@ -573,6 +565,24 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
       let currentContent = existing;
       let hasError = false;
       for (const block of op.blocks) {
+        if (typeof block.search !== "string" || block.search.trim().length === 0) {
+          errors.push({
+            file: op.path,
+            stage: "SEARCH_REPLACE",
+            message: 'Patch block "search" must be a non-empty string.'
+          });
+          hasError = true;
+          continue;
+        }
+        if (typeof block.replace !== "string") {
+          errors.push({
+            file: op.path,
+            stage: "SEARCH_REPLACE",
+            message: 'Patch block "replace" must be a string.'
+          });
+          hasError = true;
+          continue;
+        }
         const phErrors = checkPlaceholderErrors(block.replace, op.path);
         if (phErrors.length > 0) {
           errors.push(...phErrors);
@@ -602,18 +612,27 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         hasError = true;
       }
       if (!hasError) {
-        if (currentContent !== existing) {
-          additions.push({ path: op.path, content: currentContent });
-          hasEffectiveChanges = true;
-        }
-        resultingFiles.push({ path: op.path, content: currentContent });
+        workingFiles[op.path] = currentContent;
+        resultingFiles.set(op.path, currentContent);
       }
     }
   }
+  for (const [path, content] of Object.entries(workingFiles)) {
+    const baseContent = Object.prototype.hasOwnProperty.call(existingFiles, path) ? existingFiles[path] : null;
+    if (content === null) {
+      if (baseContent !== null) {
+        deletions.push({ path });
+      }
+    } else if (content !== baseContent) {
+      additions.push({ path, content });
+    }
+  }
+  const hasEffectiveChanges = additions.length > 0 || deletions.length > 0;
+  const resultingFileList = Array.from(resultingFiles, ([path, content]) => ({ path, content }));
   const effectiveHook = preflightHook ?? runPreflightLinter;
   if (effectiveHook) {
     try {
-      const hookErrors = await effectiveHook(resultingFiles, preflight);
+      const hookErrors = await effectiveHook(resultingFileList, preflight);
       if (Array.isArray(hookErrors) && hookErrors.length > 0) {
         errors.push(...hookErrors);
       }
@@ -906,7 +925,7 @@ async function validateSyntaxInWorker(filePath, content) {
         currentCol++;
         continue;
       }
-      const regexPreceders = "=([{:;,?!&|+-*^~<>%\n";
+      const regexPreceders = "=([{:;,?!&|+-*^~<%";
       const isRegex = lastNonWhitespaceChar === "" || regexPreceders.includes(lastNonWhitespaceChar);
       if (isRegex) {
         state = "REGEX";
@@ -920,7 +939,7 @@ async function validateSyntaxInWorker(filePath, content) {
     }
     if (allowsJsx && (ch === "'" || ch === '"')) {
       const prevChar = i > 0 ? content[i - 1] : "";
-      if (/[A-Za-z]/.test(prevChar) && /[A-Za-z]/.test(nextCh)) {
+      if (/[A-Za-z0-9]/.test(prevChar) && /[A-Za-z0-9]/.test(nextCh)) {
         lastNonWhitespaceChar = ch;
         i++;
         currentCol++;
@@ -1666,11 +1685,6 @@ async function scanTarGzipStream(stream, includePaths) {
           skippedFiles.push({ path: relPath, reason: "too_large", bytes: size });
         } else if (filterDecision.reason === "GENERATED_BUNDLE") {
           console.log(`[RepoMix] Skipped file: path=${relPath}, filename=gemini-bridge.user.js`);
-          skippedFiles.push({ path: relPath, reason: "ignored", bytes: size });
-        } else if (filterDecision.reason === "IGNORED_PATH" || filterDecision.reason === "DIR_OR_NON_FILE") {
-          skippedFiles.push({ path: relPath, reason: "ignored", bytes: size });
-        } else if (filterDecision.reason === "NOT_INCLUDED") {
-          skippedFiles.push({ path: relPath, reason: "ignored", bytes: size });
         }
         await discardBytes(paddedSize);
         continue;
@@ -1813,7 +1827,6 @@ function buildChunkedMixXml(input) {
   const treeEntries = [...fileTreeEntries];
   const validFiles = [];
   const blockedFiles = [];
-  const skippedFiles = [];
   for (const f of files) {
     const fileXml = formatFileXml(f);
     const standaloneXml = buildPartXml({
@@ -1829,7 +1842,6 @@ function buildChunkedMixXml(input) {
     });
     if (standaloneXml.length > HARD_GEMINI_CHAR_LIMIT) {
       blockedFiles.push(f.path);
-      skippedFiles.push({ path: f.path, reason: "over_hard_limit", chars: standaloneXml.length });
       continue;
     }
     validFiles.push({ path: f.path, content: f.content, fileXml });
@@ -2014,8 +2026,7 @@ ${bucket.map((b) => b.path).join("\n")}`;
       fileCount: emittedFileCount,
       estimatedTokens: Math.ceil(totalChars / 4),
       charCount: totalChars
-    },
-    skippedFiles: skippedFiles.length > 0 ? skippedFiles : void 0
+    }
   };
 }
 
@@ -2290,11 +2301,7 @@ async function handleMixRequest(req, githubToken) {
       persistedCommitOid = commitRes.oid;
       headOid = commitRes.oid;
     } catch (err) {
-      const aggregatedSkipped2 = [
-        ...scan.skippedFiles || [],
-        ...mixResult.skippedFiles || []
-      ];
-      const skippedFiles2 = aggregatedSkipped2.length > 0 ? aggregatedSkipped2 : void 0;
+      const skippedFiles2 = scan.skippedFiles && scan.skippedFiles.length > 0 ? scan.skippedFiles : void 0;
       return {
         status: "ERROR",
         headOid,
@@ -2310,11 +2317,7 @@ async function handleMixRequest(req, githubToken) {
       };
     }
   }
-  const aggregatedSkipped = [
-    ...scan.skippedFiles || [],
-    ...mixResult.skippedFiles || []
-  ];
-  const skippedFiles = aggregatedSkipped.length > 0 ? aggregatedSkipped : void 0;
+  const skippedFiles = scan.skippedFiles && scan.skippedFiles.length > 0 ? scan.skippedFiles : void 0;
   return {
     status: "OK",
     headOid,
@@ -2415,7 +2418,7 @@ async function executeWorkerWorkflow(payload, env) {
     const systemPrompt = `You are an automated Git patch assistant.
 Given a repository XML context and an issue prompt, return ONLY a valid JSON object strictly conforming to the GeminiPatchPayload schema.
 Do NOT output markdown fences or additional text.`;
-    const contextText = mixResult.xmlContent || (Array.isArray(mixResult.parts) ? mixResult.parts.map((p) => p.xmlContent || "").join("\n\n") : "");
+    const contextText = Array.isArray(mixResult.parts) && mixResult.parts.length > 0 ? mixResult.parts.map((p) => p.xmlContent || "").join("\n\n") : mixResult.xmlContent || "";
     const userQuery = `Task Instruction:
 ${prompt}
 
@@ -2564,6 +2567,18 @@ async function handleGithubWebhookRequest(request, env, ctx) {
 }
 
 // src/index.ts
+var ClientValidationError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ClientValidationError";
+  }
+};
+var UpstreamRequestError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UpstreamRequestError";
+  }
+};
 var CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -2661,7 +2676,7 @@ var index_default = {
     try {
       if (request.method === "POST" && (path === "/push" || path === "/commit" || path === "/api/commit" || path === "/")) {
         const body = await request.json().catch(() => {
-          throw new Error("Malformed JSON payload");
+          throw new ClientValidationError("Malformed JSON payload");
         });
         let owner = "";
         let repo = "";
@@ -2670,17 +2685,17 @@ var index_default = {
           owner = parsed.owner;
           repo = parsed.repo;
         } catch {
-          return errorResponse('Missing required fields: Repository must be specified as "owner/repo" or separate "owner" and "repo".');
+          throw new ClientValidationError('Missing required fields: Repository must be specified as "owner/repo" or separate "owner" and "repo".');
         }
         const commitMessage = body.commitMessage || body.message;
         if (!commitMessage) {
-          return errorResponse('Missing required field: "commitMessage" (or "message") must be specified.');
+          throw new ClientValidationError('Missing required field: "commitMessage" (or "message") must be specified.');
         }
         const targetBranch = body.targetBranch || body.branch || "main";
         const fileChanges = body.changes || body.files || [];
         const deletions = body.deletions || [];
         if (fileChanges.length === 0 && deletions.length === 0) {
-          return errorResponse('Commit must include at least one entry in "changes" or "files" or "deletions".');
+          throw new ClientValidationError('Commit must include at least one entry in "changes" or "files" or "deletions".');
         }
         const { headOid, resolvedBranch } = await getBranchHeadOid(owner, repo, targetBranch, githubToken);
         if (body.expectedHeadOid && body.expectedHeadOid !== headOid) {
@@ -2697,13 +2712,25 @@ var index_default = {
         for (const fileInput of fileChanges) {
           const pathIssue = findRepoPathIssue(fileInput.path);
           if (pathIssue) {
-            throw new Error(pathIssue);
+            throw new ClientValidationError(pathIssue);
           }
           const filePath = normalizeRepoPath(fileInput.path);
           const contentFetcher = async (requestedPath) => {
-            return await fetchFileContent(owner, repo, resolvedBranch, requestedPath, githubToken);
+            try {
+              return await fetchFileContent(owner, repo, resolvedBranch, requestedPath, githubToken);
+            } catch (err) {
+              throw new UpstreamRequestError(err?.message || "Failed to fetch existing file from GitHub");
+            }
           };
-          const resolvedText = await resolveFileContent({ ...fileInput, path: filePath }, contentFetcher);
+          let resolvedText;
+          try {
+            resolvedText = await resolveFileContent({ ...fileInput, path: filePath }, contentFetcher);
+          } catch (err) {
+            if (err instanceof UpstreamRequestError) {
+              throw err;
+            }
+            throw new ClientValidationError(err?.message || "Invalid file change payload");
+          }
           const encodedBase64 = utf8ToBase64(resolvedText);
           additions.push({
             path: filePath,
@@ -2714,7 +2741,7 @@ var index_default = {
           const rawPath = typeof del === "string" ? del : del.path;
           const pathIssue = findRepoPathIssue(rawPath);
           if (pathIssue) {
-            throw new Error(pathIssue);
+            throw new ClientValidationError(pathIssue);
           }
           return { path: normalizeRepoPath(rawPath) };
         });
@@ -2762,6 +2789,9 @@ var index_default = {
       }
       return errorResponse(`Endpoint not found: ${request.method} ${path}`, 404);
     } catch (err) {
+      if (err instanceof ClientValidationError) {
+        return errorResponse(err.message, 400);
+      }
       console.error("Request processing error:", err);
       return errorResponse(err.message || "Internal server error", 500);
     }
