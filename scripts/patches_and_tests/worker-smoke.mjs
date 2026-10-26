@@ -396,7 +396,42 @@ async function main() {
       bundleSize = rootText.length;
     }
 
-    const pass = allTsFiles.length > 0 && overLimitZone.length === 0 && distExists && rootExists && bundleContentIdentical && bundleSize > 0;
+    // Bundle freshness check against source (mtime/hash heuristic)
+    let bundleFresh = true;
+    let bundleStalenessDetails = null;
+    try {
+      const hudSrcDirCheck = path.join(ROOT_DIR, 'packages/userscript-hud/src');
+      const getLatestMtime = (dir) => {
+        if (!fs.existsSync(dir)) return 0;
+        let latest = 0;
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            latest = Math.max(latest, getLatestMtime(fullPath));
+          } else if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') || entry.name.endsWith('.js'))) {
+            const stat = fs.statSync(fullPath);
+            if (stat.mtimeMs > latest) latest = stat.mtimeMs;
+          }
+        }
+        return latest;
+      };
+      const latestSrcMtime = Math.max(getLatestMtime(hudSrcDirCheck), getLatestMtime(path.join(ROOT_DIR, 'packages/userscript-hud')));
+      if (distExists && rootExists && latestSrcMtime > 0) {
+        const distStat = fs.statSync(distBundlePath);
+        const rootStat = fs.statSync(rootBundlePath);
+        const bundleMtime = Math.max(distStat.mtimeMs, rootStat.mtimeMs);
+        if (bundleMtime < latestSrcMtime) {
+          bundleFresh = false;
+          bundleStalenessDetails = `Bundle older than source (bundle mtime ${new Date(bundleMtime).toISOString()} < latest source ${new Date(latestSrcMtime).toISOString()})`;
+        }
+      }
+    } catch (e) {
+      bundleFresh = false;
+      bundleStalenessDetails = e?.message || String(e);
+    }
+
+    const pass = allTsFiles.length > 0 && overLimitZone.length === 0 && distExists && rootExists && bundleContentIdentical && bundleSize > 0 && bundleFresh;
 
     return {
       pass,
@@ -405,6 +440,8 @@ async function main() {
       overLimitFilesCount: overLimitZone.length,
       bundleContentIdentical,
       bundleSize,
+      bundleFresh,
+      bundleStalenessDetails,
       warningZone,
       overLimitZone,
       audit

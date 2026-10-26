@@ -10,6 +10,11 @@ import { dirname, join } from 'path';
 const REGISTRY_PATH = join(process.cwd(), '.tmp', 'plan-registry.json');
 const LEGACY_PATH = join(process.cwd(), 'plans', 'PLAN_REGISTRY.json');
 
+function normalizeRepoPath(filePath) {
+  if (typeof filePath !== 'string') return filePath;
+  return filePath.replace(/\\/g, '/');
+}
+
 function loadRegistry() {
   mkdirSync(dirname(REGISTRY_PATH), { recursive: true });
 
@@ -80,62 +85,18 @@ function register({ planId, artifactPath, scope, workflow, tier, baseSha, descri
   return registry[planId];
 }
 
-function update(planId, updates) {
+function scope(planId, files) {
   const registry = loadRegistry();
   if (!registry[planId]) throw new Error(`Plan ${planId} not found`);
-  registry[planId] = { ...registry[planId], ...updates, updatedAt: new Date().toISOString() };
-  saveRegistry(registry);
-  return registry[planId];
-}
-
-function start(planId) {
-  return update(planId, { status: 'RUNNING' });
-}
-
-function complete(planId) {
-  return update(planId, { status: 'COMPLETED', locks: [] });
-}
-
-function abort(planId) {
-  return update(planId, { status: 'ABORTED', locks: [] });
-}
-
-function lockFiles(planId, files) {
-  const registry = loadRegistry();
-  // Check for conflicts
-  for (const [id, plan] of Object.entries(registry)) {
-    if (id === planId) continue;
-    if (plan.status === 'RUNNING') {
-      const conflict = (files || []).filter(f => (plan.locks || []).includes(f));
-      if (conflict.length > 0) {
-        throw new Error(`File lock conflict with ${id}: ${conflict.join(', ')}`);
-      }
-    }
-  }
-  if (!registry[planId]) throw new Error(`Plan ${planId} not found`);
-  registry[planId].locks = [...new Set([...(registry[planId].locks || []), ...(files || [])])];
+  const normalizedFiles = (files || []).map(f => normalizeRepoPath(f));
+  registry[planId].scope = { ...(registry[planId].scope || {}), files: normalizedFiles };
   registry[planId].updatedAt = new Date().toISOString();
   saveRegistry(registry);
   return registry[planId];
 }
 
-function releaseLocks(planId) {
-  return update(planId, { locks: [] });
-}
-
-function getPlan(planId) {
-  const registry = loadRegistry();
-  return registry[planId] || null;
-}
-
-function getRunningPlans() {
-  const registry = loadRegistry();
-  return Object.values(registry).filter(p => p.status === 'RUNNING');
-}
-
-function getQueuedPlans() {
-  const registry = loadRegistry();
-  return Object.values(registry).filter(p => p.status === 'QUEUED');
+function updateScopes() {
+  // no-op: kept for API compatibility
 }
 
 // CLI
@@ -151,15 +112,33 @@ if (cmd === 'generate-id') {
   console.log(JSON.stringify(result));
 } else if (cmd === 'start') {
   console.log(JSON.stringify(start(args[0])));
+
+  return;
 } else if (cmd === 'complete') {
   console.log(JSON.stringify(complete(args[0])));
 } else if (cmd === 'lock') {
   const [planId, ...files] = args;
   console.log(JSON.stringify(lockFiles(planId, files)));
+} else if (cmd === 'unlock' || cmd === 'release') {
+  console.log(JSON.stringify(releaseLocks(args[0])));
+} else if (cmd === 'abort') {
+  console.log(JSON.stringify(abort(args[0])));
+} else if (cmd === 'queued') {
+  console.log(JSON.stringify(getQueuedPlans()));
 } else if (cmd === 'get') {
   console.log(JSON.stringify(getPlan(args[0])));
 } else if (cmd === 'running') {
   console.log(JSON.stringify(getRunningPlans()));
+} else if (cmd === 'scope') {
+  const [planId, ...files] = args;
+  if (files.length === 0 && args.length === 1 && typeof args[0] === 'string' && args[0].includes(',')) {
+    console.log(JSON.stringify(scope(planId, args[0].split(','))));
+  } else {
+    console.log(JSON.stringify(scope(planId, files)));
+  }
+} else if (cmd === 'update-scopes') {
+  updateScopes();
+  console.log(JSON.stringify({ updated: true }));
 } else {
-  console.log('Usage: plan-registry.mjs <generate-id|register|start|complete|lock|get|running>');
+  console.log('Usage: plan-registry.mjs <generate-id|register|start|complete|lock|unlock|release|abort|queued|get|running|scope|update-scopes>');
 }

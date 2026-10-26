@@ -214,10 +214,21 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
   }
 
   // 2b. Cap metadata before partitioning: instructions + tree + metadata must stay inside Part 1.
-  const part1OverheadGuess = fullTreeXml.length + DEFAULT_MIX_INSTRUCTIONS.length + 512;
+  // Measured Part 1 overhead (envelope + instructions + master tree) via the real serializer.
+  const part1OverheadChars = buildPartXml({
+    owner,
+    repo,
+    branch,
+    headOid,
+    partNum: 1,
+    totalParts: MAX_GEMINI_PARTS,
+    instructionsText: DEFAULT_MIX_INSTRUCTIONS,
+    treeText: fullTreeXml,
+    fileXmlList: [],
+  }).length;
   const metadataBudget = Math.max(
     0,
-    Math.min(MAX_RECENT_COMMITS_CHARS, effectiveMaxChars - part1OverheadGuess)
+    Math.min(MAX_RECENT_COMMITS_CHARS, effectiveMaxChars - part1OverheadChars)
   );
   const cappedRecentCommitsText = capRecentCommitsText(input.recentCommitsText, metadataBudget);
 
@@ -314,14 +325,10 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
   }
 
   // 4. Partition by complete serialized size, including each part's tree and XML envelope.
+  type FsEntry = { path: string; content: string; fileXml: string };
   function partitionFiles(budgetChars: number) {
-    const buckets: Array<Array<{ path: string; content: string; fileXml: string }>> = [];
-    let currentBucket: Array<{ path: string; content: string; fileXml: string }> = [];
     const partBudget = Math.min(budgetChars, HARD_GEMINI_CHAR_LIMIT);
-    const serializedSize = (
-      bucket: Array<{ path: string; content: string; fileXml: string }>,
-      index: number
-    ): number => {
+    const serializedSize = (bucket: FsEntry[], index: number): number => {
       const partNum = index + 1;
       const treeText =
         index === 0
@@ -342,33 +349,58 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
       }).length;
     };
 
-    for (const file of validFiles) {
-      let candidate = [...currentBucket, file];
-      let candidateSize = serializedSize(candidate, buckets.length);
-      if (currentBucket.length > 0 && candidateSize > partBudget) {
-        buckets.push(currentBucket);
-        currentBucket = [];
-        candidate = [file];
-        candidateSize = serializedSize(candidate, buckets.length);
+    // First-Fit Decreasing: largest files first, each placed into the first bucket that fits.
+    // serializedSize stays the single source of truth for every fit decision.
+    if (partBudget <= 0) return validFiles.map((f) => [f]);
+    const packList = [...validFiles].sort(
+      (a, b) => b.fileXml.length - a.fileXml.length || a.path.localeCompare(b.path)
+    );
+    const buckets: FsEntry[][] = [];
+    for (const file of packList) {
+      let placed = false;
+      for (let i = 0; i < buckets.length; i++) {
+        const candidate = [...buckets[i], file];
+        if (serializedSize(candidate, i) <= partBudget) {
+          buckets[i] = candidate;
+          placed = true;
+          break;
+        }
       }
-      if (currentBucket.length === 0 && candidateSize > partBudget && buckets.length === 0) {
-        buckets.push([]);
-        candidateSize = serializedSize([file], 1);
-      }
-      currentBucket = candidate;
+      if (!placed) buckets.push([file]);
     }
-    if (currentBucket.length > 0 || buckets.length === 0) buckets.push(currentBucket);
     return buckets;
   }
 
-  let chunkBuckets = partitionFiles(effectiveMaxChars);
+  // Budget ladder: 85k default first, then 95k, then the absolute 100k ceiling.
+  const budgetLadder = [
+    effectiveMaxChars,
+    Math.min(95_000, HARD_GEMINI_CHAR_LIMIT),
+    HARD_GEMINI_CHAR_LIMIT,
+  ];
+  const triedBudgets: Array<{ budget: number; parts: number }> = [];
+  let chunkBuckets: Array<Array<{ path: string; content: string; fileXml: string }>> = [];
+  for (const budget of budgetLadder) {
+    if (triedBudgets.some((t) => t.budget === budget)) continue;
+    chunkBuckets = partitionFiles(budget);
+    triedBudgets.push({ budget, parts: chunkBuckets.length });
+    if (chunkBuckets.length <= MAX_GEMINI_PARTS) break;
+  }
   if (chunkBuckets.length > MAX_GEMINI_PARTS) {
-    chunkBuckets = partitionFiles(HARD_GEMINI_CHAR_LIMIT);
-    if (chunkBuckets.length > MAX_GEMINI_PARTS) {
-      throw new Error(
-        `RepoMix needs more than ${MAX_GEMINI_PARTS} parts to preserve all files within the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
-      );
-    }
+    const partsAt = (budget: number): number =>
+      triedBudgets.find((t) => t.budget === budget)?.parts ?? -1;
+    const metrics = {
+      files: validFiles.length,
+      largestFileXmlChars: validFiles.reduce((max, f) => Math.max(max, f.fileXml.length), 0),
+      partsTriedAt85k: partsAt(DEFAULT_MAX_CHUNK_CHARS),
+      partsTriedAt95k: partsAt(95_000),
+      partsTriedAt100k: partsAt(HARD_GEMINI_CHAR_LIMIT),
+      part1OverheadChars,
+      treeChars: fullTreeXml.length,
+      cappedMetaChars: cappedRecentCommitsText.length,
+    };
+    throw new Error(
+      `RepoMix needs more than ${MAX_GEMINI_PARTS} parts to preserve all files within the ${HARD_GEMINI_CHAR_LIMIT}-character limit. Metrics: ${JSON.stringify(metrics)}`
+    );
   }
 
   const totalParts = chunkBuckets.length;

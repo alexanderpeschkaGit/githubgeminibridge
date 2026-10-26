@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-26T21:33:29.261Z",
+  "timestamp": "2026-10-26T23:35:55.987Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -111,10 +111,12 @@
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
       "bundleSize": 107591,
+      "bundleFresh": true,
+      "bundleStalenessDetails": null,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
-          "lines": 440
+          "lines": 472
         },
         {
           "file": "packages/edge-worker/src/modules/mixerTarScan.ts",
@@ -161,7 +163,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
-          "lines": 440
+          "lines": 472
         },
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",

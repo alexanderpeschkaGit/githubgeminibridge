@@ -6,6 +6,10 @@ node_modules/
 
 # Build outputs
 dist/
+!packages/*/dist/
+!packages/*/dist/*.mjs
+!packages/*/dist/*.js
+!packages/*/dist/*.user.js
 build/
 out/
 *.tsbuildinfo
@@ -70,4 +74,6 @@ plans/EXECUTION_LOG.md
 plans/TEST_LOG.md
 plans/STATE.md
 *.user.js
+!gemini-bridge.user.js
+!packages/userscript-hud/dist/gemini-bridge.user.js
 *.user.js.map
