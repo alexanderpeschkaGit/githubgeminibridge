@@ -231,7 +231,7 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
       if (allowsJsx && lastNonWhitespaceChar === '<') {
         lastNonWhitespaceChar = ch; i++; currentCol++; continue;
       }
-      const regexPreceders = '=([{:;,?!&|+-*^~<>%return\n';
+      const regexPreceders = '=([{:;,?!&|+-*^~<>%\n';
       const isRegex = lastNonWhitespaceChar === '' || regexPreceders.includes(lastNonWhitespaceChar);
       if (isRegex) {
         state = 'REGEX'; inRegexCharClass = false; stringStartLine = currentLine; stringStartCol = currentCol;

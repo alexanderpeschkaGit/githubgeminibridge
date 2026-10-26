@@ -1887,6 +1887,8 @@ Fix Instructions:
           state.lastMixStats = res.stats;
           let injected = false;
           const metaCommits = res.stats.recentCommitsCount ? ` (incl. ${res.stats.recentCommitsCount} recent commits, ${res.stats.volatileFilesCount ?? 0} volatile files)` : "";
+          const skipped = res.skippedFiles || [];
+          const skippedNotice = skipped.length > 0 ? ` | Skipped ${skipped.length} file(s)${skipped.length <= 3 ? ": " + skipped.slice(0, 3).map((s) => s.path.split("/").pop()).join(", ") + (skipped.length > 3 ? "..." : "") : ""} \u2014 see details (add to .repomixignore.cf or narrow includePaths)` : "";
           if (res.parts && res.parts.length > 1) {
             const partBreakdown = res.parts.map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`).join(", ");
             injected = injectRepoMixParts(
@@ -1894,20 +1896,22 @@ Fix Instructions:
             );
             updateState({
               status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}${skippedNotice}`
             });
           } else {
             injected = injectRepoMixFile(res.xmlContent);
             const charLen = res.stats.charCount ?? res.xmlContent.length;
             updateState({
               status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}${skippedNotice}`
             });
           }
         } else {
+          const skipped = res.skippedFiles || [];
+          const skippedNotice = skipped.length > 0 ? ` | Skipped ${skipped.length} file(s) (add to .repomixignore.cf or narrow includePaths)` : "";
           updateState({
             status: "ERROR",
-            statusMessage: `\u274C Mix error: ${res.errorMessage || "Unknown error"}`
+            statusMessage: `\u274C Mix error: ${res.errorMessage || "Unknown error"}${skippedNotice}`
           });
         }
       } catch (err) {

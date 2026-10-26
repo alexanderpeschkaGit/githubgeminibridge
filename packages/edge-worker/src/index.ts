@@ -45,16 +45,35 @@ export function verifyAuth(request: Request, env: WorkerEnv): boolean {
     return false;
   }
 
+  const enc = new TextEncoder();
+  const secretBytes = enc.encode(secret);
+
   const customHeader = request.headers.get('x-bridge-secret');
-  if (customHeader && customHeader === secret) {
-    return true;
+  if (customHeader) {
+    const headerBytes = enc.encode(customHeader);
+    if (headerBytes.length === secretBytes.length) {
+      let result = 0;
+      for (let i = 0; i < headerBytes.length; i++) {
+        result |= headerBytes[i] ^ secretBytes[i];
+      }
+      if (result === 0) {
+        return true;
+      }
+    }
   }
 
   const authHeader = request.headers.get('Authorization');
   if (authHeader) {
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-    if (token === secret) {
-      return true;
+    const tokenBytes = enc.encode(token);
+    if (tokenBytes.length === secretBytes.length) {
+      let result = 0;
+      for (let i = 0; i < tokenBytes.length; i++) {
+        result |= tokenBytes[i] ^ secretBytes[i];
+      }
+      if (result === 0) {
+        return true;
+      }
     }
   }
 
@@ -133,6 +152,16 @@ export default {
 
         // 4a. Resolve HEAD Commit OID for target branch to prevent race conditions
         const { headOid, resolvedBranch } = await getBranchHeadOid(owner, repo, targetBranch, githubToken);
+        if (body.expectedHeadOid && body.expectedHeadOid !== headOid) {
+          return jsonResponse(
+            {
+              status: 'GIT_CONFLICT',
+              newHeadOid: headOid,
+              errorMessage: `Expected HEAD "${body.expectedHeadOid}" but branch "${resolvedBranch}" is at "${headOid}". Fetch the latest repo mix and retry.`
+            },
+            409
+          );
+        }
 
         // 4b. Resolve File Changes (Apply Search/Replace, Hard Guardrail, & encode to Base64)
         const additions: { path: string; contents: string }[] = [];
@@ -225,9 +254,7 @@ export default {
       return errorResponse(`Endpoint not found: ${request.method} ${path}`, 404);
     } catch (err: any) {
       console.error('Request processing error:', err);
-      return errorResponse(err.message || 'Internal server error', 500, {
-        stack: err.stack
-      });
+      return errorResponse(err.message || 'Internal server error', 500);
     }
   }
 };

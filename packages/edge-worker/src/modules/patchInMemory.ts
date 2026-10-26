@@ -6,8 +6,9 @@ import type {
 } from '../types';
 import {
   LLM_PLACEHOLDER_PATTERNS,
-  applySearchReplace
-} from './patcher';
+  applySearchReplace,
+  checkPlaceholderErrors
+} from './searchReplace';
 import { runPreflightLinter } from './linter';
 
 /**
@@ -23,26 +24,7 @@ export type PreflightLinterHook = (
  * Non-throwing helper that checks LLM_PLACEHOLDER_PATTERNS and returns
  * aggregated LinterError items for Stage 2 & 4 non-fail-fast error reporting.
  */
-export function checkPlaceholderErrors(content: string, filePath: string): LinterError[] {
-  const errors: LinterError[] = [];
-  const lines = content.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
-      if (pattern.test(line)) {
-        errors.push({
-          file: filePath,
-          stage: 'CUSTOM_RULE',
-          line: i + 1,
-          message: `Forbidden LLM placeholder pattern detected: "${line.trim()}"`,
-          codeSnippet: line.trim()
-        });
-        break;
-      }
-    }
-  }
-  return errors;
-}
+export { checkPlaceholderErrors };
 
 /**
  * Evaluates custom preflight rules without failing fast.
@@ -297,12 +279,6 @@ export async function applyPatchesInMemory(
         resultingFiles.push({ path: op.path, content: currentContent });
       }
     }
-  }
-
-  // Preflight custom rules (builtin)
-  const builtinErrors = runBuiltinPreflightRules(resultingFiles, preflight);
-  if (builtinErrors.length > 0) {
-    errors.push(...builtinErrors);
   }
 
   // Stage 4 preflight linter hook (oxc-parser / AST syntax checks + custom rules)

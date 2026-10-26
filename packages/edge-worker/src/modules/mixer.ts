@@ -122,19 +122,31 @@ export async function handleMixRequest(
   }
 
   // Partition files and build structured XML representation(s)
-  const mixResult = buildChunkedMixXml({
-    owner,
-    repo,
-    branch: resolvedBranch,
-    headOid,
-    fileTreeEntries,
-    files,
-    recentCommitsText,
-    maxChunkChars: req.maxChunkChars,
-    maxChunkBytes: req.maxChunkBytes,
-    maxChunkTokens: req.maxChunkTokens,
-    splitOutput: req.splitOutput,
-  });
+  let mixResult;
+  try {
+    mixResult = buildChunkedMixXml({
+      owner,
+      repo,
+      branch: resolvedBranch,
+      headOid,
+      fileTreeEntries,
+      files,
+      recentCommitsText,
+      maxChunkChars: req.maxChunkChars,
+      maxChunkBytes: req.maxChunkBytes,
+      maxChunkTokens: req.maxChunkTokens,
+      splitOutput: req.splitOutput,
+    });
+  } catch (err: any) {
+    return {
+      status: 'ERROR',
+      headOid,
+      xmlContent: '',
+      stats: { fileCount: 0, estimatedTokens: 0 },
+      errorMessage: err.message || 'Failed to build chunked mix XML',
+      ...(scan.skippedFiles && scan.skippedFiles.length > 0 ? { skippedFiles: scan.skippedFiles } : {})
+    };
+  }
 
   let persistedCommitOid: string | undefined;
 
@@ -153,6 +165,11 @@ export async function handleMixRequest(
       persistedCommitOid = commitRes.oid;
       headOid = commitRes.oid;
     } catch (err: any) {
+      const aggregatedSkipped = [
+        ...(scan.skippedFiles || []),
+        ...(mixResult.skippedFiles || [])
+      ];
+      const skippedFiles = aggregatedSkipped.length > 0 ? aggregatedSkipped : undefined;
       return {
         status: 'ERROR',
         headOid,
@@ -163,10 +180,17 @@ export async function handleMixRequest(
           ...mixResult.stats,
           ...(recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {})
         },
-        errorMessage: `Failed to persist repo-mix.xml snapshot to GitHub: ${err.message}`
+        errorMessage: `Failed to persist repo-mix.xml snapshot to GitHub: ${err.message}`,
+        ...(skippedFiles ? { skippedFiles } : {})
       };
     }
   }
+
+  const aggregatedSkipped = [
+    ...(scan.skippedFiles || []),
+    ...(mixResult.skippedFiles || [])
+  ];
+  const skippedFiles = aggregatedSkipped.length > 0 ? aggregatedSkipped : undefined;
 
   return {
     status: 'OK',
@@ -178,6 +202,7 @@ export async function handleMixRequest(
       ...mixResult.stats,
       ...(recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {})
     },
-    ...(persistedCommitOid ? { persistedCommitOid } : {})
+    ...(persistedCommitOid ? { persistedCommitOid } : {}),
+    ...(skippedFiles ? { skippedFiles } : {})
   };
 }

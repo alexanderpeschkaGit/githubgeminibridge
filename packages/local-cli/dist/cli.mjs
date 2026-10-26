@@ -1,9 +1,104 @@
-// packages/local-cli/src/localRunner.ts
+// src/localRunner.ts
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
-// packages/edge-worker/src/modules/syntaxScanner.ts
+// ../edge-worker/src/modules/searchReplace.ts
+var LLM_PLACEHOLDER_PATTERNS = [
+  /\/\/\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
+  /#\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
+  /\/\*\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}\s*\*\//i,
+  /<!--\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}\s*-->/i,
+  /\.{3,}\s*(?:existing|rest of)\s*code\s*\.{3,}/i,
+  /\/\/\s*\.{3,}\s*$/m
+];
+function checkPlaceholderErrors(content, filePath) {
+  const errors = [];
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
+      if (pattern.test(line)) {
+        errors.push({
+          file: filePath,
+          stage: "CUSTOM_RULE",
+          line: i + 1,
+          message: `Forbidden LLM placeholder pattern detected: "${line.trim()}"`,
+          codeSnippet: line.trim()
+        });
+        break;
+      }
+    }
+  }
+  return errors;
+}
+function applySearchReplace(original, search, replace, filePath = "") {
+  if (original.includes(search)) {
+    return original.replace(search, () => replace);
+  }
+  const normOriginal = original.replace(/\r\n/g, "\n");
+  const normSearch = search.replace(/\r\n/g, "\n");
+  const normReplace = replace.replace(/\r\n/g, "\n");
+  if (normOriginal.includes(normSearch)) {
+    const updated = normOriginal.replace(normSearch, () => normReplace);
+    if (original.includes("\r\n")) {
+      return updated.replace(/\n/g, "\r\n");
+    }
+    return updated;
+  }
+  const origLines = normOriginal.split("\n");
+  const searchLines = normSearch.split("\n");
+  let matchStart = -1;
+  for (let i = 0; i <= origLines.length - searchLines.length; i++) {
+    let matches = true;
+    for (let j = 0; j < searchLines.length; j++) {
+      if (origLines[i + j].trim() !== searchLines[j].trim()) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      matchStart = i;
+      break;
+    }
+  }
+  if (matchStart !== -1) {
+    const before = origLines.slice(0, matchStart).join("\n");
+    const after = origLines.slice(matchStart + searchLines.length).join("\n");
+    const updated = (before ? before + "\n" : "") + normReplace + (after ? "\n" + after : "");
+    if (original.includes("\r\n")) {
+      return updated.replace(/\n/g, "\r\n");
+    }
+    return updated;
+  }
+  const snippet = search.length > 200 ? `${search.slice(0, 200)}...` : search;
+  throw new Error(`Search block could not be resolved for file "${filePath}". Target snippet:
+${snippet}`);
+}
+
+// ../../shared/repoPaths.ts
+function normalizeRepoPath(input) {
+  return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+}
+function findRepoPathIssue(input) {
+  const raw = (input || "").trim();
+  if (!raw) {
+    return 'Patch has no file path. Add a "// filepath: <repo/relative/path>" hint above the code block.';
+  }
+  const normalized = normalizeRepoPath(raw);
+  if (!normalized) {
+    return `Patch path "${raw}" does not point to a file inside the repository.`;
+  }
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    return `Patch path "${raw}" must be repo-relative (absolute drive paths are not allowed).`;
+  }
+  if (normalized.split("/").some((segment) => segment === ".." || segment === ".")) {
+    return `Patch path "${raw}" must be repo-relative and must not contain "." or ".." segments.`;
+  }
+  return null;
+}
+
+// ../edge-worker/src/modules/syntaxScanner.ts
 var registeredOxcParser = null;
 var SUPPORTED_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
 function validateJson(filePath, content, getSnippet) {
@@ -267,7 +362,7 @@ async function validateSyntaxInWorker(filePath, content) {
         currentCol++;
         continue;
       }
-      const regexPreceders = "=([{:;,?!&|+-*^~<>%return\n";
+      const regexPreceders = "=([{:;,?!&|+-*^~<>%\n";
       const isRegex = lastNonWhitespaceChar === "" || regexPreceders.includes(lastNonWhitespaceChar);
       if (isRegex) {
         state = "REGEX";
@@ -454,7 +549,7 @@ async function validateSyntaxInWorker(filePath, content) {
   return errors;
 }
 
-// packages/edge-worker/src/modules/linter.ts
+// ../edge-worker/src/modules/linter.ts
 async function validateSyntaxInWorker2(filePath, content) {
   return validateSyntaxInWorker(filePath, content);
 }
@@ -496,87 +591,8 @@ async function runPreflightLinter(files, preflight) {
   return deduplicated;
 }
 
-// packages/edge-worker/src/modules/patcher.ts
-var LLM_PLACEHOLDER_PATTERNS = [
-  /\/\/\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
-  /#\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
-  /\/\*\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}\s*\*\//i,
-  /<!--\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}\s*-->/i,
-  /\.{3,}\s*(?:existing|rest of)\s*code\s*\.{3,}/i,
-  /\/\/\s*\.{3,}\s*$/m
-];
-function checkPlaceholderErrors(content, filePath) {
-  return checkPlaceholderErrors2(content, filePath);
-}
+// ../edge-worker/src/modules/patchInMemory.ts
 function runBuiltinPreflightRules(files, preflight) {
-  return runBuiltinPreflightRules2(files, preflight);
-}
-function applySearchReplace(original, search, replace, filePath = "") {
-  if (original.includes(search)) {
-    return original.replace(search, replace);
-  }
-  const normOriginal = original.replace(/\r\n/g, "\n");
-  const normSearch = search.replace(/\r\n/g, "\n");
-  const normReplace = replace.replace(/\r\n/g, "\n");
-  if (normOriginal.includes(normSearch)) {
-    const updated = normOriginal.replace(normSearch, normReplace);
-    if (original.includes("\r\n")) {
-      return updated.replace(/\n/g, "\r\n");
-    }
-    return updated;
-  }
-  const origLines = normOriginal.split("\n");
-  const searchLines = normSearch.split("\n");
-  let matchStart = -1;
-  for (let i = 0; i <= origLines.length - searchLines.length; i++) {
-    let matches = true;
-    for (let j = 0; j < searchLines.length; j++) {
-      if (origLines[i + j].trim() !== searchLines[j].trim()) {
-        matches = false;
-        break;
-      }
-    }
-    if (matches) {
-      matchStart = i;
-      break;
-    }
-  }
-  if (matchStart !== -1) {
-    const before = origLines.slice(0, matchStart).join("\n");
-    const after = origLines.slice(matchStart + searchLines.length).join("\n");
-    const updated = (before ? before + "\n" : "") + normReplace + (after ? "\n" + after : "");
-    if (original.includes("\r\n")) {
-      return updated.replace(/\n/g, "\r\n");
-    }
-    return updated;
-  }
-  const snippet = search.length > 200 ? `${search.slice(0, 200)}...` : search;
-  throw new Error(`Search block could not be resolved for file "${filePath}". Target snippet:
-${snippet}`);
-}
-
-// packages/edge-worker/src/modules/patchInMemory.ts
-function checkPlaceholderErrors2(content, filePath) {
-  const errors = [];
-  const lines = content.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
-      if (pattern.test(line)) {
-        errors.push({
-          file: filePath,
-          stage: "CUSTOM_RULE",
-          line: i + 1,
-          message: `Forbidden LLM placeholder pattern detected: "${line.trim()}"`,
-          codeSnippet: line.trim()
-        });
-        break;
-      }
-    }
-  }
-  return errors;
-}
-function runBuiltinPreflightRules2(files, preflight) {
   const errors = [];
   if (!preflight) {
     return errors;
@@ -668,7 +684,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         });
         continue;
       }
-      const phErrors = checkPlaceholderErrors2(op.fullContent, op.path);
+      const phErrors = checkPlaceholderErrors(op.fullContent, op.path);
       if (phErrors.length > 0) {
         errors.push(...phErrors);
       }
@@ -682,7 +698,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
     }
     if (op.action === "modify") {
       if (typeof op.fullContent === "string" && (!op.blocks || op.blocks.length === 0)) {
-        const phErrors = checkPlaceholderErrors2(op.fullContent, op.path);
+        const phErrors = checkPlaceholderErrors(op.fullContent, op.path);
         if (phErrors.length > 0) {
           errors.push(...phErrors);
         }
@@ -714,7 +730,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
       let currentContent = existing;
       let hasError = false;
       for (const block of op.blocks) {
-        const phErrors = checkPlaceholderErrors2(block.replace, op.path);
+        const phErrors = checkPlaceholderErrors(block.replace, op.path);
         if (phErrors.length > 0) {
           errors.push(...phErrors);
           hasError = true;
@@ -737,7 +753,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
           hasError = true;
         }
       }
-      const finalPhErrors = checkPlaceholderErrors2(currentContent, op.path);
+      const finalPhErrors = checkPlaceholderErrors(currentContent, op.path);
       if (finalPhErrors.length > 0) {
         errors.push(...finalPhErrors);
         hasError = true;
@@ -750,10 +766,6 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
         resultingFiles.push({ path: op.path, content: currentContent });
       }
     }
-  }
-  const builtinErrors = runBuiltinPreflightRules2(resultingFiles, preflight);
-  if (builtinErrors.length > 0) {
-    errors.push(...builtinErrors);
   }
   const effectiveHook = preflightHook ?? runPreflightLinter;
   if (effectiveHook) {
@@ -787,7 +799,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
   };
 }
 
-// packages/local-cli/src/localRunner.ts
+// src/localRunner.ts
 function loadEnvFile(cwd) {
   const envPath = path.join(cwd, ".env");
   if (!fs.existsSync(envPath)) return;
@@ -911,10 +923,27 @@ async function runLocalHybridTask(input, options = {}) {
   const targetPaths = input.targetPaths || [];
   const originalFiles = [];
   for (const relPath of targetPaths) {
-    const absPath = path.resolve(cwd, relPath);
+    const pathIssue = findRepoPathIssue(relPath);
+    if (pathIssue) {
+      return {
+        mode: "local",
+        status: "ERROR",
+        message: pathIssue
+      };
+    }
+    const normalizedRelPath = normalizeRepoPath(relPath);
+    const absPath = path.resolve(cwd, normalizedRelPath);
+    const resolvedCwd = path.resolve(cwd);
+    if (!absPath.startsWith(resolvedCwd + path.sep) && absPath !== resolvedCwd) {
+      return {
+        mode: "local",
+        status: "ERROR",
+        message: `Path traversal detected: "${relPath}" escapes repository root.`
+      };
+    }
     if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
       originalFiles.push({
-        path: relPath.replace(/\\/g, "/"),
+        path: normalizedRelPath,
         content: fs.readFileSync(absPath, "utf-8")
       });
     }
@@ -931,10 +960,28 @@ async function runLocalHybridTask(input, options = {}) {
       existingRecord[f.path] = f.content;
     }
     for (const patch of patchPayload.patches) {
-      if (!(patch.path in existingRecord)) {
-        const absPath = path.resolve(cwd, patch.path);
-        existingRecord[patch.path] = fs.existsSync(absPath) ? fs.readFileSync(absPath, "utf-8") : null;
+      const pathIssue = findRepoPathIssue(patch.path);
+      if (pathIssue) {
+        return {
+          mode: "local",
+          status: "ERROR",
+          message: pathIssue
+        };
       }
+      const normalizedPatchPath = normalizeRepoPath(patch.path);
+      const absPath = path.resolve(cwd, normalizedPatchPath);
+      const resolvedCwd = path.resolve(cwd);
+      if (!absPath.startsWith(resolvedCwd + path.sep) && absPath !== resolvedCwd) {
+        return {
+          mode: "local",
+          status: "ERROR",
+          message: `Path traversal detected: "${patch.path}" escapes repository root.`
+        };
+      }
+      if (!(normalizedPatchPath in existingRecord)) {
+        existingRecord[normalizedPatchPath] = fs.existsSync(absPath) ? fs.readFileSync(absPath, "utf-8") : null;
+      }
+      patch.path = normalizedPatchPath;
     }
     const patchResult = await applyPatchesInMemory(
       patchPayload.patches,
@@ -951,27 +998,59 @@ async function runLocalHybridTask(input, options = {}) {
     }
     const modifiedPaths = [];
     for (const item of patchResult.deletions) {
-      const absPath = path.resolve(cwd, item.path);
+      const pathIssue = findRepoPathIssue(item.path);
+      if (pathIssue) {
+        return {
+          mode: "local",
+          status: "ERROR",
+          message: pathIssue
+        };
+      }
+      const normalized = normalizeRepoPath(item.path);
+      const absPath = path.resolve(cwd, normalized);
+      const resolvedCwd = path.resolve(cwd);
+      if (!absPath.startsWith(resolvedCwd + path.sep) && absPath !== resolvedCwd) {
+        return {
+          mode: "local",
+          status: "ERROR",
+          message: `Path traversal detected: "${item.path}" escapes repository root.`
+        };
+      }
       if (fs.existsSync(absPath)) {
         fs.unlinkSync(absPath);
-        modifiedPaths.push(item.path);
+        modifiedPaths.push(normalized);
       }
     }
     for (const item of patchResult.additions) {
-      const absPath = path.resolve(cwd, item.path);
+      const pathIssue = findRepoPathIssue(item.path);
+      if (pathIssue) {
+        return {
+          mode: "local",
+          status: "ERROR",
+          message: pathIssue
+        };
+      }
+      const normalized = normalizeRepoPath(item.path);
+      const absPath = path.resolve(cwd, normalized);
+      const resolvedCwd = path.resolve(cwd);
+      if (!absPath.startsWith(resolvedCwd + path.sep) && absPath !== resolvedCwd) {
+        return {
+          mode: "local",
+          status: "ERROR",
+          message: `Path traversal detected: "${item.path}" escapes repository root.`
+        };
+      }
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
       fs.writeFileSync(absPath, item.content, "utf-8");
-      modifiedPaths.push(item.path);
+      modifiedPaths.push(normalized);
     }
     let commitSha;
     if (!options.skipCommit && modifiedPaths.length > 0) {
       try {
         const commitMsg = patchPayload.commitMessage || `Gemini Bridge local patch for: ${input.prompt.slice(0, 50)}`;
-        for (const p of modifiedPaths) {
-          execSync(`git add "${p}"`, { cwd, stdio: "pipe" });
-        }
-        execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd, stdio: "pipe" });
-        commitSha = execSync("git rev-parse HEAD", { cwd, stdio: "pipe" }).toString().trim();
+        execFileSync("git", ["add", "--", ...modifiedPaths], { cwd, stdio: "pipe" });
+        execFileSync("git", ["commit", "-m", commitMsg], { cwd, stdio: "pipe" });
+        commitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd, stdio: "pipe" }).toString().trim();
       } catch (gitErr) {
         return {
           mode: "local",
@@ -996,7 +1075,7 @@ async function runLocalHybridTask(input, options = {}) {
   }
 }
 
-// packages/local-cli/src/cli.ts
+// src/cli.ts
 import { fileURLToPath } from "node:url";
 import * as path2 from "node:path";
 function parseCliArgs(argv) {

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import type {
   HybridTaskInput,
   HybridTaskResult,
@@ -8,6 +8,7 @@ import type {
   FilePatchOperation
 } from '../../../shared/types';
 import { applyPatchesInMemory } from '../../edge-worker/src/modules/patchInMemory';
+import { findRepoPathIssue, normalizeRepoPath } from '../../../shared/repoPaths';
 export { applyPatchesInMemory };
 
 export interface LocalRunnerOptions {
@@ -172,10 +173,27 @@ export async function runLocalHybridTask(
   const originalFiles: { path: string; content: string }[] = [];
 
   for (const relPath of targetPaths) {
-    const absPath = path.resolve(cwd, relPath);
+    const pathIssue = findRepoPathIssue(relPath);
+    if (pathIssue) {
+      return {
+        mode: 'local',
+        status: 'ERROR',
+        message: pathIssue
+      };
+    }
+    const normalizedRelPath = normalizeRepoPath(relPath);
+    const absPath = path.resolve(cwd, normalizedRelPath);
+    const resolvedCwd = path.resolve(cwd);
+    if (!absPath.startsWith(resolvedCwd + path.sep) && absPath !== resolvedCwd) {
+      return {
+        mode: 'local',
+        status: 'ERROR',
+        message: `Path traversal detected: "${relPath}" escapes repository root.`
+      };
+    }
     if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
       originalFiles.push({
-        path: relPath.replace(/\\/g, '/'),
+        path: normalizedRelPath,
         content: fs.readFileSync(absPath, 'utf-8')
       });
     }
@@ -196,12 +214,30 @@ export async function runLocalHybridTask(
       existingRecord[f.path] = f.content;
     }
     for (const patch of patchPayload.patches) {
-      if (!(patch.path in existingRecord)) {
-        const absPath = path.resolve(cwd, patch.path);
-        existingRecord[patch.path] = fs.existsSync(absPath)
+      const pathIssue = findRepoPathIssue(patch.path);
+      if (pathIssue) {
+        return {
+          mode: 'local',
+          status: 'ERROR',
+          message: pathIssue
+        };
+      }
+      const normalizedPatchPath = normalizeRepoPath(patch.path);
+      const absPath = path.resolve(cwd, normalizedPatchPath);
+      const resolvedCwd = path.resolve(cwd);
+      if (!absPath.startsWith(resolvedCwd + path.sep) && absPath !== resolvedCwd) {
+        return {
+          mode: 'local',
+          status: 'ERROR',
+          message: `Path traversal detected: "${patch.path}" escapes repository root.`
+        };
+      }
+      if (!(normalizedPatchPath in existingRecord)) {
+        existingRecord[normalizedPatchPath] = fs.existsSync(absPath)
           ? fs.readFileSync(absPath, 'utf-8')
           : null;
       }
+      (patch as FilePatchOperation).path = normalizedPatchPath;
     }
 
     const patchResult = await applyPatchesInMemory(
@@ -222,18 +258,52 @@ export async function runLocalHybridTask(
     // 3. Write changes to disk
     const modifiedPaths: string[] = [];
     for (const item of patchResult.deletions) {
-      const absPath = path.resolve(cwd, item.path);
+      const pathIssue = findRepoPathIssue(item.path);
+      if (pathIssue) {
+        return {
+          mode: 'local',
+          status: 'ERROR',
+          message: pathIssue
+        };
+      }
+      const normalized = normalizeRepoPath(item.path);
+      const absPath = path.resolve(cwd, normalized);
+      const resolvedCwd = path.resolve(cwd);
+      if (!absPath.startsWith(resolvedCwd + path.sep) && absPath !== resolvedCwd) {
+        return {
+          mode: 'local',
+          status: 'ERROR',
+          message: `Path traversal detected: "${item.path}" escapes repository root.`
+        };
+      }
       if (fs.existsSync(absPath)) {
         fs.unlinkSync(absPath);
-        modifiedPaths.push(item.path);
+        modifiedPaths.push(normalized);
       }
     }
 
     for (const item of patchResult.additions) {
-      const absPath = path.resolve(cwd, item.path);
+      const pathIssue = findRepoPathIssue(item.path);
+      if (pathIssue) {
+        return {
+          mode: 'local',
+          status: 'ERROR',
+          message: pathIssue
+        };
+      }
+      const normalized = normalizeRepoPath(item.path);
+      const absPath = path.resolve(cwd, normalized);
+      const resolvedCwd = path.resolve(cwd);
+      if (!absPath.startsWith(resolvedCwd + path.sep) && absPath !== resolvedCwd) {
+        return {
+          mode: 'local',
+          status: 'ERROR',
+          message: `Path traversal detected: "${item.path}" escapes repository root.`
+        };
+      }
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
       fs.writeFileSync(absPath, item.content, 'utf-8');
-      modifiedPaths.push(item.path);
+      modifiedPaths.push(normalized);
     }
 
     // 4. Git commit
@@ -241,11 +311,9 @@ export async function runLocalHybridTask(
     if (!options.skipCommit && modifiedPaths.length > 0) {
       try {
         const commitMsg = patchPayload.commitMessage || `Gemini Bridge local patch for: ${input.prompt.slice(0, 50)}`;
-        for (const p of modifiedPaths) {
-          execSync(`git add "${p}"`, { cwd, stdio: 'pipe' });
-        }
-        execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd, stdio: 'pipe' });
-        commitSha = execSync('git rev-parse HEAD', { cwd, stdio: 'pipe' }).toString().trim();
+        execFileSync('git', ['add', '--', ...modifiedPaths], { cwd, stdio: 'pipe' });
+        execFileSync('git', ['commit', '-m', commitMsg], { cwd, stdio: 'pipe' });
+        commitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, stdio: 'pipe' }).toString().trim();
       } catch (gitErr: any) {
         return {
           mode: 'local',

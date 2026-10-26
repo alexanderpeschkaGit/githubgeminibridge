@@ -7,6 +7,8 @@ import type {
   CommitRequest,
 } from '../types';
 
+export type { SkippedFile } from '../types';
+
 /**
  * CSP-Bypass Invariant (P1 Komponente 5):
  * All requests to the Cloudflare Worker MUST use GM_xmlhttpRequest (or GM.xmlHttpRequest)

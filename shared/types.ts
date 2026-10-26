@@ -38,6 +38,13 @@ export interface MixRequest {
   recentCommitsCount?: number;   // Number of recent commits to analyze (default: 3, max: 5)
 }
 
+export interface SkippedFile {
+  path: string;
+  reason: 'too_large' | 'ignored' | 'over_hard_limit' | 'would_exceed_parts';
+  bytes?: number;
+  chars?: number;
+}
+
 export interface MixResponse {
   status: "OK" | "ERROR";
   headOid: string;           // Voller 40-stelliger Commit-SHA als Basis für Folgebefehle
@@ -53,6 +60,7 @@ export interface MixResponse {
   };
   persistedCommitOid?: string; // Falls persistToGitHub === true ausgeführt wurde
   errorMessage?: string;       // Fehlerbeschreibung bei status === "ERROR"
+  skippedFiles?: SkippedFile[];
 }
 
 // ==========================================
@@ -138,6 +146,7 @@ export interface CommitRequest {
   files?: FileChangeInput[];
   changes?: FileChangeInput[];
   deletions?: (string | FileDeletionInput)[];
+  expectedHeadOid?: string;
 }
 
 export interface GitHubCommitResult {

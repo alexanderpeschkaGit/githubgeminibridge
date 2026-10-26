@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '../../..');
 const cliDir = path.resolve(__dirname, '..');
 
-const req = createRequire(path.join(rootDir, 'cf-gemini-git-bridge/package.json'));
+const req = createRequire(path.join(rootDir, 'packages/edge-worker/package.json'));
 let esbuild;
 try {
   esbuild = req('esbuild');

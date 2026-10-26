@@ -32,14 +32,7 @@ function findRepoPathIssue(input) {
   return null;
 }
 
-// src/utils/github.ts
-var GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql";
-var BranchNotFoundError = class extends Error {
-  constructor(owner, repo, branch) {
-    super(`Branch "${branch}" was not found in repository "${owner}/${repo}".`);
-    this.name = "BranchNotFoundError";
-  }
-};
+// src/utils/githubRepo.ts
 function parseRepoOwner(repoInput, ownerInput) {
   if (ownerInput && repoInput && !repoInput.includes("/")) {
     return { owner: ownerInput.trim(), repo: repoInput.trim() };
@@ -53,6 +46,15 @@ function parseRepoOwner(repoInput, ownerInput) {
     repo: parts.slice(1).join("/")
   };
 }
+
+// src/utils/githubGraphQL.ts
+var GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql";
+var BranchNotFoundError = class extends Error {
+  constructor(owner, repo, branch) {
+    super(`Branch "${branch}" was not found in repository "${owner}/${repo}".`);
+    this.name = "BranchNotFoundError";
+  }
+};
 async function executeGraphQL(query, variables, token) {
   const res = await fetch(GITHUB_GRAPHQL_ENDPOINT, {
     method: "POST",
@@ -167,6 +169,8 @@ async function fetchFileContent(owner, repo, branch, path, token) {
   }
   return await res.text();
 }
+
+// src/utils/githubBatchRead.ts
 async function fetchMultipleFilesViaGraphQL(arg1, arg2, arg3, arg4, arg5) {
   let owner;
   let repo;
@@ -240,6 +244,8 @@ async function fetchMultipleFilesViaGraphQL(arg1, arg2, arg3, arg4, arg5) {
   }
   return result;
 }
+
+// src/utils/githubCommit.ts
 async function createCommitOnBranch(owner, repo, branch, expectedHeadOid, message, additions, deletions, token) {
   const mutation = `
     mutation CreateCommitOnBranch($input: CreateCommitOnBranchInput!) {
@@ -332,6 +338,308 @@ async function commitSingleFileViaGraphQL(arg1, arg2, arg3, arg4, arg5, arg6, ar
     [],
     arg7
   );
+}
+
+// src/modules/searchReplace.ts
+var LLM_PLACEHOLDER_PATTERNS = [
+  /\/\/\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
+  /#\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
+  /\/\*\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}\s*\*\//i,
+  /<!--\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}\s*-->/i,
+  /\.{3,}\s*(?:existing|rest of)\s*code\s*\.{3,}/i,
+  /\/\/\s*\.{3,}\s*$/m
+];
+function validateNoPlaceholders(content, filePath) {
+  for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
+    if (pattern.test(content)) {
+      throw new Error(
+        `Hard Guardrail Rejection: File "${filePath}" contains forbidden LLM placeholder text (e.g. "// ... existing code ..."). Commit rejected to prevent accidental code truncation.`
+      );
+    }
+  }
+}
+function checkPlaceholderErrors(content, filePath) {
+  const errors = [];
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
+      if (pattern.test(line)) {
+        errors.push({
+          file: filePath,
+          stage: "CUSTOM_RULE",
+          line: i + 1,
+          message: `Forbidden LLM placeholder pattern detected: "${line.trim()}"`,
+          codeSnippet: line.trim()
+        });
+        break;
+      }
+    }
+  }
+  return errors;
+}
+function parseSearchReplaceBlocks(text) {
+  const blocks = [];
+  const regex = /<{5,9}\s*(?:SEARCH|ORIGINAL|HEAD)?\r?\n([\s\S]*?)\r?\n={5,9}\r?\n([\s\S]*?)\r?\n>{5,9}\s*(?:REPLACE|MODIFIED|UPDATED)?/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    blocks.push({
+      search: match[1],
+      replace: match[2]
+    });
+  }
+  return blocks;
+}
+function applySearchReplace(original, search, replace, filePath = "") {
+  if (original.includes(search)) {
+    return original.replace(search, () => replace);
+  }
+  const normOriginal = original.replace(/\r\n/g, "\n");
+  const normSearch = search.replace(/\r\n/g, "\n");
+  const normReplace = replace.replace(/\r\n/g, "\n");
+  if (normOriginal.includes(normSearch)) {
+    const updated = normOriginal.replace(normSearch, () => normReplace);
+    if (original.includes("\r\n")) {
+      return updated.replace(/\n/g, "\r\n");
+    }
+    return updated;
+  }
+  const origLines = normOriginal.split("\n");
+  const searchLines = normSearch.split("\n");
+  let matchStart = -1;
+  for (let i = 0; i <= origLines.length - searchLines.length; i++) {
+    let matches = true;
+    for (let j = 0; j < searchLines.length; j++) {
+      if (origLines[i + j].trim() !== searchLines[j].trim()) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      matchStart = i;
+      break;
+    }
+  }
+  if (matchStart !== -1) {
+    const before = origLines.slice(0, matchStart).join("\n");
+    const after = origLines.slice(matchStart + searchLines.length).join("\n");
+    const updated = (before ? before + "\n" : "") + normReplace + (after ? "\n" + after : "");
+    if (original.includes("\r\n")) {
+      return updated.replace(/\n/g, "\r\n");
+    }
+    return updated;
+  }
+  const snippet = search.length > 200 ? `${search.slice(0, 200)}...` : search;
+  throw new Error(`Search block could not be resolved for file "${filePath}". Target snippet:
+${snippet}`);
+}
+
+// src/modules/patchInMemory.ts
+function runBuiltinPreflightRules(files, preflight) {
+  const errors = [];
+  if (!preflight) {
+    return errors;
+  }
+  if (Array.isArray(preflight.forbidPatterns) && preflight.forbidPatterns.length > 0) {
+    for (const pat of preflight.forbidPatterns) {
+      let rx;
+      try {
+        rx = new RegExp(pat);
+      } catch {
+        continue;
+      }
+      for (const file of files) {
+        const lines = file.content.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (rx.test(line)) {
+            errors.push({
+              file: file.path,
+              stage: "CUSTOM_RULE",
+              line: i + 1,
+              message: `Forbidden pattern "${pat}" detected.`,
+              codeSnippet: line.trim()
+            });
+          }
+        }
+      }
+    }
+  }
+  if (preflight.requireExports && typeof preflight.requireExports === "object") {
+    for (const [requiredPath, symbols] of Object.entries(preflight.requireExports)) {
+      const targetFile = files.find((f) => f.path === requiredPath);
+      if (!targetFile) {
+        for (const symbol of symbols) {
+          errors.push({
+            file: requiredPath,
+            stage: "CUSTOM_RULE",
+            message: `Required export "${symbol}" missing because file "${requiredPath}" was not found among modified files.`
+          });
+        }
+        continue;
+      }
+      for (const symbol of symbols) {
+        const exportRegex = new RegExp(
+          `(?:export\\s+(?:(?:default\\s+)?(?:const|let|var|function|class|interface|type|enum|async\\s+function)\\s+${symbol}\\b|export\\s*\\{[^}]*\\b${symbol}\\b[^}]*\\}|export\\s*\\*\\s*as\\s+${symbol}\\b)`
+        );
+        if (!exportRegex.test(targetFile.content)) {
+          errors.push({
+            file: requiredPath,
+            stage: "CUSTOM_RULE",
+            message: `Required export "${symbol}" missing in "${requiredPath}".`
+          });
+        }
+      }
+    }
+  }
+  return errors;
+}
+function isInsertStyleBlockApplied(currentContent, block) {
+  return block.search.length > 0 && block.replace.length > 0 && block.replace.includes(block.search) && currentContent.includes(block.replace);
+}
+var MIN_ALREADY_APPLIED_REPLACE_CHARS = 8;
+function isAlreadyAppliedReplacement(currentContent, replace) {
+  if (replace.replace(/\s+/g, "").length < MIN_ALREADY_APPLIED_REPLACE_CHARS) {
+    return false;
+  }
+  return currentContent.includes(replace);
+}
+async function applyPatchesInMemory(patches, existingFiles, preflight, preflightHook = runPreflightLinter) {
+  const additions = [];
+  const deletions = [];
+  const errors = [];
+  let hasEffectiveChanges = false;
+  const resultingFiles = [];
+  for (const op of patches) {
+    if (op.action === "delete") {
+      if (existingFiles[op.path] !== null) {
+        deletions.push({ path: op.path });
+        hasEffectiveChanges = true;
+      }
+      continue;
+    }
+    if (op.action === "create") {
+      if (typeof op.fullContent !== "string") {
+        errors.push({
+          file: op.path,
+          stage: "SEARCH_REPLACE",
+          message: 'Operation "create" requires "fullContent" string.'
+        });
+        continue;
+      }
+      const phErrors = checkPlaceholderErrors(op.fullContent, op.path);
+      if (phErrors.length > 0) {
+        errors.push(...phErrors);
+      }
+      const existing = existingFiles[op.path];
+      if (existing !== op.fullContent) {
+        additions.push({ path: op.path, content: op.fullContent });
+        hasEffectiveChanges = true;
+      }
+      resultingFiles.push({ path: op.path, content: op.fullContent });
+      continue;
+    }
+    if (op.action === "modify") {
+      if (typeof op.fullContent === "string" && (!op.blocks || op.blocks.length === 0)) {
+        const phErrors = checkPlaceholderErrors(op.fullContent, op.path);
+        if (phErrors.length > 0) {
+          errors.push(...phErrors);
+        }
+        const existing2 = existingFiles[op.path];
+        if (existing2 !== op.fullContent) {
+          additions.push({ path: op.path, content: op.fullContent });
+          hasEffectiveChanges = true;
+        }
+        resultingFiles.push({ path: op.path, content: op.fullContent });
+        continue;
+      }
+      const existing = existingFiles[op.path];
+      if (existing === null || existing === void 0) {
+        errors.push({
+          file: op.path,
+          stage: "SEARCH_REPLACE",
+          message: 'Target file does not exist at the patch base revision. Verify the path is repo-relative (no leading "/", "./" or backslashes) or use action "create" for a new file.'
+        });
+        continue;
+      }
+      if (!op.blocks || op.blocks.length === 0) {
+        errors.push({
+          file: op.path,
+          stage: "SEARCH_REPLACE",
+          message: 'Operation "modify" requires non-empty "blocks" or "fullContent".'
+        });
+        continue;
+      }
+      let currentContent = existing;
+      let hasError = false;
+      for (const block of op.blocks) {
+        const phErrors = checkPlaceholderErrors(block.replace, op.path);
+        if (phErrors.length > 0) {
+          errors.push(...phErrors);
+          hasError = true;
+        }
+        if (isInsertStyleBlockApplied(currentContent, block)) {
+          continue;
+        }
+        try {
+          currentContent = applySearchReplace(currentContent, block.search, block.replace, op.path);
+        } catch (err) {
+          if (isAlreadyAppliedReplacement(currentContent, block.replace)) {
+            continue;
+          }
+          errors.push({
+            file: op.path,
+            stage: "SEARCH_REPLACE",
+            message: err.message,
+            codeSnippet: block.search.slice(0, 200)
+          });
+          hasError = true;
+        }
+      }
+      const finalPhErrors = checkPlaceholderErrors(currentContent, op.path);
+      if (finalPhErrors.length > 0) {
+        errors.push(...finalPhErrors);
+        hasError = true;
+      }
+      if (!hasError) {
+        if (currentContent !== existing) {
+          additions.push({ path: op.path, content: currentContent });
+          hasEffectiveChanges = true;
+        }
+        resultingFiles.push({ path: op.path, content: currentContent });
+      }
+    }
+  }
+  const effectiveHook = preflightHook ?? runPreflightLinter;
+  if (effectiveHook) {
+    try {
+      const hookErrors = await effectiveHook(resultingFiles, preflight);
+      if (Array.isArray(hookErrors) && hookErrors.length > 0) {
+        errors.push(...hookErrors);
+      }
+    } catch (err) {
+      errors.push({
+        file: "preflightHook",
+        stage: "CUSTOM_RULE",
+        message: `Preflight linter hook threw an error: ${err.message}`
+      });
+    }
+  }
+  const seenErrors = /* @__PURE__ */ new Set();
+  const uniqueErrors = [];
+  for (const err of errors) {
+    const key = `${err.file}:${err.stage}:${err.line ?? 0}:${err.column ?? 0}:${err.message}`;
+    if (!seenErrors.has(key)) {
+      seenErrors.add(key);
+      uniqueErrors.push(err);
+    }
+  }
+  return {
+    additions,
+    deletions,
+    errors: uniqueErrors,
+    hasEffectiveChanges
+  };
 }
 
 // src/modules/syntaxScanner.ts
@@ -598,7 +906,7 @@ async function validateSyntaxInWorker(filePath, content) {
         currentCol++;
         continue;
       }
-      const regexPreceders = "=([{:;,?!&|+-*^~<>%return\n";
+      const regexPreceders = "=([{:;,?!&|+-*^~<>%\n";
       const isRegex = lastNonWhitespaceChar === "" || regexPreceders.includes(lastNonWhitespaceChar);
       if (isRegex) {
         state = "REGEX";
@@ -827,317 +1135,7 @@ async function runPreflightLinter(files, preflight) {
   return deduplicated;
 }
 
-// src/modules/patchInMemory.ts
-function checkPlaceholderErrors2(content, filePath) {
-  const errors = [];
-  const lines = content.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
-      if (pattern.test(line)) {
-        errors.push({
-          file: filePath,
-          stage: "CUSTOM_RULE",
-          line: i + 1,
-          message: `Forbidden LLM placeholder pattern detected: "${line.trim()}"`,
-          codeSnippet: line.trim()
-        });
-        break;
-      }
-    }
-  }
-  return errors;
-}
-function runBuiltinPreflightRules2(files, preflight) {
-  const errors = [];
-  if (!preflight) {
-    return errors;
-  }
-  if (Array.isArray(preflight.forbidPatterns) && preflight.forbidPatterns.length > 0) {
-    for (const pat of preflight.forbidPatterns) {
-      let rx;
-      try {
-        rx = new RegExp(pat);
-      } catch {
-        continue;
-      }
-      for (const file of files) {
-        const lines = file.content.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          if (rx.test(line)) {
-            errors.push({
-              file: file.path,
-              stage: "CUSTOM_RULE",
-              line: i + 1,
-              message: `Forbidden pattern "${pat}" detected.`,
-              codeSnippet: line.trim()
-            });
-          }
-        }
-      }
-    }
-  }
-  if (preflight.requireExports && typeof preflight.requireExports === "object") {
-    for (const [requiredPath, symbols] of Object.entries(preflight.requireExports)) {
-      const targetFile = files.find((f) => f.path === requiredPath);
-      if (!targetFile) {
-        for (const symbol of symbols) {
-          errors.push({
-            file: requiredPath,
-            stage: "CUSTOM_RULE",
-            message: `Required export "${symbol}" missing because file "${requiredPath}" was not found among modified files.`
-          });
-        }
-        continue;
-      }
-      for (const symbol of symbols) {
-        const exportRegex = new RegExp(
-          `(?:export\\s+(?:(?:default\\s+)?(?:const|let|var|function|class|interface|type|enum|async\\s+function)\\s+${symbol}\\b|export\\s*\\{[^}]*\\b${symbol}\\b[^}]*\\}|export\\s*\\*\\s*as\\s+${symbol}\\b)`
-        );
-        if (!exportRegex.test(targetFile.content)) {
-          errors.push({
-            file: requiredPath,
-            stage: "CUSTOM_RULE",
-            message: `Required export "${symbol}" missing in "${requiredPath}".`
-          });
-        }
-      }
-    }
-  }
-  return errors;
-}
-function isInsertStyleBlockApplied(currentContent, block) {
-  return block.search.length > 0 && block.replace.length > 0 && block.replace.includes(block.search) && currentContent.includes(block.replace);
-}
-var MIN_ALREADY_APPLIED_REPLACE_CHARS = 8;
-function isAlreadyAppliedReplacement(currentContent, replace) {
-  if (replace.replace(/\s+/g, "").length < MIN_ALREADY_APPLIED_REPLACE_CHARS) {
-    return false;
-  }
-  return currentContent.includes(replace);
-}
-async function applyPatchesInMemory(patches, existingFiles, preflight, preflightHook = runPreflightLinter) {
-  const additions = [];
-  const deletions = [];
-  const errors = [];
-  let hasEffectiveChanges = false;
-  const resultingFiles = [];
-  for (const op of patches) {
-    if (op.action === "delete") {
-      if (existingFiles[op.path] !== null) {
-        deletions.push({ path: op.path });
-        hasEffectiveChanges = true;
-      }
-      continue;
-    }
-    if (op.action === "create") {
-      if (typeof op.fullContent !== "string") {
-        errors.push({
-          file: op.path,
-          stage: "SEARCH_REPLACE",
-          message: 'Operation "create" requires "fullContent" string.'
-        });
-        continue;
-      }
-      const phErrors = checkPlaceholderErrors2(op.fullContent, op.path);
-      if (phErrors.length > 0) {
-        errors.push(...phErrors);
-      }
-      const existing = existingFiles[op.path];
-      if (existing !== op.fullContent) {
-        additions.push({ path: op.path, content: op.fullContent });
-        hasEffectiveChanges = true;
-      }
-      resultingFiles.push({ path: op.path, content: op.fullContent });
-      continue;
-    }
-    if (op.action === "modify") {
-      if (typeof op.fullContent === "string" && (!op.blocks || op.blocks.length === 0)) {
-        const phErrors = checkPlaceholderErrors2(op.fullContent, op.path);
-        if (phErrors.length > 0) {
-          errors.push(...phErrors);
-        }
-        const existing2 = existingFiles[op.path];
-        if (existing2 !== op.fullContent) {
-          additions.push({ path: op.path, content: op.fullContent });
-          hasEffectiveChanges = true;
-        }
-        resultingFiles.push({ path: op.path, content: op.fullContent });
-        continue;
-      }
-      const existing = existingFiles[op.path];
-      if (existing === null || existing === void 0) {
-        errors.push({
-          file: op.path,
-          stage: "SEARCH_REPLACE",
-          message: 'Target file does not exist at the patch base revision. Verify the path is repo-relative (no leading "/", "./" or backslashes) or use action "create" for a new file.'
-        });
-        continue;
-      }
-      if (!op.blocks || op.blocks.length === 0) {
-        errors.push({
-          file: op.path,
-          stage: "SEARCH_REPLACE",
-          message: 'Operation "modify" requires non-empty "blocks" or "fullContent".'
-        });
-        continue;
-      }
-      let currentContent = existing;
-      let hasError = false;
-      for (const block of op.blocks) {
-        const phErrors = checkPlaceholderErrors2(block.replace, op.path);
-        if (phErrors.length > 0) {
-          errors.push(...phErrors);
-          hasError = true;
-        }
-        if (isInsertStyleBlockApplied(currentContent, block)) {
-          continue;
-        }
-        try {
-          currentContent = applySearchReplace(currentContent, block.search, block.replace, op.path);
-        } catch (err) {
-          if (isAlreadyAppliedReplacement(currentContent, block.replace)) {
-            continue;
-          }
-          errors.push({
-            file: op.path,
-            stage: "SEARCH_REPLACE",
-            message: err.message,
-            codeSnippet: block.search.slice(0, 200)
-          });
-          hasError = true;
-        }
-      }
-      const finalPhErrors = checkPlaceholderErrors2(currentContent, op.path);
-      if (finalPhErrors.length > 0) {
-        errors.push(...finalPhErrors);
-        hasError = true;
-      }
-      if (!hasError) {
-        if (currentContent !== existing) {
-          additions.push({ path: op.path, content: currentContent });
-          hasEffectiveChanges = true;
-        }
-        resultingFiles.push({ path: op.path, content: currentContent });
-      }
-    }
-  }
-  const builtinErrors = runBuiltinPreflightRules2(resultingFiles, preflight);
-  if (builtinErrors.length > 0) {
-    errors.push(...builtinErrors);
-  }
-  const effectiveHook = preflightHook ?? runPreflightLinter;
-  if (effectiveHook) {
-    try {
-      const hookErrors = await effectiveHook(resultingFiles, preflight);
-      if (Array.isArray(hookErrors) && hookErrors.length > 0) {
-        errors.push(...hookErrors);
-      }
-    } catch (err) {
-      errors.push({
-        file: "preflightHook",
-        stage: "CUSTOM_RULE",
-        message: `Preflight linter hook threw an error: ${err.message}`
-      });
-    }
-  }
-  const seenErrors = /* @__PURE__ */ new Set();
-  const uniqueErrors = [];
-  for (const err of errors) {
-    const key = `${err.file}:${err.stage}:${err.line ?? 0}:${err.column ?? 0}:${err.message}`;
-    if (!seenErrors.has(key)) {
-      seenErrors.add(key);
-      uniqueErrors.push(err);
-    }
-  }
-  return {
-    additions,
-    deletions,
-    errors: uniqueErrors,
-    hasEffectiveChanges
-  };
-}
-
 // src/modules/patcher.ts
-var LLM_PLACEHOLDER_PATTERNS = [
-  /\/\/\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
-  /#\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
-  /\/\*\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}\s*\*\//i,
-  /<!--\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}\s*-->/i,
-  /\.{3,}\s*(?:existing|rest of)\s*code\s*\.{3,}/i,
-  /\/\/\s*\.{3,}\s*$/m
-];
-function validateNoPlaceholders(content, filePath) {
-  for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
-    if (pattern.test(content)) {
-      throw new Error(
-        `Hard Guardrail Rejection: File "${filePath}" contains forbidden LLM placeholder text (e.g. "// ... existing code ..."). Commit rejected to prevent accidental code truncation.`
-      );
-    }
-  }
-}
-function checkPlaceholderErrors(content, filePath) {
-  return checkPlaceholderErrors2(content, filePath);
-}
-function runBuiltinPreflightRules(files, preflight) {
-  return runBuiltinPreflightRules2(files, preflight);
-}
-function parseSearchReplaceBlocks(text) {
-  const blocks = [];
-  const regex = /<{5,9}\s*(?:SEARCH|ORIGINAL|HEAD)?\r?\n([\s\S]*?)\r?\n={5,9}\r?\n([\s\S]*?)\r?\n>{5,9}\s*(?:REPLACE|MODIFIED|UPDATED)?/g;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    blocks.push({
-      search: match[1],
-      replace: match[2]
-    });
-  }
-  return blocks;
-}
-function applySearchReplace(original, search, replace, filePath = "") {
-  if (original.includes(search)) {
-    return original.replace(search, replace);
-  }
-  const normOriginal = original.replace(/\r\n/g, "\n");
-  const normSearch = search.replace(/\r\n/g, "\n");
-  const normReplace = replace.replace(/\r\n/g, "\n");
-  if (normOriginal.includes(normSearch)) {
-    const updated = normOriginal.replace(normSearch, normReplace);
-    if (original.includes("\r\n")) {
-      return updated.replace(/\n/g, "\r\n");
-    }
-    return updated;
-  }
-  const origLines = normOriginal.split("\n");
-  const searchLines = normSearch.split("\n");
-  let matchStart = -1;
-  for (let i = 0; i <= origLines.length - searchLines.length; i++) {
-    let matches = true;
-    for (let j = 0; j < searchLines.length; j++) {
-      if (origLines[i + j].trim() !== searchLines[j].trim()) {
-        matches = false;
-        break;
-      }
-    }
-    if (matches) {
-      matchStart = i;
-      break;
-    }
-  }
-  if (matchStart !== -1) {
-    const before = origLines.slice(0, matchStart).join("\n");
-    const after = origLines.slice(matchStart + searchLines.length).join("\n");
-    const updated = (before ? before + "\n" : "") + normReplace + (after ? "\n" + after : "");
-    if (original.includes("\r\n")) {
-      return updated.replace(/\n/g, "\r\n");
-    }
-    return updated;
-  }
-  const snippet = search.length > 200 ? `${search.slice(0, 200)}...` : search;
-  throw new Error(`Search block could not be resolved for file "${filePath}". Target snippet:
-${snippet}`);
-}
 async function applyPatchesInMemory2(patches, existingFiles, preflight, preflightHook = runPreflightLinter) {
   return applyPatchesInMemory(patches, existingFiles, preflight, preflightHook);
 }
@@ -1484,6 +1482,240 @@ var DEFAULT_IGNORED_EXTENSIONS = /* @__PURE__ */ new Set([
   ".pyc"
 ]);
 
+// src/modules/mixerTarScan.ts
+var TarScanError = class extends Error {
+  headOid;
+  constructor(message, headOid) {
+    super(message);
+    this.name = "TarScanError";
+    this.headOid = headOid;
+  }
+};
+function escapeCdata(content) {
+  return content.replace(/\]\]>/g, "]]]]><![CDATA[>");
+}
+function shouldSkipTarEntry(relPath, size, typeflag, includePaths) {
+  if (typeflag === "5" || typeflag === "g" || typeflag === "x" || relPath.endsWith("/") || typeflag !== "0" && typeflag !== "" && typeflag !== "\0") {
+    return { skip: true, reason: "DIR_OR_NON_FILE" };
+  }
+  const normalized = relPath.replace(/^\.?\/+/, "");
+  if (!normalized) {
+    return { skip: true, reason: "DIR_OR_NON_FILE" };
+  }
+  const segments = normalized.split("/");
+  const filename = segments[segments.length - 1];
+  if (filename === "gemini-bridge.user.js") {
+    console.log(`[RepoMix] Skipping generated bundle: ${normalized} (path: ${normalized}, filename: ${filename})`);
+    return { skip: true, reason: "GENERATED_BUNDLE" };
+  }
+  for (let i = 0; i < segments.length - 1; i++) {
+    const seg = segments[i];
+    if (DEFAULT_IGNORED_DIR_NAMES.has(seg) || seg.startsWith("repomix_")) {
+      return { skip: true, reason: "IGNORED_PATH" };
+    }
+  }
+  if (DEFAULT_IGNORED_FILES.has(filename) || filename.endsWith(".bundle") || filename.startsWith("repomix-output") || /.*-bundle.*\.txt$/i.test(filename)) {
+    return { skip: true, reason: "IGNORED_PATH" };
+  }
+  const extMatch = filename.match(/\.[a-zA-Z0-9]+$/);
+  if (extMatch && DEFAULT_IGNORED_EXTENSIONS.has(extMatch[0].toLowerCase())) {
+    return { skip: true, reason: "IGNORED_PATH" };
+  }
+  if (includePaths && includePaths.length > 0) {
+    if (normalized !== ".repomixignore.cf" && normalized !== ".repomixignore") {
+      const normalizedIncludes = includePaths.map((p) => p.replace(/^\.?\/+/, ""));
+      const isIncluded = normalizedIncludes.some((prefix) => normalized.startsWith(prefix));
+      if (!isIncluded) {
+        return { skip: true, reason: "NOT_INCLUDED" };
+      }
+    }
+  }
+  if (size > 524288) {
+    return { skip: true, reason: "OVERSIZED" };
+  }
+  return { skip: false };
+}
+function extractHeadOidFromPaxHeader(paxText) {
+  const match = paxText.match(/(?:^|\n)(?:\d+\s+)?comment=([0-9a-fA-F]{40})(?:\r?\n|$)/) || paxText.match(/\b([0-9a-fA-F]{40})\b/);
+  return match ? match[1].toLowerCase() : null;
+}
+async function scanTarGzipStream(stream, includePaths) {
+  const decompressedStream = stream.pipeThrough(new DecompressionStream("gzip"));
+  const reader = decompressedStream.getReader();
+  let buffer = new Uint8Array(0);
+  let eof = false;
+  let consecutiveZeroBlocks = 0;
+  let headOid = null;
+  let nextPaxPath = null;
+  const fileTreeEntries = [];
+  const files = [];
+  const dynamicIgnorePatterns = [];
+  const textDecoder = new TextDecoder();
+  const skippedFiles = [];
+  async function ensureBytes(count) {
+    while (buffer.length < count) {
+      const { value, done } = await reader.read();
+      if (done || !value) {
+        eof = true;
+        return false;
+      }
+      buffer = concatBuffers(buffer, value);
+    }
+    return true;
+  }
+  async function discardBytes(count) {
+    if (buffer.length >= count) {
+      buffer = buffer.subarray(count);
+      return;
+    }
+    let remaining = count - buffer.length;
+    buffer = new Uint8Array(0);
+    while (remaining > 0) {
+      const { value, done } = await reader.read();
+      if (done || !value) {
+        eof = true;
+        return;
+      }
+      if (value.length <= remaining) {
+        remaining -= value.length;
+      } else {
+        buffer = value.subarray(remaining);
+        remaining = 0;
+      }
+    }
+  }
+  try {
+    while (!eof) {
+      const hasHeader = await ensureBytes(512);
+      if (!hasHeader && buffer.length < 512) {
+        break;
+      }
+      const header = buffer.subarray(0, 512);
+      let isZero = true;
+      for (let i = 0; i < 512; i++) {
+        if (header[i] !== 0) {
+          isZero = false;
+          break;
+        }
+      }
+      if (isZero) {
+        consecutiveZeroBlocks++;
+        buffer = buffer.subarray(512);
+        if (consecutiveZeroBlocks >= 2) {
+          break;
+        }
+        continue;
+      }
+      consecutiveZeroBlocks = 0;
+      const name = parseAsciiString(header, 0, 100);
+      const size = parseOctal(header, 124, 12);
+      const typeflagRaw = header[156];
+      const typeflag = typeflagRaw === 0 || typeflagRaw === 32 ? "0" : String.fromCharCode(typeflagRaw);
+      const prefix = parseAsciiString(header, 345, 155);
+      const paddedSize = Math.ceil(size / 512) * 512;
+      buffer = buffer.subarray(512);
+      if (typeflag === "g") {
+        await ensureBytes(paddedSize);
+        const payloadBytes = buffer.subarray(0, size);
+        buffer = buffer.subarray(paddedSize);
+        const paxText = textDecoder.decode(payloadBytes);
+        const extracted = extractHeadOidFromPaxHeader(paxText);
+        if (extracted) {
+          headOid = extracted;
+        }
+        continue;
+      }
+      if (typeflag === "x") {
+        await ensureBytes(paddedSize);
+        const payloadBytes = buffer.subarray(0, size);
+        buffer = buffer.subarray(paddedSize);
+        const paxText = textDecoder.decode(payloadBytes);
+        const match = paxText.match(/(?:^|\n)\d+\s+path=(.+?)(?:\r?\n|$)/);
+        if (match) {
+          nextPaxPath = match[1].trim();
+        }
+        continue;
+      }
+      const rawEntryPath = nextPaxPath || (prefix ? `${prefix}/${name}` : name);
+      nextPaxPath = null;
+      const slashIndex = rawEntryPath.indexOf("/");
+      if (slashIndex === -1) {
+        await discardBytes(paddedSize);
+        continue;
+      }
+      const rootPrefix = rawEntryPath.slice(0, slashIndex);
+      const relPath = rawEntryPath.slice(slashIndex + 1);
+      if (!headOid) {
+        const rootMatch = rootPrefix.match(/-([0-9a-fA-F]{40})$/);
+        if (rootMatch) {
+          headOid = rootMatch[1].toLowerCase();
+        }
+      }
+      if (!relPath || relPath.endsWith("/")) {
+        await discardBytes(paddedSize);
+        continue;
+      }
+      if (dynamicIgnorePatterns.length > 0 && relPath !== ".repomixignore.cf" && relPath !== ".repomixignore" && matchesIgnorePattern(relPath, dynamicIgnorePatterns)) {
+        await discardBytes(paddedSize);
+        continue;
+      }
+      const filterDecision = shouldSkipTarEntry(relPath, size, typeflag, includePaths);
+      if (filterDecision.skip) {
+        if (filterDecision.reason === "OVERSIZED") {
+          fileTreeEntries.push(`${relPath} [SKIPPED: >512KB]`);
+          skippedFiles.push({ path: relPath, reason: "too_large", bytes: size });
+        } else if (filterDecision.reason === "GENERATED_BUNDLE") {
+          console.log(`[RepoMix] Skipped file: path=${relPath}, filename=gemini-bridge.user.js`);
+          skippedFiles.push({ path: relPath, reason: "ignored", bytes: size });
+        } else if (filterDecision.reason === "IGNORED_PATH" || filterDecision.reason === "DIR_OR_NON_FILE") {
+          skippedFiles.push({ path: relPath, reason: "ignored", bytes: size });
+        } else if (filterDecision.reason === "NOT_INCLUDED") {
+          skippedFiles.push({ path: relPath, reason: "ignored", bytes: size });
+        }
+        await discardBytes(paddedSize);
+        continue;
+      }
+      await ensureBytes(paddedSize);
+      const fileBytes = buffer.subarray(0, size);
+      buffer = buffer.subarray(paddedSize);
+      const content = textDecoder.decode(fileBytes);
+      if (content.includes("\0")) {
+        continue;
+      }
+      if (relPath === ".repomixignore.cf" || relPath === ".repomixignore") {
+        const newPatterns = parseIgnoreLines(content);
+        if (newPatterns.length > 0) {
+          dynamicIgnorePatterns.push(...newPatterns);
+          for (let i = files.length - 1; i >= 0; i--) {
+            if (matchesIgnorePattern(files[i].path, dynamicIgnorePatterns)) {
+              files.splice(i, 1);
+            }
+          }
+          for (let i = fileTreeEntries.length - 1; i >= 0; i--) {
+            const entryPath = fileTreeEntries[i].replace(/\s+\[SKIPPED:.*\]$/, "");
+            if (matchesIgnorePattern(entryPath, dynamicIgnorePatterns)) {
+              fileTreeEntries.splice(i, 1);
+            }
+          }
+        }
+      }
+      if (dynamicIgnorePatterns.length > 0 && matchesIgnorePattern(relPath, dynamicIgnorePatterns)) {
+        continue;
+      }
+      fileTreeEntries.push(relPath);
+      files.push({ path: relPath, content });
+    }
+  } catch (err) {
+    throw new TarScanError(`Error processing tarball stream: ${err.message}`, headOid);
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+    }
+  }
+  return { headOid, fileTreeEntries, files, skippedFiles: skippedFiles.length > 0 ? skippedFiles : void 0 };
+}
+
 // src/modules/mixChunker.ts
 var DEFAULT_MAX_CHUNK_CHARS = 85e3;
 var HARD_GEMINI_CHAR_LIMIT = 1e5;
@@ -1580,6 +1812,8 @@ function buildChunkedMixXml(input) {
   );
   const treeEntries = [...fileTreeEntries];
   const validFiles = [];
+  const blockedFiles = [];
+  const skippedFiles = [];
   for (const f of files) {
     const fileXml = formatFileXml(f);
     const standaloneXml = buildPartXml({
@@ -1594,16 +1828,18 @@ function buildChunkedMixXml(input) {
       fileXmlList: [fileXml]
     });
     if (standaloneXml.length > HARD_GEMINI_CHAR_LIMIT) {
-      const idx = treeEntries.indexOf(f.path);
-      const skippedAnnotation = `${f.path} [SKIPPED: >100k chars for Gemini Chat limit]`;
-      if (idx !== -1) {
-        treeEntries[idx] = skippedAnnotation;
-      } else {
-        treeEntries.push(skippedAnnotation);
-      }
-    } else {
-      validFiles.push({ path: f.path, content: f.content, fileXml });
+      blockedFiles.push(f.path);
+      skippedFiles.push({ path: f.path, reason: "over_hard_limit", chars: standaloneXml.length });
+      continue;
     }
+    validFiles.push({ path: f.path, content: f.content, fileXml });
+  }
+  if (blockedFiles.length > 0) {
+    const blockedList = blockedFiles.slice(0, 5).join(", ");
+    const suffix = blockedFiles.length > 5 ? ` and ${blockedFiles.length - 5} more` : "";
+    throw new Error(
+      `RepoMix cannot preserve ${blockedFiles.length} file(s) without splitting an individual file beyond the ${HARD_GEMINI_CHAR_LIMIT}-character limit: ${blockedList}${suffix}.`
+    );
   }
   const maxTreeChars = Math.min(Math.floor(effectiveMaxChars * 0.45), 14e3);
   let fullTreeXml = [...treeEntries].sort().join("\n");
@@ -1619,7 +1855,7 @@ function buildChunkedMixXml(input) {
   );
   const cappedRecentCommitsText = capRecentCommitsText(input.recentCommitsText, metadataBudget);
   function fitPart(params) {
-    const build = (treeText2, metadata2, entries2) => buildPartXml({
+    const build = (treeText, metadata2, entries) => buildPartXml({
       owner,
       repo,
       branch,
@@ -1628,39 +1864,23 @@ function buildChunkedMixXml(input) {
       totalParts: params.totalParts,
       instructionsText: params.instructionsText,
       recentCommitsText: metadata2 || void 0,
-      treeText: treeText2,
-      fileXmlList: entries2.map((e) => e.fileXml)
+      treeText,
+      fileXmlList: entries.map((e) => e.fileXml)
     });
     let metadata = params.metadata;
-    let entries = params.fileEntries;
-    let treeText = params.treeText;
-    const skippedPaths = [];
-    let xml = build(treeText, metadata, entries);
-    if (xml.length <= HARD_GEMINI_CHAR_LIMIT) {
-      return { xml, entries, metadata, skippedPaths };
+    let xml = build(params.treeText, metadata, params.fileEntries);
+    if (xml.length > HARD_GEMINI_CHAR_LIMIT && metadata) {
+      metadata = capRecentCommitsText(
+        metadata,
+        Math.max(0, metadata.length - (xml.length - HARD_GEMINI_CHAR_LIMIT) - 1)
+      );
+      xml = build(params.treeText, metadata, params.fileEntries);
     }
-    if (metadata) {
-      const overflow = xml.length - HARD_GEMINI_CHAR_LIMIT;
-      metadata = capRecentCommitsText(params.metadata, Math.max(0, params.metadata.length - overflow - 1));
-      xml = build(treeText, metadata, entries);
-      if (xml.length <= HARD_GEMINI_CHAR_LIMIT) {
-        return { xml, entries, metadata, skippedPaths };
-      }
+    if (xml.length > HARD_GEMINI_CHAR_LIMIT && metadata) {
       metadata = "";
-      xml = build(treeText, metadata, entries);
-      if (xml.length <= HARD_GEMINI_CHAR_LIMIT) {
-        return { xml, entries, metadata, skippedPaths };
-      }
+      xml = build(params.treeText, metadata, params.fileEntries);
     }
-    while (entries.length > 0 && xml.length > HARD_GEMINI_CHAR_LIMIT) {
-      skippedPaths.push(entries[entries.length - 1].path);
-      entries = entries.slice(0, -1);
-      const annotations = skippedPaths.map((p) => `${p} [SKIPPED: exceeds 100k part limit]`);
-      treeText = `${params.treeText}
-${annotations.join("\n")}`;
-      xml = build(treeText, metadata, entries);
-    }
-    return { xml, entries, metadata, skippedPaths };
+    return { xml, entries: params.fileEntries, metadata };
   }
   const singleRawXml = buildPartXml({
     owner,
@@ -1678,8 +1898,13 @@ ${annotations.join("\n")}`;
     treeText: fullTreeXml,
     fileEntries: validFiles
   });
-  const shouldSplit = splitOutput === true || single.skippedPaths.length > 0 || splitOutput !== false && validFiles.length > 1 && singleRawXml.length > effectiveMaxChars;
+  const shouldSplit = splitOutput === true || single.xml.length > HARD_GEMINI_CHAR_LIMIT || splitOutput !== false && validFiles.length > 1 && singleRawXml.length > effectiveMaxChars;
   if (!shouldSplit) {
+    if (single.xml.length > HARD_GEMINI_CHAR_LIMIT) {
+      throw new Error(
+        `RepoMix serialized to ${single.xml.length} characters, exceeding the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
+      );
+    }
     return {
       xmlContent: single.xml,
       isChunked: false,
@@ -1694,54 +1919,48 @@ ${annotations.join("\n")}`;
     const buckets = [];
     let currentBucket = [];
     const partBudget = Math.min(budgetChars, HARD_GEMINI_CHAR_LIMIT);
-    const part1BaseOverhead = fullTreeXml.length + 220 + DEFAULT_MIX_INSTRUCTIONS.length + (cappedRecentCommitsText ? cappedRecentCommitsText.length + 1 : 0);
-    let currentBucketChars = part1BaseOverhead;
-    for (let i = 0; i < validFiles.length; i++) {
-      const f = validFiles[i];
-      const isPart1 = buckets.length === 0;
-      const fileAdditionChars = isPart1 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1;
-      if (currentBucket.length > 0) {
-        if (currentBucketChars + fileAdditionChars > partBudget) {
-          buckets.push(currentBucket);
-          currentBucket = [];
-          currentBucketChars = 260 + CONTINUATION_MIX_INSTRUCTIONS(2, 2).length;
-        }
-      } else if (isPart1) {
-        if (currentBucketChars + fileAdditionChars > partBudget) {
-          buckets.push([]);
-          currentBucket = [];
-          currentBucketChars = 260 + CONTINUATION_MIX_INSTRUCTIONS(2, 2).length;
-        }
+    const serializedSize = (bucket, index) => {
+      const partNum = index + 1;
+      const treeText = index === 0 ? fullTreeXml : `# Part ${partNum}/${MAX_GEMINI_PARTS} files (${bucket.length} files):
+${bucket.map((f) => f.path).join("\n")}`;
+      return buildPartXml({
+        owner,
+        repo,
+        branch,
+        headOid,
+        partNum,
+        totalParts: MAX_GEMINI_PARTS,
+        instructionsText: partNum === 1 ? DEFAULT_MIX_INSTRUCTIONS : CONTINUATION_MIX_INSTRUCTIONS(partNum, MAX_GEMINI_PARTS),
+        recentCommitsText: partNum === 1 ? cappedRecentCommitsText || void 0 : void 0,
+        treeText,
+        fileXmlList: bucket.map((f) => f.fileXml)
+      }).length;
+    };
+    for (const file of validFiles) {
+      let candidate = [...currentBucket, file];
+      let candidateSize = serializedSize(candidate, buckets.length);
+      if (currentBucket.length > 0 && candidateSize > partBudget) {
+        buckets.push(currentBucket);
+        currentBucket = [];
+        candidate = [file];
+        candidateSize = serializedSize(candidate, buckets.length);
       }
-      currentBucket.push(f);
-      currentBucketChars += buckets.length === 0 ? f.fileXml.length + 1 : f.fileXml.length + 1 + f.path.length + 1;
+      if (currentBucket.length === 0 && candidateSize > partBudget && buckets.length === 0) {
+        buckets.push([]);
+        candidateSize = serializedSize([file], 1);
+      }
+      currentBucket = candidate;
     }
-    if (currentBucket.length > 0) {
-      buckets.push(currentBucket);
-    }
+    if (currentBucket.length > 0 || buckets.length === 0) buckets.push(currentBucket);
     return buckets;
   }
-  let dynamicMaxChars = effectiveMaxChars;
-  let chunkBuckets = partitionFiles(dynamicMaxChars);
+  let chunkBuckets = partitionFiles(effectiveMaxChars);
   if (chunkBuckets.length > MAX_GEMINI_PARTS) {
-    const totalRawChars = validFiles.reduce((acc, f) => acc + f.fileXml.length, 0) + fullTreeXml.length + cappedRecentCommitsText.length;
-    dynamicMaxChars = Math.min(
-      HARD_GEMINI_CHAR_LIMIT,
-      Math.max(dynamicMaxChars, Math.ceil(totalRawChars / (MAX_GEMINI_PARTS - 1)))
-    );
-    chunkBuckets = partitionFiles(dynamicMaxChars);
-    while (chunkBuckets.length > MAX_GEMINI_PARTS) {
-      let minCombinedSize = Infinity;
-      let minIndex = 0;
-      for (let j = 0; j < chunkBuckets.length - 1; j++) {
-        const combined = chunkBuckets[j].length + chunkBuckets[j + 1].length;
-        if (combined < minCombinedSize) {
-          minCombinedSize = combined;
-          minIndex = j;
-        }
-      }
-      chunkBuckets[minIndex] = [...chunkBuckets[minIndex], ...chunkBuckets[minIndex + 1]];
-      chunkBuckets.splice(minIndex + 1, 1);
+    chunkBuckets = partitionFiles(HARD_GEMINI_CHAR_LIMIT);
+    if (chunkBuckets.length > MAX_GEMINI_PARTS) {
+      throw new Error(
+        `RepoMix needs more than ${MAX_GEMINI_PARTS} parts to preserve all files within the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
+      );
     }
   }
   const totalParts = chunkBuckets.length;
@@ -1763,6 +1982,11 @@ ${bucket.map((b) => b.path).join("\n")}`;
       fileEntries: bucket
     });
     const partXml = fitted.xml;
+    if (partXml.length > HARD_GEMINI_CHAR_LIMIT) {
+      throw new Error(
+        `RepoMix part ${partNum} serialized to ${partXml.length} characters, exceeding the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
+      );
+    }
     totalChars += partXml.length;
     emittedFileCount += fitted.entries.length;
     parts.push({
@@ -1777,6 +2001,11 @@ ${bucket.map((b) => b.path).join("\n")}`;
       }
     });
   }
+  if (parts.length > MAX_GEMINI_PARTS || emittedFileCount !== validFiles.length) {
+    throw new Error(
+      `RepoMix output could not preserve all files within ${MAX_GEMINI_PARTS} conforming parts.`
+    );
+  }
   return {
     xmlContent: parts[0]?.xmlContent ?? single.xml,
     parts,
@@ -1785,7 +2014,8 @@ ${bucket.map((b) => b.path).join("\n")}`;
       fileCount: emittedFileCount,
       estimatedTokens: Math.ceil(totalChars / 4),
       charCount: totalChars
-    }
+    },
+    skippedFiles: skippedFiles.length > 0 ? skippedFiles : void 0
   };
 }
 
@@ -1926,50 +2156,6 @@ async function fetchRecentCommitsAndVolatileFiles(owner, repo, branch, token, co
 }
 
 // src/modules/mixer.ts
-function escapeCdata(content) {
-  return content.replace(/\]\]>/g, "]]]]><![CDATA[>");
-}
-function shouldSkipTarEntry(relPath, size, typeflag, includePaths) {
-  if (typeflag === "5" || typeflag === "g" || typeflag === "x" || relPath.endsWith("/") || typeflag !== "0" && typeflag !== "" && typeflag !== "\0") {
-    return { skip: true, reason: "DIR_OR_NON_FILE" };
-  }
-  const normalized = relPath.replace(/^\.?\/+/, "");
-  if (!normalized) {
-    return { skip: true, reason: "DIR_OR_NON_FILE" };
-  }
-  const segments = normalized.split("/");
-  const filename = segments[segments.length - 1];
-  for (let i = 0; i < segments.length - 1; i++) {
-    const seg = segments[i];
-    if (DEFAULT_IGNORED_DIR_NAMES.has(seg) || seg.startsWith("repomix_")) {
-      return { skip: true, reason: "IGNORED_PATH" };
-    }
-  }
-  if (DEFAULT_IGNORED_FILES.has(filename) || filename.endsWith(".bundle") || filename.startsWith("repomix-output") || /.*-bundle.*\.txt$/i.test(filename)) {
-    return { skip: true, reason: "IGNORED_PATH" };
-  }
-  const extMatch = filename.match(/\.[a-zA-Z0-9]+$/);
-  if (extMatch && DEFAULT_IGNORED_EXTENSIONS.has(extMatch[0].toLowerCase())) {
-    return { skip: true, reason: "IGNORED_PATH" };
-  }
-  if (includePaths && includePaths.length > 0) {
-    if (normalized !== ".repomixignore.cf" && normalized !== ".repomixignore") {
-      const normalizedIncludes = includePaths.map((p) => p.replace(/^\.?\/+/, ""));
-      const isIncluded = normalizedIncludes.some((prefix) => normalized.startsWith(prefix));
-      if (!isIncluded) {
-        return { skip: true, reason: "NOT_INCLUDED" };
-      }
-    }
-  }
-  if (size > 524288) {
-    return { skip: true, reason: "OVERSIZED" };
-  }
-  return { skip: false };
-}
-function extractHeadOidFromPaxHeader(paxText) {
-  const match = paxText.match(/(?:^|\n)(?:\d+\s+)?comment=([0-9a-fA-F]{40})(?:\r?\n|$)/) || paxText.match(/\b([0-9a-fA-F]{40})\b/);
-  return match ? match[1].toLowerCase() : null;
-}
 async function handleMixRequest(req, githubToken) {
   let owner = "";
   let repo = "";
@@ -2014,176 +2200,24 @@ async function handleMixRequest(req, githubToken) {
       errorMessage: "GitHub tarball response body is empty"
     };
   }
-  const decompressedStream = res.body.pipeThrough(new DecompressionStream("gzip"));
-  const reader = decompressedStream.getReader();
-  let buffer = new Uint8Array(0);
-  let eof = false;
-  let consecutiveZeroBlocks = 0;
-  let headOid = null;
-  let nextPaxPath = null;
-  const fileTreeEntries = [];
-  const files = [];
-  const dynamicIgnorePatterns = [];
-  const textDecoder = new TextDecoder();
-  async function ensureBytes(count) {
-    while (buffer.length < count) {
-      const { value, done } = await reader.read();
-      if (done || !value) {
-        eof = true;
-        return false;
-      }
-      buffer = concatBuffers(buffer, value);
-    }
-    return true;
-  }
-  async function discardBytes(count) {
-    if (buffer.length >= count) {
-      buffer = buffer.subarray(count);
-      return;
-    }
-    let remaining = count - buffer.length;
-    buffer = new Uint8Array(0);
-    while (remaining > 0) {
-      const { value, done } = await reader.read();
-      if (done || !value) {
-        eof = true;
-        return;
-      }
-      if (value.length <= remaining) {
-        remaining -= value.length;
-      } else {
-        buffer = value.subarray(remaining);
-        remaining = 0;
-      }
-    }
-  }
+  let scan;
   try {
-    while (!eof) {
-      const hasHeader = await ensureBytes(512);
-      if (!hasHeader && buffer.length < 512) {
-        break;
-      }
-      const header = buffer.subarray(0, 512);
-      let isZero = true;
-      for (let i = 0; i < 512; i++) {
-        if (header[i] !== 0) {
-          isZero = false;
-          break;
-        }
-      }
-      if (isZero) {
-        consecutiveZeroBlocks++;
-        buffer = buffer.subarray(512);
-        if (consecutiveZeroBlocks >= 2) {
-          break;
-        }
-        continue;
-      }
-      consecutiveZeroBlocks = 0;
-      const name = parseAsciiString(header, 0, 100);
-      const size = parseOctal(header, 124, 12);
-      const typeflagRaw = header[156];
-      const typeflag = typeflagRaw === 0 || typeflagRaw === 32 ? "0" : String.fromCharCode(typeflagRaw);
-      const prefix = parseAsciiString(header, 345, 155);
-      const paddedSize = Math.ceil(size / 512) * 512;
-      buffer = buffer.subarray(512);
-      if (typeflag === "g") {
-        await ensureBytes(paddedSize);
-        const payloadBytes = buffer.subarray(0, size);
-        buffer = buffer.subarray(paddedSize);
-        const paxText = textDecoder.decode(payloadBytes);
-        const extracted = extractHeadOidFromPaxHeader(paxText);
-        if (extracted) {
-          headOid = extracted;
-        }
-        continue;
-      }
-      if (typeflag === "x") {
-        await ensureBytes(paddedSize);
-        const payloadBytes = buffer.subarray(0, size);
-        buffer = buffer.subarray(paddedSize);
-        const paxText = textDecoder.decode(payloadBytes);
-        const match = paxText.match(/(?:^|\n)\d+\s+path=(.+?)(?:\r?\n|$)/);
-        if (match) {
-          nextPaxPath = match[1].trim();
-        }
-        continue;
-      }
-      const rawEntryPath = nextPaxPath || (prefix ? `${prefix}/${name}` : name);
-      nextPaxPath = null;
-      const slashIndex = rawEntryPath.indexOf("/");
-      if (slashIndex === -1) {
-        await discardBytes(paddedSize);
-        continue;
-      }
-      const rootPrefix = rawEntryPath.slice(0, slashIndex);
-      const relPath = rawEntryPath.slice(slashIndex + 1);
-      if (!headOid) {
-        const rootMatch = rootPrefix.match(/-([0-9a-fA-F]{40})$/);
-        if (rootMatch) {
-          headOid = rootMatch[1].toLowerCase();
-        }
-      }
-      if (!relPath || relPath.endsWith("/")) {
-        await discardBytes(paddedSize);
-        continue;
-      }
-      if (dynamicIgnorePatterns.length > 0 && relPath !== ".repomixignore.cf" && relPath !== ".repomixignore" && matchesIgnorePattern(relPath, dynamicIgnorePatterns)) {
-        await discardBytes(paddedSize);
-        continue;
-      }
-      const filterDecision = shouldSkipTarEntry(relPath, size, typeflag, req.includePaths);
-      if (filterDecision.skip) {
-        if (filterDecision.reason === "OVERSIZED") {
-          fileTreeEntries.push(`${relPath} [SKIPPED: >512KB]`);
-        }
-        await discardBytes(paddedSize);
-        continue;
-      }
-      await ensureBytes(paddedSize);
-      const fileBytes = buffer.subarray(0, size);
-      buffer = buffer.subarray(paddedSize);
-      const content = textDecoder.decode(fileBytes);
-      if (content.includes("\0")) {
-        continue;
-      }
-      if (relPath === ".repomixignore.cf" || relPath === ".repomixignore") {
-        const newPatterns = parseIgnoreLines(content);
-        if (newPatterns.length > 0) {
-          dynamicIgnorePatterns.push(...newPatterns);
-          for (let i = files.length - 1; i >= 0; i--) {
-            if (matchesIgnorePattern(files[i].path, dynamicIgnorePatterns)) {
-              files.splice(i, 1);
-            }
-          }
-          for (let i = fileTreeEntries.length - 1; i >= 0; i--) {
-            const entryPath = fileTreeEntries[i].replace(/\s+\[SKIPPED:.*\]$/, "");
-            if (matchesIgnorePattern(entryPath, dynamicIgnorePatterns)) {
-              fileTreeEntries.splice(i, 1);
-            }
-          }
-        }
-      }
-      if (dynamicIgnorePatterns.length > 0 && matchesIgnorePattern(relPath, dynamicIgnorePatterns)) {
-        continue;
-      }
-      fileTreeEntries.push(relPath);
-      files.push({ path: relPath, content });
-    }
+    scan = await scanTarGzipStream(res.body, req.includePaths);
   } catch (err) {
-    return {
-      status: "ERROR",
-      headOid: headOid || "",
-      xmlContent: "",
-      stats: { fileCount: 0, estimatedTokens: 0 },
-      errorMessage: `Error processing tarball stream: ${err.message}`
-    };
-  } finally {
-    try {
-      reader.releaseLock();
-    } catch {
+    if (err instanceof TarScanError) {
+      return {
+        status: "ERROR",
+        headOid: err.headOid || "",
+        xmlContent: "",
+        stats: { fileCount: 0, estimatedTokens: 0 },
+        errorMessage: err.message
+      };
     }
+    throw err;
   }
+  let headOid = scan.headOid;
+  const fileTreeEntries = scan.fileTreeEntries;
+  const files = scan.files;
   if (!headOid || !/^[0-9a-fA-F]{40}$/.test(headOid)) {
     try {
       const branchInfo = await getBranchHeadOid(owner, repo, resolvedBranch, githubToken);
@@ -2216,19 +2250,31 @@ async function handleMixRequest(req, githubToken) {
     } catch {
     }
   }
-  const mixResult = buildChunkedMixXml({
-    owner,
-    repo,
-    branch: resolvedBranch,
-    headOid,
-    fileTreeEntries,
-    files,
-    recentCommitsText,
-    maxChunkChars: req.maxChunkChars,
-    maxChunkBytes: req.maxChunkBytes,
-    maxChunkTokens: req.maxChunkTokens,
-    splitOutput: req.splitOutput
-  });
+  let mixResult;
+  try {
+    mixResult = buildChunkedMixXml({
+      owner,
+      repo,
+      branch: resolvedBranch,
+      headOid,
+      fileTreeEntries,
+      files,
+      recentCommitsText,
+      maxChunkChars: req.maxChunkChars,
+      maxChunkBytes: req.maxChunkBytes,
+      maxChunkTokens: req.maxChunkTokens,
+      splitOutput: req.splitOutput
+    });
+  } catch (err) {
+    return {
+      status: "ERROR",
+      headOid,
+      xmlContent: "",
+      stats: { fileCount: 0, estimatedTokens: 0 },
+      errorMessage: err.message || "Failed to build chunked mix XML",
+      ...scan.skippedFiles && scan.skippedFiles.length > 0 ? { skippedFiles: scan.skippedFiles } : {}
+    };
+  }
   let persistedCommitOid;
   if (req.persistToGitHub === true) {
     try {
@@ -2244,6 +2290,11 @@ async function handleMixRequest(req, githubToken) {
       persistedCommitOid = commitRes.oid;
       headOid = commitRes.oid;
     } catch (err) {
+      const aggregatedSkipped2 = [
+        ...scan.skippedFiles || [],
+        ...mixResult.skippedFiles || []
+      ];
+      const skippedFiles2 = aggregatedSkipped2.length > 0 ? aggregatedSkipped2 : void 0;
       return {
         status: "ERROR",
         headOid,
@@ -2254,10 +2305,16 @@ async function handleMixRequest(req, githubToken) {
           ...mixResult.stats,
           ...recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {}
         },
-        errorMessage: `Failed to persist repo-mix.xml snapshot to GitHub: ${err.message}`
+        errorMessage: `Failed to persist repo-mix.xml snapshot to GitHub: ${err.message}`,
+        ...skippedFiles2 ? { skippedFiles: skippedFiles2 } : {}
       };
     }
   }
+  const aggregatedSkipped = [
+    ...scan.skippedFiles || [],
+    ...mixResult.skippedFiles || []
+  ];
+  const skippedFiles = aggregatedSkipped.length > 0 ? aggregatedSkipped : void 0;
   return {
     status: "OK",
     headOid,
@@ -2268,7 +2325,8 @@ async function handleMixRequest(req, githubToken) {
       ...mixResult.stats,
       ...recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {}
     },
-    ...persistedCommitOid ? { persistedCommitOid } : {}
+    ...persistedCommitOid ? { persistedCommitOid } : {},
+    ...skippedFiles ? { skippedFiles } : {}
   };
 }
 
@@ -2357,11 +2415,12 @@ async function executeWorkerWorkflow(payload, env) {
     const systemPrompt = `You are an automated Git patch assistant.
 Given a repository XML context and an issue prompt, return ONLY a valid JSON object strictly conforming to the GeminiPatchPayload schema.
 Do NOT output markdown fences or additional text.`;
+    const contextText = mixResult.xmlContent || (Array.isArray(mixResult.parts) ? mixResult.parts.map((p) => p.xmlContent || "").join("\n\n") : "");
     const userQuery = `Task Instruction:
 ${prompt}
 
 Repository Context:
-${mixResult.xmlContent}`;
+${contextText}`;
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
       {
@@ -2441,7 +2500,13 @@ async function handleGithubWebhookRequest(request, env, ctx) {
   }
   const rawBody = await request.text();
   const signatureHeader = request.headers.get("x-hub-signature-256");
-  const secret = env.GITHUB_WEBHOOK_SECRET || env.WORKER_SECRET || env.BRIDGE_SECRET || "";
+  const secret = env.GITHUB_WEBHOOK_SECRET || "";
+  if (!secret) {
+    return new Response(
+      JSON.stringify({ success: false, error: "Unauthorized: GITHUB_WEBHOOK_SECRET not configured" }),
+      { status: 401, headers: { "Content-Type": "application/json" } }
+    );
+  }
   const isValid = await verifyGithubWebhookSignature(rawBody, signatureHeader, secret);
   if (!isValid) {
     return new Response(
@@ -2465,6 +2530,23 @@ async function handleGithubWebhookRequest(request, env, ctx) {
       JSON.stringify({ status: "IGNORED", message: "No @gemini trigger found in payload" }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );
+  }
+  const action = payload.action;
+  if (action && action !== "created" && action !== "opened") {
+    return new Response(
+      JSON.stringify({ status: "IGNORED", message: "Webhook action not eligible for processing" }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  const authorAssociation = payload.comment?.author_association || payload.issue?.author_association;
+  if (authorAssociation) {
+    const allowed = ["OWNER", "MEMBER", "COLLABORATOR"];
+    if (!allowed.includes(authorAssociation)) {
+      return new Response(
+        JSON.stringify({ status: "IGNORED", message: "Unauthorized sender association" }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
   }
   const workflowPromise = executeWorkerWorkflow(payload, env).catch((err) => {
     console.error("[webhookHandler] Background workflow unhandled error:", err);
@@ -2515,15 +2597,33 @@ function verifyAuth(request, env) {
   if (!secret) {
     return false;
   }
+  const enc = new TextEncoder();
+  const secretBytes = enc.encode(secret);
   const customHeader = request.headers.get("x-bridge-secret");
-  if (customHeader && customHeader === secret) {
-    return true;
+  if (customHeader) {
+    const headerBytes = enc.encode(customHeader);
+    if (headerBytes.length === secretBytes.length) {
+      let result = 0;
+      for (let i = 0; i < headerBytes.length; i++) {
+        result |= headerBytes[i] ^ secretBytes[i];
+      }
+      if (result === 0) {
+        return true;
+      }
+    }
   }
   const authHeader = request.headers.get("Authorization");
   if (authHeader) {
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (token === secret) {
-      return true;
+    const tokenBytes = enc.encode(token);
+    if (tokenBytes.length === secretBytes.length) {
+      let result = 0;
+      for (let i = 0; i < tokenBytes.length; i++) {
+        result |= tokenBytes[i] ^ secretBytes[i];
+      }
+      if (result === 0) {
+        return true;
+      }
     }
   }
   return false;
@@ -2542,7 +2642,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "2.0.4",
+        version: "2.0.5",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))
@@ -2583,6 +2683,16 @@ var index_default = {
           return errorResponse('Commit must include at least one entry in "changes" or "files" or "deletions".');
         }
         const { headOid, resolvedBranch } = await getBranchHeadOid(owner, repo, targetBranch, githubToken);
+        if (body.expectedHeadOid && body.expectedHeadOid !== headOid) {
+          return jsonResponse(
+            {
+              status: "GIT_CONFLICT",
+              newHeadOid: headOid,
+              errorMessage: `Expected HEAD "${body.expectedHeadOid}" but branch "${resolvedBranch}" is at "${headOid}". Fetch the latest repo mix and retry.`
+            },
+            409
+          );
+        }
         const additions = [];
         for (const fileInput of fileChanges) {
           const pathIssue = findRepoPathIssue(fileInput.path);
@@ -2653,9 +2763,7 @@ var index_default = {
       return errorResponse(`Endpoint not found: ${request.method} ${path}`, 404);
     } catch (err) {
       console.error("Request processing error:", err);
-      return errorResponse(err.message || "Internal server error", 500, {
-        stack: err.stack
-      });
+      return errorResponse(err.message || "Internal server error", 500);
     }
   }
 };

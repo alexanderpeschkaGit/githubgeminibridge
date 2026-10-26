@@ -1,9 +1,9 @@
 import type { LinterError, GeminiPatchPayload } from '../types';
 import {
   checkPlaceholderErrors,
-  runBuiltinPreflightRules,
   type PreflightLinterHook
 } from './patcher';
+import { runBuiltinPreflightRules } from './patchInMemory';
 import {
   type OxcWasmParser,
   type OxcWasmParserFn,

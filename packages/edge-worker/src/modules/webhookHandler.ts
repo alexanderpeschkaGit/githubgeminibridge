@@ -169,7 +169,11 @@ export async function executeWorkerWorkflow(
 Given a repository XML context and an issue prompt, return ONLY a valid JSON object strictly conforming to the GeminiPatchPayload schema.
 Do NOT output markdown fences or additional text.`;
 
-    const userQuery = `Task Instruction:\n${prompt}\n\nRepository Context:\n${mixResult.xmlContent}`;
+    const contextText = mixResult.xmlContent || (Array.isArray(mixResult.parts)
+      ? mixResult.parts.map((p: any) => p.xmlContent || '').join('\n\n')
+      : '');
+
+    const userQuery = `Task Instruction:\n${prompt}\n\nRepository Context:\n${contextText}`;
 
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
@@ -262,7 +266,13 @@ export async function handleGithubWebhookRequest(
 
   const rawBody = await request.text();
   const signatureHeader = request.headers.get('x-hub-signature-256');
-  const secret = env.GITHUB_WEBHOOK_SECRET || env.WORKER_SECRET || env.BRIDGE_SECRET || '';
+  const secret = env.GITHUB_WEBHOOK_SECRET || '';
+  if (!secret) {
+    return new Response(
+      JSON.stringify({ success: false, error: 'Unauthorized: GITHUB_WEBHOOK_SECRET not configured' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
 
   const isValid = await verifyGithubWebhookSignature(rawBody, signatureHeader, secret);
   if (!isValid) {
@@ -296,6 +306,26 @@ export async function handleGithubWebhookRequest(
     );
   }
 
+  const action = payload.action;
+  if (action && action !== 'created' && action !== 'opened') {
+    return new Response(
+      JSON.stringify({ status: 'IGNORED', message: 'Webhook action not eligible for processing' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  const authorAssociation =
+    (payload as any).comment?.author_association ||
+    (payload as any).issue?.author_association;
+  if (authorAssociation) {
+    const allowed = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+    if (!allowed.includes(authorAssociation)) {
+      return new Response(
+        JSON.stringify({ status: 'IGNORED', message: 'Unauthorized sender association' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
   // P1: Respond immediately with 202 Accepted to prevent GitHub 10s webhook timeout.
   // Execution runs in background via ctx.waitUntil.
   const workflowPromise = executeWorkerWorkflow(payload, env).catch((err) => {
