@@ -55,7 +55,11 @@ async function main() {
   // Probe 2: Hard Guardrail (validateNoPlaceholders) Contract Check
   results.push(await runProbe(2, 'Hard Guardrail (validateNoPlaceholders) Contract', async () => {
     const patcherPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/patcher.ts');
-    const content = fs.readFileSync(patcherPath, 'utf-8');
+    const patcherModulePaths = ['searchReplace.ts', 'patchInMemory.ts']
+      .map((name) => path.join(ROOT_DIR, 'packages/edge-worker/src/modules', name));
+    const content = [patcherPath, ...patcherModulePaths]
+      .map((p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : ''))
+      .join('\n');
     const hasPatterns = content.includes('LLM_PLACEHOLDER_PATTERNS');
     const hasValidator = content.includes('export function validateNoPlaceholders');
     const hasSearchReplace = content.includes('export function applySearchReplace');
@@ -175,7 +179,10 @@ async function main() {
     if (!patcherExists) {
       return { pass: false, error: 'patcher.ts does not exist' };
     }
-    const patcherContent = fs.readFileSync(patcherPath, 'utf-8');
+    const patcherContent = [patcherPath, ...['searchReplace.ts', 'patchInMemory.ts']
+      .map((name) => path.join(ROOT_DIR, 'packages/edge-worker/src/modules', name))]
+      .map((p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : ''))
+      .join('\n');
     const indexContent = fs.readFileSync(indexPath, 'utf-8');
 
     const hasHandlePatch = patcherContent.includes('export async function handlePatchRequest');

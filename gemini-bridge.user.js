@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.15
+// @version      2.0.16
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -250,430 +250,6 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // src/services/workerClient.ts
-  async function gmRequestJson(url, method, secret, body) {
-    const headers = {
-      "Accept": "application/json",
-      "Authorization": `Bearer ${secret}`,
-      "x-bridge-secret": secret
-    };
-    let payloadString;
-    if (body !== void 0) {
-      headers["Content-Type"] = "application/json";
-      payloadString = typeof body === "string" ? body : JSON.stringify(body);
-    }
-    if (typeof GM_xmlhttpRequest === "function") {
-      return new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
-          method,
-          url,
-          headers,
-          data: payloadString,
-          onload: (res) => {
-            try {
-              const data = JSON.parse(res.responseText);
-              if (res.status >= 200 && res.status < 300) {
-                resolve(data);
-              } else {
-                const errMsg = data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`;
-                reject(new Error(errMsg));
-              }
-            } catch (err) {
-              if (res.status >= 200 && res.status < 300) {
-                resolve(res.responseText);
-              } else {
-                reject(new Error(`HTTP ${res.status}: ${res.responseText}`));
-              }
-            }
-          },
-          onerror: (err) => {
-            reject(new Error(`Network error calling Cloudflare Worker: ${err?.statusText || err || "Unknown error"}`));
-          },
-          ontimeout: () => {
-            reject(new Error("Request to Cloudflare Worker timed out"));
-          }
-        });
-      });
-    }
-    if (typeof GM !== "undefined" && typeof GM.xmlHttpRequest === "function") {
-      const res = await GM.xmlHttpRequest({
-        method,
-        url,
-        headers,
-        data: payloadString
-      });
-      try {
-        const data = JSON.parse(res.responseText);
-        if (res.status >= 200 && res.status < 300) {
-          return data;
-        }
-        throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`);
-      } catch (e) {
-        if (res.status >= 200 && res.status < 300) {
-          return res.responseText;
-        }
-        throw e;
-      }
-    }
-    if (typeof fetch === "function") {
-      const res = await fetch(url, {
-        method,
-        headers,
-        body: payloadString
-      });
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = text;
-      }
-      if (res.ok) {
-        return data;
-      }
-      throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${text}`);
-    }
-    throw new Error("No supported HTTP client found (GM_xmlhttpRequest, GM.xmlHttpRequest, or fetch)");
-  }
-  async function checkWorkerHealth(cfg) {
-    const url = `${cfg.workerUrl}/health`;
-    return gmRequestJson(url, "GET", cfg.workerSecret);
-  }
-  async function requestRepoMix(cfg, req) {
-    const url = `${cfg.workerUrl}/api/mix`;
-    const payload = {
-      repo: req?.repo || cfg.repo,
-      branch: req?.branch || cfg.branch,
-      includePaths: req?.includePaths || (cfg.includePaths.length > 0 ? cfg.includePaths : void 0),
-      persistToGitHub: req?.persistToGitHub ?? cfg.persistToGitHub,
-      maxChunkChars: req?.maxChunkChars ?? cfg.maxChunkChars,
-      maxChunkBytes: req?.maxChunkBytes,
-      maxChunkTokens: req?.maxChunkTokens,
-      splitOutput: req?.splitOutput,
-      includeRecentCommits: req?.includeRecentCommits ?? cfg.includeRecentCommits
-    };
-    return gmRequestJson(url, "POST", cfg.workerSecret, payload);
-  }
-  async function requestWorkerPatch(cfg, req) {
-    const url = `${cfg.workerUrl}/api/patch`;
-    return gmRequestJson(url, "POST", cfg.workerSecret, req);
-  }
-  var OID_REGEX = /^[0-9a-f]{40}$/i;
-  function parseRepoSlug(repo) {
-    const cleaned = (repo || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/^git@github\.com:/i, "").replace(/\.git$/i, "").replace(/\/+$/, "");
-    const parts = cleaned.split("/").filter(Boolean);
-    if (parts.length !== 2) {
-      throw new Error(`Invalid repository "${repo}": expected "owner/name".`);
-    }
-    return { owner: parts[0], name: parts[1] };
-  }
-  function buildBranchHeadRequestBody(repo, branch) {
-    const { owner, name } = parseRepoSlug(repo);
-    const branchName = (branch || "").trim().replace(/^refs\/heads\//, "");
-    if (!branchName) {
-      throw new Error("Cannot resolve a HEAD OID without a branch name.");
-    }
-    return {
-      query: "query BranchHead($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { ref(qualifiedName: $branch) { target { oid } } } }",
-      variables: { owner, repo: name, branch: `refs/heads/${branchName}` }
-    };
-  }
-  function extractBranchHeadOid(payload) {
-    const oid = payload?.data?.repository?.ref?.target?.oid;
-    return OID_REGEX.test(String(oid || "")) ? String(oid) : "";
-  }
-  async function requestBranchHead(cfg, repo, branch) {
-    const body = buildBranchHeadRequestBody(repo, branch);
-    const payload = await gmRequestJson(
-      `${cfg.workerUrl}/graphql`,
-      "POST",
-      cfg.workerSecret,
-      body
-    );
-    const oid = extractBranchHeadOid(payload);
-    if (!oid) {
-      throw new Error(`Branch "${body.variables.branch}" was not found in ${body.variables.owner}/${body.variables.repo}.`);
-    }
-    return oid;
-  }
-  async function requestLegacyCommit(cfg, req) {
-    const url = `${cfg.workerUrl}/push`;
-    return gmRequestJson(url, "POST", cfg.workerSecret, req);
-  }
-
-  // src/dom/injector.ts
-  function findPromptInputElement() {
-    if (typeof document === "undefined") return null;
-    const geminiSelectors = [
-      'rich-textarea div[contenteditable="true"]',
-      'div.ql-editor[contenteditable="true"]',
-      'div[contenteditable="true"][role="textbox"]',
-      'div[contenteditable="true"]'
-    ];
-    for (const sel of geminiSelectors) {
-      const el = document.querySelector(sel);
-      if (el && el.offsetParent !== null) {
-        return el;
-      }
-    }
-    const aiStudioSelectors = [
-      "ms-autosize-textarea textarea",
-      'textarea[aria-label*="prompt" i]',
-      'textarea[placeholder*="prompt" i]',
-      "textarea.prompt-textarea",
-      "textarea"
-    ];
-    for (const sel of aiStudioSelectors) {
-      const el = document.querySelector(sel);
-      if (el && el.offsetParent !== null) {
-        return el;
-      }
-    }
-    return document.querySelector('textarea, div[contenteditable="true"]');
-  }
-  function injectRepoMixParts(parts) {
-    if (typeof window === "undefined" || typeof document === "undefined") return false;
-    if (!parts || parts.length === 0) return false;
-    const inputEl = findPromptInputElement();
-    const target = inputEl || document.activeElement || document.body;
-    try {
-      const dataTransfer = new DataTransfer();
-      for (const part of parts) {
-        const file = new File([part.xmlContent], part.fileName, { type: "text/plain" });
-        dataTransfer.items.add(file);
-      }
-      const pasteEvent = new ClipboardEvent("paste", {
-        clipboardData: dataTransfer,
-        bubbles: true,
-        cancelable: true
-      });
-      target.dispatchEvent(pasteEvent);
-      return true;
-    } catch (err) {
-      console.error("[Gemini Bridge Injector] Failed to inject repo mix parts:", err);
-      return false;
-    }
-  }
-  function injectRepoMixFile(xmlContent, fileName = "repo-mix.txt") {
-    return injectRepoMixParts([{ fileName, xmlContent }]);
-  }
-  function injectPromptText(promptText, autoSubmit = false) {
-    if (typeof document === "undefined") return false;
-    const inputEl = findPromptInputElement();
-    if (!inputEl) {
-      console.warn("[Gemini Bridge Injector] Prompt input element not found");
-      return false;
-    }
-    inputEl.focus();
-    let inserted = false;
-    try {
-      inserted = document.execCommand("insertText", false, promptText);
-    } catch (e) {
-      inserted = false;
-    }
-    if (!inserted) {
-      if (inputEl instanceof HTMLTextAreaElement || "value" in inputEl) {
-        const textarea = inputEl;
-        const start = textarea.selectionStart ?? textarea.value.length;
-        const end = textarea.selectionEnd ?? textarea.value.length;
-        textarea.value = textarea.value.slice(0, start) + promptText + textarea.value.slice(end);
-        textarea.dispatchEvent(new Event("input", { bubbles: true }));
-        textarea.dispatchEvent(new Event("change", { bubbles: true }));
-      } else {
-        inputEl.textContent = (inputEl.textContent || "") + promptText;
-        inputEl.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: promptText }));
-      }
-    }
-    if (autoSubmit) {
-      setTimeout(() => {
-        const sendButtonSelectors = [
-          "button.send-button",
-          'button[aria-label*="Send" i]',
-          'button[aria-label*="Senden" i]',
-          'button[aria-label*="Run" i]',
-          "ms-run-button button",
-          "button.run-button"
-        ];
-        for (const sel of sendButtonSelectors) {
-          const btn = document.querySelector(sel);
-          if (btn && !btn.disabled) {
-            btn.click();
-            break;
-          }
-        }
-      }, 300);
-    }
-    return true;
-  }
-
-  // src/services/selfHealing.ts
-  var MAX_SELF_HEALING_RETRIES = 3;
-  function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt) {
-    const formattedErrors = errors.map((err, idx) => {
-      const loc = err.line ? err.column ? `:${err.line}:${err.column}` : `:${err.line}` : "";
-      const snippet = err.codeSnippet ? `
-   > ${err.codeSnippet}` : "";
-      return `${idx + 1}. [Stage: ${err.stage}] ${err.file}${loc} \u2014 ${err.message}${snippet}`;
-    }).join("\n");
-    return `#solve Linter & Preflight Self-Healing Loop (Retry ${retryAttempt}/${MAX_SELF_HEALING_RETRIES})
-
-The previous patch for repository "${repo}" on branch "${branch}" was rejected during Edge-Worker preflight validation.
-Expected HEAD commit: "${headOid}".
-
-Aggregated Preflight Errors (${errors.length}):
-${formattedErrors}
-
-Fix Instructions:
-1. Fix ALL listed syntax and rule errors in a single cohesive response.
-2. Hard Guardrail: NEVER use placeholder comments like "// ... existing code ...", "/* remaining code */", or "# ... existing code ...". Always provide complete search/replace blocks or full file content.
-3. Provide your correction as a single valid JSON codeblock matching the GeminiPatchPayload schema:
-\`\`\`json
-{
-  "commitMessage": "fix: resolve preflight linter errors (retry ${retryAttempt})",
-  "patches": [
-    {
-      "path": "path/to/file.ext",
-      "action": "modify",
-      "blocks": [
-        {
-          "search": "exact string to replace",
-          "replace": "replacement string"
-        }
-      ]
-    }
-  ]
-}
-\`\`\`
-`;
-  }
-  function shouldTriggerSelfHealing(response, autoPilot, currentRetryCount) {
-    if (response.status === "COMMITTED") {
-      return {
-        trigger: false,
-        nextRetryCount: 0,
-        reason: "COMMITTED_SUCCESS"
-      };
-    }
-    if (response.status !== "PREFLIGHT_FAILED") {
-      return {
-        trigger: false,
-        nextRetryCount: currentRetryCount,
-        reason: "STATUS_NOT_PREFLIGHT_FAILED"
-      };
-    }
-    if (!Array.isArray(response.errors) || response.errors.length === 0) {
-      return {
-        trigger: false,
-        nextRetryCount: currentRetryCount,
-        reason: "NO_ERRORS_REPORTED"
-      };
-    }
-    if (currentRetryCount >= MAX_SELF_HEALING_RETRIES) {
-      return {
-        trigger: false,
-        nextRetryCount: currentRetryCount,
-        reason: "MAX_RETRIES_EXCEEDED"
-      };
-    }
-    if (!autoPilot) {
-      return {
-        trigger: false,
-        nextRetryCount: currentRetryCount,
-        reason: "AUTOPILOT_DISABLED"
-      };
-    }
-    return {
-      trigger: true,
-      nextRetryCount: currentRetryCount + 1,
-      reason: "PREFLIGHT_FAILED_AUTO_RETRY"
-    };
-  }
-  function executeSelfHealingTurn(response, cfg, state, autoSubmit = true) {
-    const evalResult = shouldTriggerSelfHealing(response, cfg.autoPilot, state.retryCount);
-    if (!evalResult.trigger) {
-      return {
-        triggered: false,
-        nextRetryCount: evalResult.nextRetryCount,
-        reason: evalResult.reason
-      };
-    }
-    const prompt = buildSelfHealingPrompt(
-      response.errors || [],
-      cfg.repo,
-      cfg.branch,
-      state.headOid,
-      evalResult.nextRetryCount
-    );
-    injectPromptText(prompt, autoSubmit);
-    return {
-      triggered: true,
-      nextRetryCount: evalResult.nextRetryCount,
-      prompt,
-      reason: evalResult.reason
-    };
-  }
-
-  // src/services/patchOidState.ts
-  var OID_REGEX2 = /^[0-9a-f]{40}$/i;
-  function normalizeBranch(branch) {
-    return (branch || "").trim().replace(/^refs\/heads\//, "");
-  }
-  function buildOidScope(config) {
-    return `${(config.repo || "").trim().toLowerCase()}#${normalizeBranch(config.branch).toLowerCase()}`;
-  }
-  function resolvePatchOidState(config, stored) {
-    if ((stored.headOidScope || "") !== buildOidScope(config)) {
-      return { headOid: "", targetHeadOid: "", targetHeadBranch: "" };
-    }
-    const configuredTarget = normalizeBranch(config.targetBranch || "");
-    const storedTarget = normalizeBranch(stored.targetHeadBranch || "");
-    const targetIsCurrent = !!configuredTarget && storedTarget === configuredTarget && OID_REGEX2.test(stored.targetHeadOid || "");
-    return {
-      headOid: OID_REGEX2.test(stored.headOid || "") ? stored.headOid : "",
-      targetHeadOid: targetIsCurrent ? stored.targetHeadOid : "",
-      targetHeadBranch: targetIsCurrent ? storedTarget : ""
-    };
-  }
-  function buildWorkerPatchRequest(config, state, payload) {
-    const targetBranch = config.targetBranch?.trim() || void 0;
-    const isDistinctTarget = !!targetBranch && normalizeBranch(targetBranch) !== normalizeBranch(config.branch);
-    const targetOidIsCurrent = isDistinctTarget && normalizeBranch(state.targetHeadBranch) === normalizeBranch(targetBranch) && OID_REGEX2.test(state.targetHeadOid);
-    return {
-      repo: config.repo,
-      branch: config.branch,
-      expectedHeadOid: state.headOid,
-      payload,
-      targetBranch,
-      expectedTargetHeadOid: targetOidIsCurrent ? state.targetHeadOid || void 0 : void 0
-    };
-  }
-  function isPatchSnapshotReady(state) {
-    return OID_REGEX2.test(state.headOid || "");
-  }
-  function patchSnapshotRequiredMessage(config, commitMessage) {
-    return `No repo mix snapshot for ${config.repo}@${config.branch}. Click "Load Repo Mix" first \u2014 patches are only committed against a validated HEAD OID. (Patch: "${commitMessage}")`;
-  }
-  function resolveConflictOidReset(response) {
-    if (response.status !== "GIT_CONFLICT") return "none";
-    return response.targetBranch ? "target" : "source";
-  }
-  function advancePatchOidState(config, response) {
-    if (response.status !== "COMMITTED" && response.status !== "NO_CHANGES_NEEDED" || !response.newHeadOid) {
-      return {};
-    }
-    const configuredTarget = config.targetBranch?.trim();
-    const targetIsDistinct = !!configuredTarget && normalizeBranch(configuredTarget) !== normalizeBranch(config.branch);
-    if (targetIsDistinct && !response.targetBranch) return {};
-    const effectiveBranch = normalizeBranch(response.targetBranch || config.branch);
-    if (effectiveBranch === normalizeBranch(config.branch)) {
-      return { headOid: response.newHeadOid };
-    }
-    return {
-      targetHeadOid: response.newHeadOid,
-      targetHeadBranch: effectiveBranch
-    };
-  }
-
   // src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
   function getRunningScriptVersion() {
@@ -706,6 +282,67 @@ Fix Instructions:
       "white-space:pre-wrap"
     ].join(";");
     document.body.appendChild(box);
+  }
+
+  // src/services/patchOidState.ts
+  var OID_REGEX = /^[0-9a-f]{40}$/i;
+  function normalizeBranch(branch) {
+    return (branch || "").trim().replace(/^refs\/heads\//, "");
+  }
+  function buildOidScope(config) {
+    return `${(config.repo || "").trim().toLowerCase()}#${normalizeBranch(config.branch).toLowerCase()}`;
+  }
+  function resolvePatchOidState(config, stored) {
+    if ((stored.headOidScope || "") !== buildOidScope(config)) {
+      return { headOid: "", targetHeadOid: "", targetHeadBranch: "" };
+    }
+    const configuredTarget = normalizeBranch(config.targetBranch || "");
+    const storedTarget = normalizeBranch(stored.targetHeadBranch || "");
+    const targetIsCurrent = !!configuredTarget && storedTarget === configuredTarget && OID_REGEX.test(stored.targetHeadOid || "");
+    return {
+      headOid: OID_REGEX.test(stored.headOid || "") ? stored.headOid : "",
+      targetHeadOid: targetIsCurrent ? stored.targetHeadOid : "",
+      targetHeadBranch: targetIsCurrent ? storedTarget : ""
+    };
+  }
+  function buildWorkerPatchRequest(config, state, payload) {
+    const targetBranch = config.targetBranch?.trim() || void 0;
+    const isDistinctTarget = !!targetBranch && normalizeBranch(targetBranch) !== normalizeBranch(config.branch);
+    const targetOidIsCurrent = isDistinctTarget && normalizeBranch(state.targetHeadBranch) === normalizeBranch(targetBranch) && OID_REGEX.test(state.targetHeadOid);
+    return {
+      repo: config.repo,
+      branch: config.branch,
+      expectedHeadOid: state.headOid,
+      payload,
+      targetBranch,
+      expectedTargetHeadOid: targetOidIsCurrent ? state.targetHeadOid || void 0 : void 0
+    };
+  }
+  function isPatchSnapshotReady(state) {
+    return OID_REGEX.test(state.headOid || "");
+  }
+  function patchSnapshotRequiredMessage(config, commitMessage) {
+    return `No repo mix snapshot for ${config.repo}@${config.branch}. Click "Load Repo Mix" first \u2014 patches are only committed against a validated HEAD OID. (Patch: "${commitMessage}")`;
+  }
+  function resolveConflictOidReset(response) {
+    if (response.status !== "GIT_CONFLICT") return "none";
+    return response.targetBranch ? "target" : "source";
+  }
+  function advancePatchOidState(config, response) {
+    if (response.status !== "COMMITTED" && response.status !== "NO_CHANGES_NEEDED" || !response.newHeadOid) {
+      return {};
+    }
+    const configuredTarget = config.targetBranch?.trim();
+    const targetIsDistinct = !!configuredTarget && normalizeBranch(configuredTarget) !== normalizeBranch(config.branch);
+    if (targetIsDistinct && !response.targetBranch) return {};
+    const effectiveBranch = normalizeBranch(response.targetBranch || config.branch);
+    if (effectiveBranch === normalizeBranch(config.branch)) {
+      return { headOid: response.newHeadOid };
+    }
+    return {
+      targetHeadOid: response.newHeadOid,
+      targetHeadBranch: effectiveBranch
+    };
   }
 
   // src/services/patchOidStore.ts
@@ -808,87 +445,6 @@ Fix Instructions:
       applied++;
     }
     return { applied, total };
-  }
-
-  // ../../shared/repoPaths.ts
-  function normalizeRepoPath(input) {
-    return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
-  }
-  function findRepoPathIssue(input) {
-    const raw = (input || "").trim();
-    if (!raw) {
-      return 'Patch has no file path. Add a "// filepath: <repo/relative/path>" hint above the code block.';
-    }
-    const normalized = normalizeRepoPath(raw);
-    if (!normalized) {
-      return `Patch path "${raw}" does not point to a file inside the repository.`;
-    }
-    if (/^[a-zA-Z]:\//.test(normalized)) {
-      return `Patch path "${raw}" must be repo-relative (absolute drive paths are not allowed).`;
-    }
-    if (normalized.split("/").some((segment) => segment === ".." || segment === ".")) {
-      return `Patch path "${raw}" must be repo-relative and must not contain "." or ".." segments.`;
-    }
-    return null;
-  }
-
-  // src/services/patchPaths.ts
-  function resolvePatchPaths(payload, prompt) {
-    const patches = (payload.patches || []).map((patch) => ({
-      ...patch,
-      path: normalizeRepoPath(patch.path)
-    }));
-    const missing = patches.filter((patch) => findRepoPathIssue(patch.path) !== null);
-    for (let index = 0; index < missing.length; index++) {
-      const answer = prompt(index + 1, missing.length);
-      if (answer === null || answer === void 0) {
-        return {
-          payload,
-          cancelled: true,
-          reason: 'Patch cancelled \u2014 no file path provided. Add a "// filepath: src/your-file.ts" hint to the code block and harvest it again.'
-        };
-      }
-      const candidate = normalizeRepoPath(answer);
-      const issue = findRepoPathIssue(candidate);
-      if (issue) {
-        return { payload, cancelled: true, reason: issue };
-      }
-      missing[index].path = candidate;
-    }
-    return { payload: { ...payload, patches }, cancelled: false };
-  }
-
-  // src/services/accountProfiles.ts
-  var ACCOUNT_PROFILES = [
-    { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
-    { id: "account2", label: "Account 2", workerName: "gemini-git-bridge-account2" }
-  ];
-  function isProfileConfigured(cfg) {
-    return Boolean(cfg.workerUrl && cfg.workerSecret);
-  }
-  function switchAccountProfile(target) {
-    setStoredValue("active_profile", target);
-    return loadHudConfig();
-  }
-  function switchAccountProfileWithRepo(target, repo) {
-    const cleaned = sanitizeRepo(repo);
-    if (cleaned) setStoredValue(`${target}_owner_repo`, cleaned);
-    setStoredValue("active_profile", target);
-    return loadHudConfig();
-  }
-  function ownerOfRepo(repo) {
-    const cleaned = (repo || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/^git@github\.com:/i, "");
-    return cleaned.split("/")[0].trim().toLowerCase();
-  }
-  function classifyRepoOwner(cfg) {
-    const owner = ownerOfRepo(cfg.repo);
-    if (!owner) return "empty";
-    if (owner === (cfg.owner || "").trim().toLowerCase()) return "active";
-    const active = getActiveProfileId();
-    const other = active === "account1" ? "account2" : "account1";
-    const otherOwner = getStoredValue(`${other}_owner`, "").trim().toLowerCase();
-    if (otherOwner && owner === otherOwner) return other;
-    return "foreign";
   }
 
   // src/ui/hudStylesAndDom.ts
@@ -1729,6 +1285,39 @@ Fix Instructions:
     };
   }
 
+  // src/services/accountProfiles.ts
+  var ACCOUNT_PROFILES = [
+    { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
+    { id: "account2", label: "Account 2", workerName: "gemini-git-bridge-account2" }
+  ];
+  function isProfileConfigured(cfg) {
+    return Boolean(cfg.workerUrl && cfg.workerSecret);
+  }
+  function switchAccountProfile(target) {
+    setStoredValue("active_profile", target);
+    return loadHudConfig();
+  }
+  function switchAccountProfileWithRepo(target, repo) {
+    const cleaned = sanitizeRepo(repo);
+    if (cleaned) setStoredValue(`${target}_owner_repo`, cleaned);
+    setStoredValue("active_profile", target);
+    return loadHudConfig();
+  }
+  function ownerOfRepo(repo) {
+    const cleaned = (repo || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/^git@github\.com:/i, "");
+    return cleaned.split("/")[0].trim().toLowerCase();
+  }
+  function classifyRepoOwner(cfg) {
+    const owner = ownerOfRepo(cfg.repo);
+    if (!owner) return "empty";
+    if (owner === (cfg.owner || "").trim().toLowerCase()) return "active";
+    const active = getActiveProfileId();
+    const other = active === "account1" ? "account2" : "account1";
+    const otherOwner = getStoredValue(`${other}_owner`, "").trim().toLowerCase();
+    if (otherOwner && owner === otherOwner) return other;
+    return "foreign";
+  }
+
   // src/ui/hudAccountSwitch.ts
   var activeDeps = null;
   function profileInfo(id) {
@@ -1831,6 +1420,218 @@ Fix Instructions:
     };
   }
 
+  // src/dom/injector.ts
+  function findPromptInputElement() {
+    if (typeof document === "undefined") return null;
+    const geminiSelectors = [
+      'rich-textarea div[contenteditable="true"]',
+      'div.ql-editor[contenteditable="true"]',
+      'div[contenteditable="true"][role="textbox"]',
+      'div[contenteditable="true"]'
+    ];
+    for (const sel of geminiSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetParent !== null) {
+        return el;
+      }
+    }
+    const aiStudioSelectors = [
+      "ms-autosize-textarea textarea",
+      'textarea[aria-label*="prompt" i]',
+      'textarea[placeholder*="prompt" i]',
+      "textarea.prompt-textarea",
+      "textarea"
+    ];
+    for (const sel of aiStudioSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetParent !== null) {
+        return el;
+      }
+    }
+    return document.querySelector('textarea, div[contenteditable="true"]');
+  }
+  function injectRepoMixParts(parts) {
+    if (typeof window === "undefined" || typeof document === "undefined") return false;
+    if (!parts || parts.length === 0) return false;
+    const inputEl = findPromptInputElement();
+    const target = inputEl || document.activeElement || document.body;
+    try {
+      const dataTransfer = new DataTransfer();
+      for (const part of parts) {
+        const file = new File([part.xmlContent], part.fileName, { type: "text/plain" });
+        dataTransfer.items.add(file);
+      }
+      const pasteEvent = new ClipboardEvent("paste", {
+        clipboardData: dataTransfer,
+        bubbles: true,
+        cancelable: true
+      });
+      target.dispatchEvent(pasteEvent);
+      return true;
+    } catch (err) {
+      console.error("[Gemini Bridge Injector] Failed to inject repo mix parts:", err);
+      return false;
+    }
+  }
+  function injectRepoMixFile(xmlContent, fileName = "repo-mix.txt") {
+    return injectRepoMixParts([{ fileName, xmlContent }]);
+  }
+  function injectPromptText(promptText, autoSubmit = false) {
+    if (typeof document === "undefined") return false;
+    const inputEl = findPromptInputElement();
+    if (!inputEl) {
+      console.warn("[Gemini Bridge Injector] Prompt input element not found");
+      return false;
+    }
+    inputEl.focus();
+    let inserted = false;
+    try {
+      inserted = document.execCommand("insertText", false, promptText);
+    } catch (e) {
+      inserted = false;
+    }
+    if (!inserted) {
+      if (inputEl instanceof HTMLTextAreaElement || "value" in inputEl) {
+        const textarea = inputEl;
+        const start = textarea.selectionStart ?? textarea.value.length;
+        const end = textarea.selectionEnd ?? textarea.value.length;
+        textarea.value = textarea.value.slice(0, start) + promptText + textarea.value.slice(end);
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        textarea.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        inputEl.textContent = (inputEl.textContent || "") + promptText;
+        inputEl.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: promptText }));
+      }
+    }
+    if (autoSubmit) {
+      setTimeout(() => {
+        const sendButtonSelectors = [
+          "button.send-button",
+          'button[aria-label*="Send" i]',
+          'button[aria-label*="Senden" i]',
+          'button[aria-label*="Run" i]',
+          "ms-run-button button",
+          "button.run-button"
+        ];
+        for (const sel of sendButtonSelectors) {
+          const btn = document.querySelector(sel);
+          if (btn && !btn.disabled) {
+            btn.click();
+            break;
+          }
+        }
+      }, 300);
+    }
+    return true;
+  }
+
+  // src/services/selfHealing.ts
+  var MAX_SELF_HEALING_RETRIES = 3;
+  function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt) {
+    const formattedErrors = errors.map((err, idx) => {
+      const loc = err.line ? err.column ? `:${err.line}:${err.column}` : `:${err.line}` : "";
+      const snippet = err.codeSnippet ? `
+   > ${err.codeSnippet}` : "";
+      return `${idx + 1}. [Stage: ${err.stage}] ${err.file}${loc} \u2014 ${err.message}${snippet}`;
+    }).join("\n");
+    return `#solve Linter & Preflight Self-Healing Loop (Retry ${retryAttempt}/${MAX_SELF_HEALING_RETRIES})
+
+The previous patch for repository "${repo}" on branch "${branch}" was rejected during Edge-Worker preflight validation.
+Expected HEAD commit: "${headOid}".
+
+Aggregated Preflight Errors (${errors.length}):
+${formattedErrors}
+
+Fix Instructions:
+1. Fix ALL listed syntax and rule errors in a single cohesive response.
+2. Hard Guardrail: NEVER use placeholder comments like "// ... existing code ...", "/* remaining code */", or "# ... existing code ...". Always provide complete search/replace blocks or full file content.
+3. Provide your correction as a single valid JSON codeblock matching the GeminiPatchPayload schema:
+\`\`\`json
+{
+  "commitMessage": "fix: resolve preflight linter errors (retry ${retryAttempt})",
+  "patches": [
+    {
+      "path": "path/to/file.ext",
+      "action": "modify",
+      "blocks": [
+        {
+          "search": "exact string to replace",
+          "replace": "replacement string"
+        }
+      ]
+    }
+  ]
+}
+\`\`\`
+`;
+  }
+  function shouldTriggerSelfHealing(response, autoPilot, currentRetryCount) {
+    if (response.status === "COMMITTED") {
+      return {
+        trigger: false,
+        nextRetryCount: 0,
+        reason: "COMMITTED_SUCCESS"
+      };
+    }
+    if (response.status !== "PREFLIGHT_FAILED") {
+      return {
+        trigger: false,
+        nextRetryCount: currentRetryCount,
+        reason: "STATUS_NOT_PREFLIGHT_FAILED"
+      };
+    }
+    if (!Array.isArray(response.errors) || response.errors.length === 0) {
+      return {
+        trigger: false,
+        nextRetryCount: currentRetryCount,
+        reason: "NO_ERRORS_REPORTED"
+      };
+    }
+    if (currentRetryCount >= MAX_SELF_HEALING_RETRIES) {
+      return {
+        trigger: false,
+        nextRetryCount: currentRetryCount,
+        reason: "MAX_RETRIES_EXCEEDED"
+      };
+    }
+    if (!autoPilot) {
+      return {
+        trigger: false,
+        nextRetryCount: currentRetryCount,
+        reason: "AUTOPILOT_DISABLED"
+      };
+    }
+    return {
+      trigger: true,
+      nextRetryCount: currentRetryCount + 1,
+      reason: "PREFLIGHT_FAILED_AUTO_RETRY"
+    };
+  }
+  function executeSelfHealingTurn(response, cfg, state, autoSubmit = true) {
+    const evalResult = shouldTriggerSelfHealing(response, cfg.autoPilot, state.retryCount);
+    if (!evalResult.trigger) {
+      return {
+        triggered: false,
+        nextRetryCount: evalResult.nextRetryCount,
+        reason: evalResult.reason
+      };
+    }
+    const prompt = buildSelfHealingPrompt(
+      response.errors || [],
+      cfg.repo,
+      cfg.branch,
+      state.headOid,
+      evalResult.nextRetryCount
+    );
+    injectPromptText(prompt, autoSubmit);
+    return {
+      triggered: true,
+      nextRetryCount: evalResult.nextRetryCount,
+      prompt,
+      reason: evalResult.reason
+    };
+  }
+
   // src/ui/hudRender.ts
   function renderHudState({ dom, state, config, updateState, onApplyPatch }) {
     dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
@@ -1919,6 +1720,385 @@ Fix Instructions:
     }
   }
 
+  // src/services/workerClient.ts
+  async function gmRequestJson(url, method, secret, body) {
+    const headers = {
+      "Accept": "application/json",
+      "Authorization": `Bearer ${secret}`,
+      "x-bridge-secret": secret
+    };
+    let payloadString;
+    if (body !== void 0) {
+      headers["Content-Type"] = "application/json";
+      payloadString = typeof body === "string" ? body : JSON.stringify(body);
+    }
+    if (typeof GM_xmlhttpRequest === "function") {
+      return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method,
+          url,
+          headers,
+          data: payloadString,
+          onload: (res) => {
+            try {
+              const data = JSON.parse(res.responseText);
+              if (res.status >= 200 && res.status < 300) {
+                resolve(data);
+              } else {
+                const errMsg = data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`;
+                reject(new Error(errMsg));
+              }
+            } catch (err) {
+              if (res.status >= 200 && res.status < 300) {
+                resolve(res.responseText);
+              } else {
+                reject(new Error(`HTTP ${res.status}: ${res.responseText}`));
+              }
+            }
+          },
+          onerror: (err) => {
+            reject(new Error(`Network error calling Cloudflare Worker: ${err?.statusText || err || "Unknown error"}`));
+          },
+          ontimeout: () => {
+            reject(new Error("Request to Cloudflare Worker timed out"));
+          }
+        });
+      });
+    }
+    if (typeof GM !== "undefined" && typeof GM.xmlHttpRequest === "function") {
+      const res = await GM.xmlHttpRequest({
+        method,
+        url,
+        headers,
+        data: payloadString
+      });
+      try {
+        const data = JSON.parse(res.responseText);
+        if (res.status >= 200 && res.status < 300) {
+          return data;
+        }
+        throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`);
+      } catch (e) {
+        if (res.status >= 200 && res.status < 300) {
+          return res.responseText;
+        }
+        throw e;
+      }
+    }
+    if (typeof fetch === "function") {
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: payloadString
+      });
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+      if (res.ok) {
+        return data;
+      }
+      throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${text}`);
+    }
+    throw new Error("No supported HTTP client found (GM_xmlhttpRequest, GM.xmlHttpRequest, or fetch)");
+  }
+  async function checkWorkerHealth(cfg) {
+    const url = `${cfg.workerUrl}/health`;
+    return gmRequestJson(url, "GET", cfg.workerSecret);
+  }
+  async function requestRepoMix(cfg, req) {
+    const url = `${cfg.workerUrl}/api/mix`;
+    const payload = {
+      repo: req?.repo || cfg.repo,
+      branch: req?.branch || cfg.branch,
+      includePaths: req?.includePaths || (cfg.includePaths.length > 0 ? cfg.includePaths : void 0),
+      persistToGitHub: req?.persistToGitHub ?? cfg.persistToGitHub,
+      maxChunkChars: req?.maxChunkChars ?? cfg.maxChunkChars,
+      maxChunkBytes: req?.maxChunkBytes,
+      maxChunkTokens: req?.maxChunkTokens,
+      splitOutput: req?.splitOutput,
+      includeRecentCommits: req?.includeRecentCommits ?? cfg.includeRecentCommits
+    };
+    return gmRequestJson(url, "POST", cfg.workerSecret, payload);
+  }
+  async function requestWorkerPatch(cfg, req) {
+    const url = `${cfg.workerUrl}/api/patch`;
+    return gmRequestJson(url, "POST", cfg.workerSecret, req);
+  }
+  var OID_REGEX2 = /^[0-9a-f]{40}$/i;
+  function parseRepoSlug(repo) {
+    const cleaned = (repo || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/^git@github\.com:/i, "").replace(/\.git$/i, "").replace(/\/+$/, "");
+    const parts = cleaned.split("/").filter(Boolean);
+    if (parts.length !== 2) {
+      throw new Error(`Invalid repository "${repo}": expected "owner/name".`);
+    }
+    return { owner: parts[0], name: parts[1] };
+  }
+  function buildBranchHeadRequestBody(repo, branch) {
+    const { owner, name } = parseRepoSlug(repo);
+    const branchName = (branch || "").trim().replace(/^refs\/heads\//, "");
+    if (!branchName) {
+      throw new Error("Cannot resolve a HEAD OID without a branch name.");
+    }
+    return {
+      query: "query BranchHead($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { ref(qualifiedName: $branch) { target { oid } } } }",
+      variables: { owner, repo: name, branch: `refs/heads/${branchName}` }
+    };
+  }
+  function extractBranchHeadOid(payload) {
+    const oid = payload?.data?.repository?.ref?.target?.oid;
+    return OID_REGEX2.test(String(oid || "")) ? String(oid) : "";
+  }
+  async function requestBranchHead(cfg, repo, branch) {
+    const body = buildBranchHeadRequestBody(repo, branch);
+    const payload = await gmRequestJson(
+      `${cfg.workerUrl}/graphql`,
+      "POST",
+      cfg.workerSecret,
+      body
+    );
+    const oid = extractBranchHeadOid(payload);
+    if (!oid) {
+      throw new Error(`Branch "${body.variables.branch}" was not found in ${body.variables.owner}/${body.variables.repo}.`);
+    }
+    return oid;
+  }
+  async function requestLegacyCommit(cfg, req) {
+    const url = `${cfg.workerUrl}/push`;
+    return gmRequestJson(url, "POST", cfg.workerSecret, req);
+  }
+
+  // src/ui/hudMixAction.ts
+  function bindMixAction({ dom, config, state, updateState }) {
+    dom.mixBtn.onclick = async () => {
+      try {
+        dom.mixBtn.disabled = true;
+        dom.mixBtn.style.opacity = "0.6";
+        updateState({
+          status: "MIXING",
+          statusMessage: `\u23F3 Streaming repo mix for ${config.repo} (${config.branch})...`
+        });
+        const res = await requestRepoMix(config);
+        if (res.status === "OK" && (res.parts?.length || res.xmlContent)) {
+          setSourceHeadOid(config, state, res.headOid);
+          state.lastMixStats = res.stats;
+          let injected = false;
+          const metaCommits = res.stats.recentCommitsCount ? ` (incl. ${res.stats.recentCommitsCount} recent commits, ${res.stats.volatileFilesCount ?? 0} volatile files)` : "";
+          if (res.parts && res.parts.length > 1) {
+            const partBreakdown = res.parts.map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`).join(", ");
+            injected = injectRepoMixParts(
+              res.parts.map((p) => ({ fileName: p.fileName, xmlContent: p.xmlContent }))
+            );
+            updateState({
+              status: "IDLE",
+              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+            });
+          } else {
+            injected = injectRepoMixFile(res.xmlContent);
+            const charLen = res.stats.charCount ?? res.xmlContent.length;
+            updateState({
+              status: "IDLE",
+              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
+            });
+          }
+        } else {
+          updateState({
+            status: "ERROR",
+            statusMessage: `\u274C Mix error: ${res.errorMessage || "Unknown error"}`
+          });
+        }
+      } catch (err) {
+        updateState({
+          status: "ERROR",
+          statusMessage: `\u274C Mix error: ${err.message || String(err)}`
+        });
+      } finally {
+        dom.mixBtn.disabled = false;
+        dom.mixBtn.style.opacity = "1";
+      }
+    };
+  }
+
+  // ../../shared/repoPaths.ts
+  function normalizeRepoPath(input) {
+    return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+  }
+  function findRepoPathIssue(input) {
+    const raw = (input || "").trim();
+    if (!raw) {
+      return 'Patch has no file path. Add a "// filepath: <repo/relative/path>" hint above the code block.';
+    }
+    const normalized = normalizeRepoPath(raw);
+    if (!normalized) {
+      return `Patch path "${raw}" does not point to a file inside the repository.`;
+    }
+    if (/^[a-zA-Z]:\//.test(normalized)) {
+      return `Patch path "${raw}" must be repo-relative (absolute drive paths are not allowed).`;
+    }
+    if (normalized.split("/").some((segment) => segment === ".." || segment === ".")) {
+      return `Patch path "${raw}" must be repo-relative and must not contain "." or ".." segments.`;
+    }
+    return null;
+  }
+
+  // src/services/patchPaths.ts
+  function resolvePatchPaths(payload, prompt) {
+    const patches = (payload.patches || []).map((patch) => ({
+      ...patch,
+      path: normalizeRepoPath(patch.path)
+    }));
+    const missing = patches.filter((patch) => findRepoPathIssue(patch.path) !== null);
+    for (let index = 0; index < missing.length; index++) {
+      const answer = prompt(index + 1, missing.length);
+      if (answer === null || answer === void 0) {
+        return {
+          payload,
+          cancelled: true,
+          reason: 'Patch cancelled \u2014 no file path provided. Add a "// filepath: src/your-file.ts" hint to the code block and harvest it again.'
+        };
+      }
+      const candidate = normalizeRepoPath(answer);
+      const issue = findRepoPathIssue(candidate);
+      if (issue) {
+        return { payload, cancelled: true, reason: issue };
+      }
+      missing[index].path = candidate;
+    }
+    return { payload: { ...payload, patches }, cancelled: false };
+  }
+
+  // src/ui/hudApplyPatch.ts
+  async function applyHudPatch(patch, { config, state, openPanel, updateState, onApplyPatchCustom }) {
+    if (onApplyPatchCustom) {
+      return onApplyPatchCustom(patch);
+    }
+    openPanel();
+    const resolvedPaths = resolvePatchPaths(patch.payload, (index, total) => {
+      if (typeof window === "undefined" || typeof window.prompt !== "function") {
+        return null;
+      }
+      return window.prompt(
+        `File path for patch ${index}/${total} (repo-relative, e.g. src/App.tsx):`,
+        ""
+      );
+    });
+    if (resolvedPaths.cancelled) {
+      updateState({
+        status: "ERROR",
+        statusMessage: `\u274C ${resolvedPaths.reason}`
+      });
+      return false;
+    }
+    const effectivePayload = resolvedPaths.payload;
+    state.harvestedPatches = state.harvestedPatches.map(
+      (entry) => entry.id === patch.id ? { ...entry, payload: effectivePayload } : entry
+    );
+    updateState({
+      status: "PATCHING",
+      statusMessage: `\u23F3 Applying patch: "${patch.commitMessage}"...`
+    });
+    const ownerMatch = classifyRepoOwner(config);
+    if (ownerMatch === "foreign") {
+      updateState({
+        status: "ERROR",
+        statusMessage: `\u274C Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden, aber Commits brauchen einen PAT f\xFCr diesen Owner.`
+      });
+      return false;
+    }
+    try {
+      if (!isPatchSnapshotReady(state)) {
+        updateState({
+          status: "PATCHING",
+          statusMessage: `\u{1F504} No snapshot OID \u2014 resolving current HEAD of ${config.repo}@${config.branch}...`
+        });
+        try {
+          const resolvedOid = await requestBranchHead(config, config.repo, config.branch);
+          setSourceHeadOid(config, state, resolvedOid);
+          updateState({
+            status: "PATCHING",
+            statusMessage: `\u{1F504} Using current ${config.branch} HEAD ${resolvedOid.slice(0, 7)} as concurrency token (no repo mix snapshot).`
+          });
+        } catch (resolveErr) {
+          throw new Error(
+            `${patchSnapshotRequiredMessage(config, patch.commitMessage)} (HEAD lookup failed: ${resolveErr.message || String(resolveErr)})`
+          );
+        }
+      }
+      if (state.headOid) {
+        const patchReq = buildWorkerPatchRequest(config, state, effectivePayload);
+        const res = await requestWorkerPatch(config, patchReq);
+        if (res.status === "COMMITTED") {
+          state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
+          applyPatchResponseOids(config, state, res);
+          const branchLabel = res.targetBranch || config.branch;
+          const prMsg = res.pullRequestUrl ? ` | \u{1F517} PR: ${res.pullRequestUrl}` : "";
+          updateState({
+            status: "COMMITTED",
+            statusMessage: `\u2705 Committed to ${branchLabel}: ${res.newHeadOid ? res.newHeadOid.slice(0, 7) : "OK"} (${patch.commitMessage})${prMsg}`,
+            retryCount: 0,
+            lastErrors: []
+          });
+          return true;
+        }
+        if (res.status === "PREFLIGHT_FAILED") {
+          const selfHealingResult = executeSelfHealingTurn(res, config, state, true);
+          if (selfHealingResult.triggered) {
+            updateState({
+              status: "PREFLIGHT_FAILED",
+              statusMessage: `\u26A0\uFE0F Preflight failed. \u{1F916} Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
+              retryCount: selfHealingResult.nextRetryCount,
+              lastErrors: res.errors || []
+            });
+          } else {
+            const reasonMsg = selfHealingResult.reason === "MAX_RETRIES_EXCEEDED" ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.` : "Auto-pilot disabled.";
+            updateState({
+              status: "PREFLIGHT_FAILED",
+              statusMessage: `\u274C Preflight failed. ${reasonMsg} Review errors below or trigger manual retry.`,
+              retryCount: selfHealingResult.nextRetryCount,
+              lastErrors: res.errors || []
+            });
+          }
+          return false;
+        }
+        if (res.status === "GIT_CONFLICT" || res.status === "ERROR") {
+          const scopeHint = res.status === "GIT_CONFLICT" ? ` [validated ${config.repo}@${config.branch}]` : "";
+          const resetScope = resolveConflictOidReset(res);
+          if (resetScope === "source") {
+            clearPatchOidState(state);
+          } else if (resetScope === "target") {
+            clearTargetOidState(state);
+          }
+          const recoveryHint = resetScope === "source" ? ' Stale snapshot OID discarded \u2014 click "Load Repo Mix" to mix the current HEAD, then retry.' : resetScope === "target" ? ` Target OID discarded \u2014 retry to commit on the current "${config.targetBranch}" HEAD.` : "";
+          updateState({
+            status: res.status,
+            statusMessage: `\u274C ${res.status}: ${res.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}${recoveryHint}`,
+            lastErrors: res.errors || []
+          });
+          return false;
+        }
+        if (res.status === "NO_CHANGES_NEEDED") {
+          state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
+          applyPatchResponseOids(config, state, res);
+          updateState({
+            status: "IDLE",
+            statusMessage: `\u2139\uFE0F No changes needed (idempotent patch).`
+          });
+          return true;
+        }
+      }
+      throw new Error(patchSnapshotRequiredMessage(config, patch.commitMessage));
+    } catch (err) {
+      updateState({
+        status: "ERROR",
+        statusMessage: `\u274C Patch error: ${err.message || String(err)}`
+      });
+      return false;
+    }
+  }
+
   // src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
@@ -1984,180 +2164,19 @@ Fix Instructions:
     });
     const applyAccountSwitch = bindAccountSwitch({ dom, config, state, resetPatchOidState, renderState });
     applyAccountSwitch();
-    dom.mixBtn.onclick = async () => {
-      try {
-        dom.mixBtn.disabled = true;
-        dom.mixBtn.style.opacity = "0.6";
-        controller.updateState({
-          status: "MIXING",
-          statusMessage: `\u23F3 Streaming repo mix for ${config.repo} (${config.branch})...`
-        });
-        const res = await requestRepoMix(config);
-        if (res.status === "OK" && (res.parts?.length || res.xmlContent)) {
-          setSourceHeadOid(config, state, res.headOid);
-          state.lastMixStats = res.stats;
-          let injected = false;
-          const metaCommits = res.stats.recentCommitsCount ? ` (incl. ${res.stats.recentCommitsCount} recent commits, ${res.stats.volatileFilesCount ?? 0} volatile files)` : "";
-          if (res.parts && res.parts.length > 1) {
-            const partBreakdown = res.parts.map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`).join(", ");
-            injected = injectRepoMixParts(
-              res.parts.map((p) => ({ fileName: p.fileName, xmlContent: p.xmlContent }))
-            );
-            controller.updateState({
-              status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
-            });
-          } else {
-            injected = injectRepoMixFile(res.xmlContent);
-            const charLen = res.stats.charCount ?? res.xmlContent.length;
-            controller.updateState({
-              status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}`
-            });
-          }
-        } else {
-          controller.updateState({
-            status: "ERROR",
-            statusMessage: `\u274C Mix error: ${res.errorMessage || "Unknown error"}`
-          });
-        }
-      } catch (err) {
-        controller.updateState({
-          status: "ERROR",
-          statusMessage: `\u274C Mix error: ${err.message || String(err)}`
-        });
-      } finally {
-        dom.mixBtn.disabled = false;
-        dom.mixBtn.style.opacity = "1";
-      }
-    };
-    const handleApplyPatch = async (patch) => {
-      if (onApplyPatchCustom) {
-        return onApplyPatchCustom(patch);
-      }
-      controller.openPanel();
-      const resolvedPaths = resolvePatchPaths(patch.payload, (index, total) => {
-        if (typeof window === "undefined" || typeof window.prompt !== "function") {
-          return null;
-        }
-        return window.prompt(
-          `File path for patch ${index}/${total} (repo-relative, e.g. src/App.tsx):`,
-          ""
-        );
-      });
-      if (resolvedPaths.cancelled) {
-        controller.updateState({
-          status: "ERROR",
-          statusMessage: `\u274C ${resolvedPaths.reason}`
-        });
-        return false;
-      }
-      const effectivePayload = resolvedPaths.payload;
-      state.harvestedPatches = state.harvestedPatches.map(
-        (entry) => entry.id === patch.id ? { ...entry, payload: effectivePayload } : entry
-      );
-      controller.updateState({
-        status: "PATCHING",
-        statusMessage: `\u23F3 Applying patch: "${patch.commitMessage}"...`
-      });
-      const ownerMatch = classifyRepoOwner(config);
-      if (ownerMatch === "foreign") {
-        controller.updateState({
-          status: "ERROR",
-          statusMessage: `\u274C Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden, aber Commits brauchen einen PAT f\xFCr diesen Owner.`
-        });
-        return false;
-      }
-      try {
-        if (!isPatchSnapshotReady(state)) {
-          controller.updateState({
-            status: "PATCHING",
-            statusMessage: `\u{1F504} No snapshot OID \u2014 resolving current HEAD of ${config.repo}@${config.branch}...`
-          });
-          try {
-            const resolvedOid = await requestBranchHead(config, config.repo, config.branch);
-            setSourceHeadOid(config, state, resolvedOid);
-            controller.updateState({
-              status: "PATCHING",
-              statusMessage: `\u{1F504} Using current ${config.branch} HEAD ${resolvedOid.slice(0, 7)} as concurrency token (no repo mix snapshot).`
-            });
-          } catch (resolveErr) {
-            throw new Error(
-              `${patchSnapshotRequiredMessage(config, patch.commitMessage)} (HEAD lookup failed: ${resolveErr.message || String(resolveErr)})`
-            );
-          }
-        }
-        if (state.headOid) {
-          const patchReq = buildWorkerPatchRequest(config, state, effectivePayload);
-          const res = await requestWorkerPatch(config, patchReq);
-          if (res.status === "COMMITTED") {
-            state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
-            applyPatchResponseOids(config, state, res);
-            const branchLabel = res.targetBranch || config.branch;
-            const prMsg = res.pullRequestUrl ? ` | \u{1F517} PR: ${res.pullRequestUrl}` : "";
-            controller.updateState({
-              status: "COMMITTED",
-              statusMessage: `\u2705 Committed to ${branchLabel}: ${res.newHeadOid ? res.newHeadOid.slice(0, 7) : "OK"} (${patch.commitMessage})${prMsg}`,
-              retryCount: 0,
-              lastErrors: []
-            });
-            return true;
-          }
-          if (res.status === "PREFLIGHT_FAILED") {
-            const selfHealingResult = executeSelfHealingTurn(res, config, state, true);
-            if (selfHealingResult.triggered) {
-              controller.updateState({
-                status: "PREFLIGHT_FAILED",
-                statusMessage: `\u26A0\uFE0F Preflight failed. \u{1F916} Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
-                retryCount: selfHealingResult.nextRetryCount,
-                lastErrors: res.errors || []
-              });
-            } else {
-              const reasonMsg = selfHealingResult.reason === "MAX_RETRIES_EXCEEDED" ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.` : "Auto-pilot disabled.";
-              controller.updateState({
-                status: "PREFLIGHT_FAILED",
-                statusMessage: `\u274C Preflight failed. ${reasonMsg} Review errors below or trigger manual retry.`,
-                retryCount: selfHealingResult.nextRetryCount,
-                lastErrors: res.errors || []
-              });
-            }
-            return false;
-          }
-          if (res.status === "GIT_CONFLICT" || res.status === "ERROR") {
-            const scopeHint = res.status === "GIT_CONFLICT" ? ` [validated ${config.repo}@${config.branch}]` : "";
-            const resetScope = resolveConflictOidReset(res);
-            if (resetScope === "source") {
-              clearPatchOidState(state);
-            } else if (resetScope === "target") {
-              clearTargetOidState(state);
-            }
-            const recoveryHint = resetScope === "source" ? ' Stale snapshot OID discarded \u2014 click "Load Repo Mix" to mix the current HEAD, then retry.' : resetScope === "target" ? ` Target OID discarded \u2014 retry to commit on the current "${config.targetBranch}" HEAD.` : "";
-            controller.updateState({
-              status: res.status,
-              statusMessage: `\u274C ${res.status}: ${res.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}${recoveryHint}`,
-              lastErrors: res.errors || []
-            });
-            return false;
-          }
-          if (res.status === "NO_CHANGES_NEEDED") {
-            state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
-            applyPatchResponseOids(config, state, res);
-            controller.updateState({
-              status: "IDLE",
-              statusMessage: `\u2139\uFE0F No changes needed (idempotent patch).`
-            });
-            return true;
-          }
-        }
-        throw new Error(patchSnapshotRequiredMessage(config, patch.commitMessage));
-      } catch (err) {
-        controller.updateState({
-          status: "ERROR",
-          statusMessage: `\u274C Patch error: ${err.message || String(err)}`
-        });
-        return false;
-      }
-    };
+    bindMixAction({
+      dom,
+      config,
+      state,
+      updateState: (partial) => controller.updateState(partial)
+    });
+    const handleApplyPatch = (patch) => applyHudPatch(patch, {
+      config,
+      state,
+      openPanel,
+      updateState: (partial) => controller.updateState(partial),
+      onApplyPatchCustom
+    });
     dom.clearQueueBtn.onclick = () => {
       state.harvestedPatches = [];
       renderState();
