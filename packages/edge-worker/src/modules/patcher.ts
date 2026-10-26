@@ -106,21 +106,6 @@ export async function handlePatchRequest(
     return { status: 'ERROR', errorMessage: 'expectedTargetHeadOid must be a 40-character Git commit OID.' };
   }
 
-  // Verify the source snapshot even when the patch will be committed elsewhere.
-  let sourceInfo;
-  try {
-    sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
-  } catch (err: any) {
-    return { status: 'ERROR', errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
-  }
-  if (sourceInfo.headOid !== req.expectedHeadOid) {
-    return {
-      status: 'GIT_CONFLICT',
-      newHeadOid: sourceInfo.headOid,
-      errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
-    };
-  }
-
   // LLM-supplied paths routinely carry "./", a leading "/" or Windows separators.
   // GitHub resolves `<oid>:<path>` strictly, so every non-canonical variant reads as
   // "file does not exist". Normalize once here so blob lookup, in-memory patch and
@@ -142,6 +127,58 @@ export async function handlePatchRequest(
   }
   if (pathErrors.length > 0) {
     return { status: 'PREFLIGHT_FAILED', errors: pathErrors };
+  }
+
+  const allTargetPaths = Array.from(new Set(patches.map((p) => p.path)));
+
+  // Same-branch patches need no separate target resolution, so the source HEAD
+  // check and the blob read are dispatched together. The HEAD result still gates
+  // every mutation: a stale OID returns before applyPatchesInMemory runs.
+  let sourceInfo: Awaited<ReturnType<typeof getBranchHeadOid>>;
+  let prefetchedFiles: Record<string, string | null> | undefined;
+  if (!isDistinctTarget) {
+    const headPromise = getBranchHeadOid(owner, repo, baseBranch, githubToken);
+    const filesPromise = fetchMultipleFilesViaGraphQL(
+      owner,
+      repo,
+      req.expectedHeadOid,
+      allTargetPaths,
+      githubToken
+    );
+    // A stale source OID aborts before the blob read is awaited; keep a rejection
+    // from surfacing as an unhandled promise rejection.
+    filesPromise.catch(() => undefined);
+    try {
+      sourceInfo = await headPromise;
+    } catch (err: any) {
+      return { status: 'ERROR', errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+    }
+    if (sourceInfo.headOid !== req.expectedHeadOid) {
+      return {
+        status: 'GIT_CONFLICT',
+        newHeadOid: sourceInfo.headOid,
+        errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
+      };
+    }
+    try {
+      prefetchedFiles = await filesPromise;
+    } catch (err: any) {
+      return { status: 'ERROR', errorMessage: `Batch fetch failed for target files: ${err.message}` };
+    }
+  } else {
+    // Verify the source snapshot even when the patch will be committed elsewhere.
+    try {
+      sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
+    } catch (err: any) {
+      return { status: 'ERROR', errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+    }
+    if (sourceInfo.headOid !== req.expectedHeadOid) {
+      return {
+        status: 'GIT_CONFLICT',
+        newHeadOid: sourceInfo.headOid,
+        errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
+      };
+    }
   }
 
   // Resolve/create the actual commit branch before reading any files.
@@ -168,8 +205,15 @@ export async function handlePatchRequest(
       }
 
       try {
-        await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
+        const createdRef = await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
         createdBranch = true;
+        // The new ref points at the validated source OID, so its initial tree
+        // is exactly that commit — no second resolution roundtrip is needed.
+        targetInfo = {
+          headOid: createdRef.oid || req.expectedHeadOid,
+          resolvedBranch: normalizeBranch(effectiveTargetBranch),
+          repositoryId: sourceInfo.repositoryId
+        };
       } catch (createErr: any) {
         // A concurrent creator may win after the initial not-found lookup. Only
         // continue if a fresh lookup confirms that the branch now exists.
@@ -179,16 +223,6 @@ export async function handlePatchRequest(
           return {
             status: 'ERROR',
             errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
-          };
-        }
-      }
-      if (createdBranch) {
-        try {
-          targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
-        } catch (resolveErr: any) {
-          return {
-            status: 'ERROR',
-            errorMessage: `Target branch "${effectiveTargetBranch}" was created but could not be resolved: ${resolveErr.message}`
           };
         }
       }
@@ -208,12 +242,21 @@ export async function handlePatchRequest(
   const commitExpectedHeadOid = targetInfo.headOid;
 
   // Apply patches to the exact branch snapshot that will receive the commit.
-  const allTargetPaths = Array.from(new Set(patches.map((p) => p.path)));
-  let existingFiles: Record<string, string | null> = {};
-  try {
-    existingFiles = await fetchMultipleFilesViaGraphQL(owner, repo, commitExpectedHeadOid, allTargetPaths, githubToken);
-  } catch (err: any) {
-    return { status: 'ERROR', errorMessage: `Batch fetch failed for target files: ${err.message}` };
+  let existingFiles: Record<string, string | null>;
+  if (prefetchedFiles !== undefined) {
+    existingFiles = prefetchedFiles;
+  } else {
+    try {
+      existingFiles = await fetchMultipleFilesViaGraphQL(
+        owner,
+        repo,
+        commitExpectedHeadOid,
+        allTargetPaths,
+        githubToken
+      );
+    } catch (err: any) {
+      return { status: 'ERROR', errorMessage: `Batch fetch failed for target files: ${err.message}` };
+    }
   }
 
   const patchResult = await applyPatchesInMemory(

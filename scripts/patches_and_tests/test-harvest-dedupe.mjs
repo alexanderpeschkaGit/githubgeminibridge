@@ -1,19 +1,21 @@
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { loadHarvesterModules, loadPatchQueueModules } from './harvester-modules.mjs';
+import { loadBatchFormulaModule, loadHarvesterModules, loadPatchQueueModules } from './harvester-modules.mjs';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 async function loadModules() {
   const modules = await loadHarvesterModules(ROOT_DIR);
   const queue = await loadPatchQueueModules(ROOT_DIR);
+  const formula = await loadBatchFormulaModule(ROOT_DIR);
   return {
     canonicalize: modules.canonicalize,
     computePatchSignature: modules.computePatchSignature,
     createStablePatchId: modules.createStablePatchId,
     startDomHarvester: modules.startDomHarvester,
     ...queue,
+    ...formula,
   };
 }
 
@@ -280,6 +282,8 @@ const {
   removeHarvestedPatch,
   fifoQueue,
   runPatchQueue,
+  coalescePatchesIntoBatch,
+  buildBatchFormulaPrompt,
   MAX_QUEUED_PATCHES,
 } = await loadModules();
 
@@ -522,6 +526,87 @@ const {
   assert.equal(run.total, 2, 'total reflects the queue length at start');
 }
 
+{
+  const makeBatchPatch = (id, pathName, commitMessage, preflight) => ({
+    id,
+    mode: 'v2_json',
+    commitMessage,
+    payload: {
+      commitMessage,
+      patches: [{ path: pathName, action: 'modify', blocks: [{ search: 'a', replace: 'b' }] }],
+      ...(preflight ? { preflight } : {}),
+    },
+    timestamp: '',
+  });
+
+  const first = makeBatchPatch('batch-a', 'src/a.ts', 'feat: a', {
+    forbidPatterns: ['console\\.log', ': any'],
+    requireExports: { 'src/a.ts': ['useAuth'] },
+  });
+  const second = makeBatchPatch('batch-b', 'src/b.ts', 'feat: b', {
+    forbidPatterns: [': any', 'debugger'],
+    requireExports: { 'src/a.ts': ['useAuth', 'init'], 'src/b.ts': ['helper'] },
+  });
+
+  let batchQueue = [];
+  batchQueue = enqueueHarvestedPatch(batchQueue, first);
+  batchQueue = enqueueHarvestedPatch(batchQueue, second);
+
+  const batch = coalescePatchesIntoBatch(batchQueue);
+  assert.ok(batch, 'a two-entry queue coalesces into one atomic batch');
+  assert.deepEqual(
+    batch.payload.patches.map((operation) => operation.path),
+    ['src/a.ts', 'src/b.ts'],
+    'the coalesced batch keeps FIFO order'
+  );
+  assert.equal(batch.payload.patches.length, 2, 'the batch carries one operation per queued patch');
+  assert.deepEqual(
+    batch.payload.preflight.forbidPatterns,
+    ['console\\.log', ': any', 'debugger'],
+    'forbidPatterns merge without duplicates'
+  );
+  assert.deepEqual(
+    batch.payload.preflight.requireExports,
+    { 'src/a.ts': ['useAuth', 'init'], 'src/b.ts': ['helper'] },
+    'requireExports merge per file'
+  );
+  assert.equal(
+    batch.commitMessage,
+    'batch: feat: a | feat: b',
+    'the consolidated commit message keeps FIFO messages'
+  );
+  assert.equal(
+    batch.id,
+    createStablePatchId('v2_json', batch.payload),
+    'the batch id stays content-derived'
+  );
+
+  assert.equal(coalescePatchesIntoBatch([first]), null, 'a single patch is not coalesced');
+  const unresolved = makeBatchPatch('batch-c', '', 'feat: c');
+  assert.equal(
+    coalescePatchesIntoBatch([unresolved, second]),
+    null,
+    'an unresolved path disables atomic coalescing'
+  );
+
+  const formula = buildBatchFormulaPrompt(
+    {
+      repo: 'owner/repo',
+      branch: 'main',
+      targetBranch: 'preview',
+      includePaths: ['src/', 'packages/edge-worker/'],
+    },
+    { headOid: '1234567890abcdef1234567890abcdef12345678' }
+  );
+  assert.match(formula, /owner\/repo@preview/, 'the formula names the active repo and target branch');
+  assert.ok(formula.includes('base headOid: 1234567'), 'the formula grounds the model in the snapshot head');
+  assert.ok(formula.includes('src/, packages/edge-worker/'), 'the formula carries the active path scope');
+  assert.ok(formula.includes('SINGLE atomic V2 GeminiPatchPayload'), 'the formula demands one atomic payload');
+  assert.ok(formula.includes('exactly ONE ```json block'), 'the formula caps output to one JSON block');
+  assert.ok(formula.includes('at most ONCE'), 'the formula forbids duplicate file entries');
+  assert.ok(formula.includes('NEVER use placeholders'), 'the formula repeats the placeholder ban');
+}
+
 console.log(
-  'Harvest dedupe: PASS (stable content ids, one emission per code block, re-renders and repeated scans produce no duplicate queue entries, FIFO queue dedupes by id and payload)'
+  'Harvest dedupe: PASS (stable content ids, one emission per code block, re-renders and repeated scans produce no duplicate queue entries, FIFO queue dedupes by id and payload, atomic batch coalescing and Batch Formula prompt stay in contract)'
 );

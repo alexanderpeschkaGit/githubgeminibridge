@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.16
+// @version      2.0.17
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -433,6 +433,50 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   }
   function fifoQueue(queue) {
     return [...queue].reverse();
+  }
+  function coalescePatchesIntoBatch(queue) {
+    const ordered = fifoQueue(queue);
+    if (ordered.length < 2) return null;
+    const patches = [];
+    const forbidPatterns = [];
+    const requireExports = {};
+    const commitMessages = [];
+    for (const entry of ordered) {
+      const operations = entry.payload?.patches ?? [];
+      if (operations.length === 0) return null;
+      for (const operation of operations) {
+        if (!operation.path || !operation.path.trim()) return null;
+        patches.push(operation);
+      }
+      for (const pattern of entry.payload.preflight?.forbidPatterns ?? []) {
+        if (!forbidPatterns.includes(pattern)) forbidPatterns.push(pattern);
+      }
+      for (const [filePath, symbols] of Object.entries(entry.payload.preflight?.requireExports ?? {})) {
+        const merged = requireExports[filePath] ?? [];
+        for (const symbol of symbols) {
+          if (!merged.includes(symbol)) merged.push(symbol);
+        }
+        requireExports[filePath] = merged;
+      }
+      if (entry.commitMessage) commitMessages.push(entry.commitMessage);
+    }
+    if (patches.length === 0) return null;
+    const payload = {
+      commitMessage: `batch: ${commitMessages.join(" | ") || `${ordered.length} harvested patches`}`,
+      patches
+    };
+    if (forbidPatterns.length > 0 || Object.keys(requireExports).length > 0) {
+      payload.preflight = {};
+      if (forbidPatterns.length > 0) payload.preflight.forbidPatterns = forbidPatterns;
+      if (Object.keys(requireExports).length > 0) payload.preflight.requireExports = requireExports;
+    }
+    return {
+      id: createStablePatchId("v2_json", payload),
+      mode: "v2_json",
+      commitMessage: payload.commitMessage,
+      payload,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    };
   }
   async function runPatchQueue(queue, apply, onProgress) {
     const ordered = fifoQueue(queue);
@@ -906,6 +950,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     const mixBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u{1F4E6} Load Repo Mix (/api/mix)");
     mixBtn.style.flex = "1";
     actionRow.appendChild(mixBtn);
+    const batchFormulaBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F9E9} Batch Formula");
+    batchFormulaBtn.title = "Insert optimal V2 integratable batch prompt formula into chat";
+    actionRow.appendChild(batchFormulaBtn);
     body.appendChild(actionRow);
     const optRow = createHudElement("div");
     optRow.style.cssText = "display: flex; align-items: center; justify-content: space-between;";
@@ -980,6 +1027,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       maxChunkCharsInput,
       oidBadge,
       mixBtn,
+      batchFormulaBtn,
       autoPilotCheck,
       recentCommitsCheck,
       retryIndicator,
@@ -1889,6 +1937,25 @@ Fix Instructions:
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
 
+  // src/services/batchFormula.ts
+  function buildBatchFormulaPrompt(config, state) {
+    const branchLabel = config.targetBranch?.trim() || config.branch || "main";
+    const headLabel = state.headOid ? ` (base headOid: ${state.headOid.slice(0, 7)})` : "";
+    const scopeLabel = config.includePaths?.length ? `
+- Active path scope: ${config.includePaths.join(", ")}` : "";
+    return [
+      `Output all code changes for this batch as a SINGLE atomic V2 GeminiPatchPayload JSON code block targeting ${config.repo}@${branchLabel}${headLabel}.${scopeLabel}`,
+      "Batch Integration Rules:",
+      '1. Emit exactly ONE ```json block with top-level keys "commitMessage" and "patches" (do NOT include worker request fields like branch or expectedHeadOid).',
+      '2. Consolidate edits so each file path appears at most ONCE in "patches":',
+      '   - Existing files: { "path": "repo/relative/path.ts", "action": "modify", "blocks": [{ "search": "...", "replace": "..." }] }',
+      '   - New files: { "path": "repo/relative/new.ts", "action": "create", "fullContent": "..." }',
+      '   - Deleted files: { "path": "repo/relative/old.ts", "action": "delete" }',
+      '3. Every "search" string MUST include 2-4 lines of unique verbatim surrounding context from the RepoMix snapshot.',
+      '4. NEVER use placeholders ("// ... existing code ...", "/* rest unchanged */") or unclosed brackets/JSX tags.'
+    ].join("\n");
+  }
+
   // src/ui/hudMixAction.ts
   function bindMixAction({ dom, config, state, updateState }) {
     dom.mixBtn.onclick = async () => {
@@ -1941,6 +2008,12 @@ Fix Instructions:
         dom.mixBtn.disabled = false;
         dom.mixBtn.style.opacity = "1";
       }
+    };
+    dom.batchFormulaBtn.onclick = () => {
+      const injected = injectPromptText(buildBatchFormulaPrompt(config, state), false);
+      updateState({
+        statusMessage: injected ? "\u{1F4CB} Injected optimal V2 Batch Formula into chat prompt." : "\u274C Could not find the chat prompt input to inject the Batch Formula."
+      });
     };
   }
 
@@ -2205,6 +2278,26 @@ Fix Instructions:
     };
     dom.applyAllBtn.onclick = async () => {
       if (state.harvestedPatches.length === 0 || state.status === "PATCHING" || state.status === "MIXING") return;
+      if (state.harvestedPatches.length > 1) {
+        const batch = coalescePatchesIntoBatch(state.harvestedPatches);
+        if (batch) {
+          const total2 = state.harvestedPatches.length;
+          const fileCount = new Set(batch.payload.patches.map((entry) => entry.path)).size;
+          controller.updateState({
+            status: "PATCHING",
+            statusMessage: `\u23F3 Applying atomic batch of ${total2} patches across ${fileCount} file(s) in 1 commit...`
+          });
+          const committed = await handleApplyPatch(batch);
+          if (committed) {
+            state.harvestedPatches = [];
+            controller.updateState({
+              status: "COMMITTED",
+              statusMessage: `\u{1F389} Atomic batch (${total2} patches across ${fileCount} files) committed in 1 commit!`
+            });
+          }
+          return;
+        }
+      }
       const { applied, total } = await runPatchQueue(
         state.harvestedPatches,
         handleApplyPatch,

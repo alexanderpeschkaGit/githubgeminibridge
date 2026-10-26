@@ -231,17 +231,28 @@ async function fetchMultipleFilesViaGraphQL(arg1, arg2, arg3, arg4, arg5) {
   if (!repoObj) {
     throw new Error(`Repository "${owner}/${repo}" was not found or is not accessible.`);
   }
+  const MAX_TRUNCATED_FETCH_CONCURRENCY = 6;
+  const truncatedPaths = [];
   for (let idx = 0; idx < uniquePaths.length; idx++) {
     const p = uniquePaths[idx];
     const blob = repoObj[`f${idx}`];
     if (!blob) {
       result[p] = null;
     } else if (blob.isTruncated) {
-      result[p] = await fetchFileContent(owner, repo, branch, p, token);
+      truncatedPaths.push(p);
     } else {
       result[p] = typeof blob.text === "string" ? blob.text : null;
     }
   }
+  let nextTruncatedIndex = 0;
+  const workerCount = Math.min(MAX_TRUNCATED_FETCH_CONCURRENCY, truncatedPaths.length);
+  const fallbackWorkers = Array.from({ length: workerCount }, async () => {
+    while (nextTruncatedIndex < truncatedPaths.length) {
+      const path = truncatedPaths[nextTruncatedIndex++];
+      result[path] = await fetchFileContent(owner, repo, branch, path, token);
+    }
+  });
+  await Promise.all(fallbackWorkers);
   return result;
 }
 
@@ -1184,19 +1195,6 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
   if (req.expectedTargetHeadOid !== void 0 && (typeof req.expectedTargetHeadOid !== "string" || !/^[0-9a-f]{40}$/i.test(req.expectedTargetHeadOid))) {
     return { status: "ERROR", errorMessage: "expectedTargetHeadOid must be a 40-character Git commit OID." };
   }
-  let sourceInfo;
-  try {
-    sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
-  } catch (err) {
-    return { status: "ERROR", errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
-  }
-  if (sourceInfo.headOid !== req.expectedHeadOid) {
-    return {
-      status: "GIT_CONFLICT",
-      newHeadOid: sourceInfo.headOid,
-      errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
-    };
-  }
   const patches = [];
   const pathErrors = [];
   for (const patch of req.payload.patches) {
@@ -1213,6 +1211,50 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
   }
   if (pathErrors.length > 0) {
     return { status: "PREFLIGHT_FAILED", errors: pathErrors };
+  }
+  const allTargetPaths = Array.from(new Set(patches.map((p) => p.path)));
+  let sourceInfo;
+  let prefetchedFiles;
+  if (!isDistinctTarget) {
+    const headPromise = getBranchHeadOid(owner, repo, baseBranch, githubToken);
+    const filesPromise = fetchMultipleFilesViaGraphQL(
+      owner,
+      repo,
+      req.expectedHeadOid,
+      allTargetPaths,
+      githubToken
+    );
+    filesPromise.catch(() => void 0);
+    try {
+      sourceInfo = await headPromise;
+    } catch (err) {
+      return { status: "ERROR", errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+    }
+    if (sourceInfo.headOid !== req.expectedHeadOid) {
+      return {
+        status: "GIT_CONFLICT",
+        newHeadOid: sourceInfo.headOid,
+        errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
+      };
+    }
+    try {
+      prefetchedFiles = await filesPromise;
+    } catch (err) {
+      return { status: "ERROR", errorMessage: `Batch fetch failed for target files: ${err.message}` };
+    }
+  } else {
+    try {
+      sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
+    } catch (err) {
+      return { status: "ERROR", errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+    }
+    if (sourceInfo.headOid !== req.expectedHeadOid) {
+      return {
+        status: "GIT_CONFLICT",
+        newHeadOid: sourceInfo.headOid,
+        errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
+      };
+    }
   }
   let targetInfo = sourceInfo;
   let createdBranch = false;
@@ -1236,8 +1278,13 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
         };
       }
       try {
-        await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
+        const createdRef = await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
         createdBranch = true;
+        targetInfo = {
+          headOid: createdRef.oid || req.expectedHeadOid,
+          resolvedBranch: normalizeBranch(effectiveTargetBranch),
+          repositoryId: sourceInfo.repositoryId
+        };
       } catch (createErr) {
         try {
           targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
@@ -1245,16 +1292,6 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
           return {
             status: "ERROR",
             errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
-          };
-        }
-      }
-      if (createdBranch) {
-        try {
-          targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
-        } catch (resolveErr) {
-          return {
-            status: "ERROR",
-            errorMessage: `Target branch "${effectiveTargetBranch}" was created but could not be resolved: ${resolveErr.message}`
           };
         }
       }
@@ -1270,12 +1307,21 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
   }
   const commitBranch = targetInfo.resolvedBranch;
   const commitExpectedHeadOid = targetInfo.headOid;
-  const allTargetPaths = Array.from(new Set(patches.map((p) => p.path)));
-  let existingFiles = {};
-  try {
-    existingFiles = await fetchMultipleFilesViaGraphQL(owner, repo, commitExpectedHeadOid, allTargetPaths, githubToken);
-  } catch (err) {
-    return { status: "ERROR", errorMessage: `Batch fetch failed for target files: ${err.message}` };
+  let existingFiles;
+  if (prefetchedFiles !== void 0) {
+    existingFiles = prefetchedFiles;
+  } else {
+    try {
+      existingFiles = await fetchMultipleFilesViaGraphQL(
+        owner,
+        repo,
+        commitExpectedHeadOid,
+        allTargetPaths,
+        githubToken
+      );
+    } catch (err) {
+      return { status: "ERROR", errorMessage: `Batch fetch failed for target files: ${err.message}` };
+    }
   }
   const patchResult = await applyPatchesInMemory2(
     patches,

@@ -12,6 +12,7 @@ import {
   loadPatchOidState,
 } from '../services/patchOidStore';
 import {
+  coalescePatchesIntoBatch,
   enqueueHarvestedPatch,
   runPatchQueue,
 } from '../services/patchQueue';
@@ -143,6 +144,30 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
   dom.applyAllBtn.onclick = async () => {
     if (state.harvestedPatches.length === 0 || state.status === 'PATCHING' || state.status === 'MIXING') return;
+
+    // One atomic commit for the whole queue: all patches are linted together and
+    // a preflight failure leaves the individual queue entries untouched.
+    if (state.harvestedPatches.length > 1) {
+      const batch = coalescePatchesIntoBatch(state.harvestedPatches);
+      if (batch) {
+        const total = state.harvestedPatches.length;
+        const fileCount = new Set(batch.payload.patches.map((entry) => entry.path)).size;
+        controller.updateState({
+          status: 'PATCHING',
+          statusMessage: `⏳ Applying atomic batch of ${total} patches across ${fileCount} file(s) in 1 commit...`,
+        });
+
+        const committed = await handleApplyPatch(batch);
+        if (committed) {
+          state.harvestedPatches = [];
+          controller.updateState({
+            status: 'COMMITTED',
+            statusMessage: `🎉 Atomic batch (${total} patches across ${fileCount} files) committed in 1 commit!`,
+          });
+        }
+        return;
+      }
+    }
 
     const { applied, total } = await runPatchQueue(
       state.harvestedPatches,

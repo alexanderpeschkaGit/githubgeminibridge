@@ -814,7 +814,7 @@ async function main() {
     const types = fs.readFileSync(path.join(ROOT_DIR, 'shared/types.ts'), 'utf-8');
     const hudState = fs.readFileSync(path.join(ROOT_DIR, 'packages/userscript-hud/src/services/patchOidState.ts'), 'utf-8');
     const sourceFreshness = patcher.includes('sourceInfo.headOid !== req.expectedHeadOid');
-    const targetSnapshotRead = patcher.includes('fetchMultipleFilesViaGraphQL(owner, repo, commitExpectedHeadOid, allTargetPaths');
+    const targetSnapshotRead = /fetchMultipleFilesViaGraphQL\(\s*owner,\s*repo,\s*commitExpectedHeadOid,\s*allTargetPaths/.test(patcher);
     const exactTargetCommit = patcher.includes('commitExpectedHeadOid = targetInfo.headOid') &&
       patcher.includes('commitBranch,\n      commitExpectedHeadOid,');
     const notFoundIsSpecific = patcher.includes('err instanceof BranchNotFoundError');

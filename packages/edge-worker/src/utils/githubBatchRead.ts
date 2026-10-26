@@ -104,17 +104,32 @@ export async function fetchMultipleFilesViaGraphQL(
     throw new Error(`Repository "${owner}/${repo}" was not found or is not accessible.`);
   }
 
+  const MAX_TRUNCATED_FETCH_CONCURRENCY = 6;
+  const truncatedPaths: string[] = [];
+
   for (let idx = 0; idx < uniquePaths.length; idx++) {
     const p = uniquePaths[idx];
     const blob = repoObj[`f${idx}`];
     if (!blob) {
       result[p] = null;
     } else if (blob.isTruncated) {
-      result[p] = await fetchFileContent(owner, repo, branch, p, token);
+      truncatedPaths.push(p);
     } else {
       result[p] = typeof blob.text === 'string' ? blob.text : null;
     }
   }
+
+  // Large blobs need the REST fallback. Fetch them concurrently, capped so a
+  // repo with many truncated files cannot burst the GitHub API.
+  let nextTruncatedIndex = 0;
+  const workerCount = Math.min(MAX_TRUNCATED_FETCH_CONCURRENCY, truncatedPaths.length);
+  const fallbackWorkers = Array.from({ length: workerCount }, async () => {
+    while (nextTruncatedIndex < truncatedPaths.length) {
+      const path = truncatedPaths[nextTruncatedIndex++];
+      result[path] = await fetchFileContent(owner, repo, branch, path, token);
+    }
+  });
+  await Promise.all(fallbackWorkers);
 
   return result;
 }

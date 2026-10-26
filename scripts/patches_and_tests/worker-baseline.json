@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-26T17:57:54.553Z",
+  "timestamp": "2026-10-26T21:33:29.261Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -106,11 +106,11 @@
       "id": 10,
       "name": "File-Size Modularity Audit (<500 lines) & End-to-End Artifact Completeness",
       "pass": true,
-      "totalTsFilesAudited": 47,
+      "totalTsFilesAudited": 48,
       "warningZoneFilesCount": 9,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 102869,
+      "bundleSize": 107591,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
@@ -122,7 +122,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 337
+          "lines": 380
         },
         {
           "file": "packages/edge-worker/src/modules/patchInMemory.ts",
@@ -142,7 +142,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 362
+          "lines": 363
         },
         {
           "file": "packages/local-cli/src/localRunner.ts",
@@ -173,7 +173,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 337
+          "lines": 380
         },
         {
           "file": "packages/edge-worker/src/modules/patchInMemory.ts",
@@ -209,7 +209,7 @@
         },
         {
           "file": "packages/edge-worker/src/utils/githubBatchRead.ts",
-          "lines": 121
+          "lines": 136
         },
         {
           "file": "packages/edge-worker/src/utils/githubCommit.ts",
@@ -248,6 +248,10 @@
           "lines": 53
         },
         {
+          "file": "packages/userscript-hud/src/services/batchFormula.ts",
+          "lines": 30
+        },
+        {
           "file": "packages/userscript-hud/src/services/patchIdentity.ts",
           "lines": 51
         },
@@ -265,7 +269,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/patchQueue.ts",
-          "lines": 57
+          "lines": 117
         },
         {
           "file": "packages/userscript-hud/src/services/runtimeInfo.ts",
@@ -305,11 +309,11 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudDomTree.ts",
-          "lines": 273
+          "lines": 279
         },
         {
           "file": "packages/userscript-hud/src/ui/hudMixAction.ts",
-          "lines": 80
+          "lines": 90
         },
         {
           "file": "packages/userscript-hud/src/ui/hudRender.ts",
@@ -317,11 +321,11 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 362
+          "lines": 363
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 187
+          "lines": 212
         },
         {
           "file": "packages/userscript-hud/src/ui/updateBanner.ts",

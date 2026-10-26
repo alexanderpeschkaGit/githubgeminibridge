@@ -29,6 +29,7 @@ const RELATIVE_MODULES = [
 
 const HARVESTER_SOURCE = 'packages/userscript-hud/src/dom/harvester.ts';
 const PATCH_QUEUE_SOURCE = 'packages/userscript-hud/src/services/patchQueue.ts';
+const BATCH_FORMULA_SOURCE = 'packages/userscript-hud/src/services/batchFormula.ts';
 
 export function loadTypeScript(rootDir) {
   const require = createRequire(import.meta.url);
@@ -117,4 +118,10 @@ export async function loadPatchQueueModules(rootDir) {
     ...(await import(inlined.get('./patchIdentity'))),
     ...patchQueue,
   };
+}
+
+/** Loads the Batch Formula prompt builder (type-only imports, so no inlined modules). */
+export async function loadBatchFormulaModule(rootDir) {
+  const ts = loadTypeScript(rootDir);
+  return import(buildEntryUrl(ts, rootDir, BATCH_FORMULA_SOURCE, new Map()));
 }

@@ -1,6 +1,7 @@
 import type { HudConfig, HudState } from '../types';
-import { injectRepoMixFile, injectRepoMixParts } from '../dom/injector';
+import { injectPromptText, injectRepoMixFile, injectRepoMixParts } from '../dom/injector';
 import { requestRepoMix } from '../services/workerClient';
+import { buildBatchFormulaPrompt } from '../services/batchFormula';
 import { setSourceHeadOid } from '../services/patchOidStore';
 import type { HudDomElements } from './hudStylesAndDom';
 
@@ -75,5 +76,14 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
       dom.mixBtn.disabled = false;
       dom.mixBtn.style.opacity = '1';
     }
+  };
+
+  dom.batchFormulaBtn.onclick = () => {
+    const injected = injectPromptText(buildBatchFormulaPrompt(config, state), false);
+    updateState({
+      statusMessage: injected
+        ? '📋 Injected optimal V2 Batch Formula into chat prompt.'
+        : '❌ Could not find the chat prompt input to inject the Batch Formula.',
+    });
   };
 }

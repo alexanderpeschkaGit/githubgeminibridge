@@ -339,6 +339,7 @@ export interface HudDomElements {
   maxChunkCharsInput: HTMLInputElement;
   oidBadge: HTMLDivElement;
   mixBtn: HTMLButtonElement;
+  batchFormulaBtn: HTMLButtonElement;
   autoPilotCheck: HTMLInputElement;
   recentCommitsCheck: HTMLInputElement;
   retryIndicator: HTMLSpanElement;

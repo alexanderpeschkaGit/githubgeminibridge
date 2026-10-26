@@ -170,6 +170,11 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   const mixBtn = createHudElement('button', 'hud-btn hud-btn-primary', '📦 Load Repo Mix (/api/mix)');
   mixBtn.style.flex = '1';
   actionRow.appendChild(mixBtn);
+
+  const batchFormulaBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🧩 Batch Formula');
+  batchFormulaBtn.title = 'Insert optimal V2 integratable batch prompt formula into chat';
+  actionRow.appendChild(batchFormulaBtn);
+
   body.appendChild(actionRow);
 
   // Options Row: Auto-Pilot toggle
@@ -260,6 +265,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     maxChunkCharsInput,
     oidBadge,
     mixBtn,
+    batchFormulaBtn,
     autoPilotCheck,
     recentCommitsCheck,
     retryIndicator,
