@@ -10,6 +10,8 @@ import {
   switchAccountProfileWithRepo,
 } from '../services/accountProfiles';
 import { createHudElement, type HudDomElements } from './hudStylesAndDom';
+import { refreshRepoHistorySelectNow } from './hudConfigBindings';
+import { recordFromConfig } from '../services/repoHistory';
 
 export interface AccountSwitchDeps {
   dom: HudDomElements;
@@ -113,6 +115,8 @@ function applySwitched(next: HudConfig, target: AccountProfileId): void {
 
   updateAccountButtons();
   refreshAccountHint();
+  recordFromConfig(config);
+  refreshRepoHistorySelectNow();
   renderState();
 }
 

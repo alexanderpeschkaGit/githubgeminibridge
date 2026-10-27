@@ -1,6 +1,18 @@
 import type { HudConfig, HudState } from '../types';
 import { saveHudConfig, sanitizeNoGithubPat, sanitizeRepo } from '../services/storage';
+import { pushRepoHistory } from '../services/repoHistory';
 import type { HudDomElements } from './hudStylesAndDom';
+
+let refreshRepoHistorySelect: (() => void) | null = null;
+
+export function setRepoHistorySelectRefresher(fn: () => void): void {
+  refreshRepoHistorySelect = fn;
+}
+
+/** Invokes the registered dropdown refresher (e.g. after an account switch). */
+export function refreshRepoHistorySelectNow(): void {
+  refreshRepoHistorySelect?.();
+}
 
 export interface HudConfigBindingDeps {
   dom: HudDomElements;
@@ -16,6 +28,20 @@ export interface HudConfigBindingDeps {
 export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
   const { dom, config, state, resetPatchOidState, clearTargetOidState, renderState } = deps;
 
+  const recordCurrentHistory = () => {
+    try {
+      pushRepoHistory({
+        owner: config.owner,
+        repo: config.repo,
+        branch: config.branch,
+        targetBranch: config.targetBranch || '',
+      });
+    } catch {
+      // History is best-effort and must never break config edits.
+    }
+    refreshRepoHistorySelect?.();
+  };
+
   dom.repoInput.onchange = () => {
     try {
       const sanitized = sanitizeRepo(sanitizeNoGithubPat(dom.repoInput.value.trim(), 'repo'));
@@ -23,6 +49,7 @@ export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
       config.repo = sanitized;
       saveHudConfig({ repo: sanitized });
       if (sanitized !== previousRepo) resetPatchOidState(`Repository changed to "${sanitized}".`);
+      recordCurrentHistory();
     } catch (e: any) {
       alert(e.message);
       dom.repoInput.value = config.repo;
@@ -34,6 +61,7 @@ export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
       const sanitized = sanitizeNoGithubPat(dom.ownerInput.value.trim(), 'owner');
       config.owner = sanitized;
       saveHudConfig({ owner: sanitized });
+      recordCurrentHistory();
     } catch (e: any) {
       alert(e.message);
       dom.ownerInput.value = config.owner;
@@ -47,6 +75,7 @@ export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
       config.branch = sanitized;
       saveHudConfig({ branch: sanitized });
       if (sanitized !== previousBranch) resetPatchOidState(`Branch changed to "${sanitized}".`);
+      recordCurrentHistory();
     } catch (e: any) {
       alert(e.message);
       dom.branchInput.value = config.branch;
@@ -56,9 +85,11 @@ export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
   dom.targetBranchInput.onchange = () => {
     try {
       const sanitized = sanitizeNoGithubPat(dom.targetBranchInput.value.trim(), 'targetBranch');
+      const previousTarget = config.targetBranch || '';
       config.targetBranch = sanitized;
-      clearTargetOidState(state);
+      if (sanitized !== previousTarget) clearTargetOidState(state);
       saveHudConfig({ targetBranch: sanitized });
+      recordCurrentHistory();
       renderState();
     } catch (e: any) {
       alert(e.message);

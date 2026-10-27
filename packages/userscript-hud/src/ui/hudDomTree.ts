@@ -61,6 +61,17 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   repoRow.appendChild(repoInput);
   body.appendChild(repoRow);
 
+  // Recent Repositories Row (quick switcher; only non-sensitive owner/repo/branch data)
+  const repoHistoryRow = createHudElement('div', 'hud-form-row');
+  const repoHistoryLabel = createHudElement('span', 'hud-label', 'Recent Repositories');
+  const repoHistorySelect = createHudElement('select', 'hud-input hud-select');
+  const repoHistoryPlaceholder = createHudElement('option', undefined, 'Select a previous repo...');
+  repoHistoryPlaceholder.value = '';
+  repoHistorySelect.appendChild(repoHistoryPlaceholder);
+  repoHistoryRow.appendChild(repoHistoryLabel);
+  repoHistoryRow.appendChild(repoHistorySelect);
+  body.appendChild(repoHistoryRow);
+
   // Owner Row (per account profile; drives foreign-owner warnings)
   const ownerRow = createHudElement('div', 'hud-form-row');
   const ownerLabel = createHudElement('span', 'hud-label', 'GitHub Owner (active account)');
@@ -253,6 +264,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     updateBannerBtn,
     closeBtn,
     repoInput,
+    repoHistorySelect,
     ownerInput,
     ownerHintEl,
     branchInput,

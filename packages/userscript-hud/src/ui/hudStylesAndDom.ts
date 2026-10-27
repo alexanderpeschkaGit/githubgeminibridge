@@ -327,6 +327,7 @@ export interface HudDomElements {
   updateBannerText: HTMLSpanElement;
   updateBannerBtn: HTMLButtonElement;
   repoInput: HTMLInputElement;
+  repoHistorySelect: HTMLSelectElement;
   ownerInput: HTMLInputElement;
   accountBtn1: HTMLButtonElement;
   accountBtn2: HTMLButtonElement;

@@ -4,6 +4,8 @@ import type {
 } from '../types';
 import {
   loadHudConfig,
+  saveHudConfig,
+  sanitizeRepo,
 } from '../services/storage';
 import { getRunningScriptVersion } from '../services/runtimeInfo';
 import {
@@ -19,7 +21,8 @@ import {
 import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } from './hudStylesAndDom';
 import { buildHudDomTree } from './hudDomTree';
 import { initHudUpdateBanner } from './updateBanner';
-import { bindHudConfigInputs } from './hudConfigBindings';
+import { bindHudConfigInputs, setRepoHistorySelectRefresher } from './hudConfigBindings';
+import { loadRepoHistory, recordFromConfig } from '../services/repoHistory';
 import { bindAccountSwitch } from './hudAccountSwitch';
 import { renderHudState } from './hudRender';
 import { bindMixAction } from './hudMixAction';
@@ -109,6 +112,76 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   };
   dom.closeBtn.onclick = closePanel;
 
+  const refreshRepoHistorySelectUI = () => {
+    const select = dom.repoHistorySelect;
+    if (!select) return;
+    const previousIndex = select.value;
+    const entries = loadRepoHistory();
+
+    select.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Select a previous repo...';
+    select.appendChild(placeholder);
+
+    entries.forEach((entry, index) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      const repoLabel = entry.repo.includes('/') ? entry.repo : `${entry.owner}/${entry.repo}`;
+      const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : '';
+      option.textContent = `${repoLabel} @ ${entry.branch}${target}`;
+      select.appendChild(option);
+    });
+
+    select.disabled = entries.length === 0;
+    select.value = previousIndex && entries[Number(previousIndex)] ? previousIndex : '';
+  };
+
+  const applyRepoHistorySelection = () => {
+    const select = dom.repoHistorySelect;
+    if (!select) return;
+    const index = Number(select.value);
+    const entries = loadRepoHistory();
+    const entry = Number.isInteger(index) && index >= 0 ? entries[index] : undefined;
+    if (!entry) {
+      select.value = '';
+      return;
+    }
+
+    const previousRepo = config.repo;
+    const previousBranch = config.branch;
+    const previousTarget = config.targetBranch || '';
+
+    config.owner = entry.owner || config.owner;
+    config.repo = sanitizeRepo(entry.repo || config.repo);
+    config.branch = entry.branch || config.branch;
+    config.targetBranch = entry.targetBranch || '';
+
+    dom.ownerInput.value = config.owner;
+    dom.repoInput.value = config.repo;
+    dom.branchInput.value = config.branch;
+    dom.targetBranchInput.value = config.targetBranch || '';
+
+    saveHudConfig({
+      owner: config.owner,
+      repo: config.repo,
+      branch: config.branch,
+      targetBranch: config.targetBranch,
+    });
+
+    const repoOrBranchChanged = config.repo !== previousRepo || config.branch !== previousBranch;
+    if (repoOrBranchChanged) {
+      resetPatchOidState(`Switched to "${config.repo} @ ${config.branch}".`);
+    } else if ((config.targetBranch || '') !== previousTarget) {
+      clearTargetOidState(state);
+    }
+
+    recordFromConfig(config);
+    refreshRepoHistorySelectUI();
+    select.value = '';
+    renderState();
+  };
+
   bindHudConfigInputs({
     dom,
     config,
@@ -117,6 +190,10 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     clearTargetOidState,
     renderState,
   });
+
+  dom.repoHistorySelect.onchange = applyRepoHistorySelection;
+  setRepoHistorySelectRefresher(refreshRepoHistorySelectUI);
+  refreshRepoHistorySelectUI();
 
   const applyAccountSwitch = bindAccountSwitch({ dom, config, state, resetPatchOidState, renderState });
   applyAccountSwitch();
