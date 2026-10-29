@@ -78,6 +78,11 @@ const LOCAL_SUITES = [
     finding: 'Capped metadata and absolute 100k part ceiling',
   },
   {
+    id: 'mix-tarball-404',
+    script: 'test-mix-tarball-404.mjs',
+    finding: 'Tarball 404 names the missing branch (with default hint) or repo/token access',
+  },
+  {
     id: 'path-normalization',
     script: 'test-path-normalization.mjs',
     finding: 'Repo-relative paths are canonicalized before GraphQL blob reads/commits; no invented default path',

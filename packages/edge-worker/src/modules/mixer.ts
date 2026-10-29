@@ -8,6 +8,40 @@ import { scanTarGzipStream, TarScanError, type TarScanResult } from './mixerTarS
 export { escapeCdata, shouldSkipTarEntry, extractHeadOidFromPaxHeader } from './mixerTarScan';
 
 /**
+ * A tarball 404 is ambiguous: GitHub returns the same status for a missing branch
+ * and for a private/inaccessible repository. Verify the ref through GraphQL (only on
+ * error) so the HUD can name the fix instead of repeating the raw 404.
+ */
+async function describeTarballNotFound(
+  owner: string,
+  repo: string,
+  branch: string,
+  token: string
+): Promise<string> {
+  try {
+    const branchInfo = await getBranchHeadOid(owner, repo, branch, token);
+    return ` The branch exists (HEAD ${branchInfo.headOid.slice(0, 7)}), so GitHub's tarball endpoint failed unexpectedly; verify the deployed worker and retry.`;
+  } catch (err: any) {
+    const message = err?.message || String(err);
+    if (/Could not resolve to a Repository|not accessible|Repository .* not found/i.test(message)) {
+      return ` Repository "${owner}/${repo}" was not found or is not accessible with this worker's GitHub token. Check the Repo field and the active account/worker.`;
+    }
+    if (/Branch .* was not found/i.test(message)) {
+      let defaultBranch = '';
+      try {
+        const fallback = await getBranchHeadOid(owner, repo, '', token);
+        defaultBranch = fallback.resolvedBranch || '';
+      } catch {
+        // Empty repository or no default branch: keep the generic branch hint.
+      }
+      const suggestion = defaultBranch ? ` The repository's default branch is "${defaultBranch}".` : '';
+      return ` Branch "${branch}" does not exist in "${owner}/${repo}".${suggestion} Update the Branch field in the HUD and retry.`;
+    }
+    return ` Could not verify "${owner}/${repo}@${branch}": ${message}`;
+  }
+}
+
+/**
  * Handles POST /api/mix requests.
  * Fetches the repository tarball in a single HTTP subrequest, decompresses it on the fly,
  * filters files in Worker RAM without exceeding 128 MB, and outputs structured XML.
@@ -32,7 +66,10 @@ export async function handleMixRequest(
     };
   }
 
-  const resolvedBranch = (req.branch || 'main').trim();
+  // The HUD field may contain a fully qualified ref; GitHub's tarball route expects
+  // the plain branch name, and an empty/whitespace field falls back to the default.
+  const resolvedBranch =
+    (req.branch || '').trim().replace(/^refs\/heads\//, '') || 'main';
   const tarUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/tarball/${encodeURIComponent(resolvedBranch)}`;
 
   const res = await fetch(tarUrl, {
@@ -45,12 +82,15 @@ export async function handleMixRequest(
 
   if (!res.ok) {
     const errorBody = await res.text().catch(() => '');
+    const diagnosis = res.status === 404
+      ? await describeTarballNotFound(owner, repo, resolvedBranch, githubToken)
+      : '';
     return {
       status: 'ERROR',
       headOid: '',
       xmlContent: '',
       stats: { fileCount: 0, estimatedTokens: 0 },
-      errorMessage: `GitHub tarball fetch failed with HTTP ${res.status} (${res.statusText}): ${errorBody}`
+      errorMessage: `GitHub tarball fetch failed with HTTP ${res.status} (${res.statusText}) for ${owner}/${repo}@${resolvedBranch}: ${errorBody}${diagnosis}`
     };
   }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.18
+// @version      2.0.19
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -112,7 +112,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     workerSecret: "",
     owner: "alexanderpeschkaGit",
     repo: "alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0",
-    branch: "preview",
+    branch: "main",
     targetBranch: "",
     includePaths: [],
     autoPilot: false,

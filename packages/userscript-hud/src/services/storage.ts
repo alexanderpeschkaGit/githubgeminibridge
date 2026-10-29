@@ -85,7 +85,7 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
   workerSecret: '',
   owner: 'alexanderpeschkaGit',
   repo: 'alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0',
-  branch: 'preview',
+  branch: 'main',
   targetBranch: '',
   includePaths: [],
   autoPilot: false,

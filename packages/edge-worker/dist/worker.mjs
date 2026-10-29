@@ -2384,6 +2384,28 @@ async function fetchRecentCommitsAndVolatileFiles(owner, repo, branch, token, co
 }
 
 // src/modules/mixer.ts
+async function describeTarballNotFound(owner, repo, branch, token) {
+  try {
+    const branchInfo = await getBranchHeadOid(owner, repo, branch, token);
+    return ` The branch exists (HEAD ${branchInfo.headOid.slice(0, 7)}), so GitHub's tarball endpoint failed unexpectedly; verify the deployed worker and retry.`;
+  } catch (err) {
+    const message = err?.message || String(err);
+    if (/Could not resolve to a Repository|not accessible|Repository .* not found/i.test(message)) {
+      return ` Repository "${owner}/${repo}" was not found or is not accessible with this worker's GitHub token. Check the Repo field and the active account/worker.`;
+    }
+    if (/Branch .* was not found/i.test(message)) {
+      let defaultBranch = "";
+      try {
+        const fallback = await getBranchHeadOid(owner, repo, "", token);
+        defaultBranch = fallback.resolvedBranch || "";
+      } catch {
+      }
+      const suggestion = defaultBranch ? ` The repository's default branch is "${defaultBranch}".` : "";
+      return ` Branch "${branch}" does not exist in "${owner}/${repo}".${suggestion} Update the Branch field in the HUD and retry.`;
+    }
+    return ` Could not verify "${owner}/${repo}@${branch}": ${message}`;
+  }
+}
 async function handleMixRequest(req, githubToken) {
   let owner = "";
   let repo = "";
@@ -2400,7 +2422,7 @@ async function handleMixRequest(req, githubToken) {
       errorMessage: err.message || "Invalid repository format"
     };
   }
-  const resolvedBranch = (req.branch || "main").trim();
+  const resolvedBranch = (req.branch || "").trim().replace(/^refs\/heads\//, "") || "main";
   const tarUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/tarball/${encodeURIComponent(resolvedBranch)}`;
   const res = await fetch(tarUrl, {
     headers: {
@@ -2411,12 +2433,13 @@ async function handleMixRequest(req, githubToken) {
   });
   if (!res.ok) {
     const errorBody = await res.text().catch(() => "");
+    const diagnosis = res.status === 404 ? await describeTarballNotFound(owner, repo, resolvedBranch, githubToken) : "";
     return {
       status: "ERROR",
       headOid: "",
       xmlContent: "",
       stats: { fileCount: 0, estimatedTokens: 0 },
-      errorMessage: `GitHub tarball fetch failed with HTTP ${res.status} (${res.statusText}): ${errorBody}`
+      errorMessage: `GitHub tarball fetch failed with HTTP ${res.status} (${res.statusText}) for ${owner}/${repo}@${resolvedBranch}: ${errorBody}${diagnosis}`
     };
   }
   if (!res.body) {
@@ -2876,7 +2899,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "2.0.5",
+        version: "2.0.7",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))
