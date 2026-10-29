@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-26T23:35:55.987Z",
+  "timestamp": "2026-10-29T21:18:10.267Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -106,17 +106,17 @@
       "id": 10,
       "name": "File-Size Modularity Audit (<500 lines) & End-to-End Artifact Completeness",
       "pass": true,
-      "totalTsFilesAudited": 48,
+      "totalTsFilesAudited": 51,
       "warningZoneFilesCount": 9,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 107591,
+      "bundleSize": 114364,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
-          "lines": 472
+          "lines": 480
         },
         {
           "file": "packages/edge-worker/src/modules/mixerTarScan.ts",
@@ -144,7 +144,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 363
+          "lines": 364
         },
         {
           "file": "packages/local-cli/src/localRunner.ts",
@@ -163,15 +163,23 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
-          "lines": 472
+          "lines": 480
         },
         {
           "file": "packages/edge-worker/src/modules/mixer.ts",
-          "lines": 201
+          "lines": 203
         },
         {
           "file": "packages/edge-worker/src/modules/mixerTarScan.ts",
           "lines": 360
+        },
+        {
+          "file": "packages/edge-worker/src/modules/mixSelection.ts",
+          "lines": 156
+        },
+        {
+          "file": "packages/edge-worker/src/modules/mixSerializer.ts",
+          "lines": 44
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
@@ -274,6 +282,10 @@
           "lines": 117
         },
         {
+          "file": "packages/userscript-hud/src/services/repoHistory.ts",
+          "lines": 91
+        },
+        {
           "file": "packages/userscript-hud/src/services/runtimeInfo.ts",
           "lines": 45
         },
@@ -299,7 +311,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudAccountSwitch.ts",
-          "lines": 141
+          "lines": 145
         },
         {
           "file": "packages/userscript-hud/src/ui/hudApplyPatch.ts",
@@ -307,15 +319,15 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudConfigBindings.ts",
-          "lines": 128
+          "lines": 159
         },
         {
           "file": "packages/userscript-hud/src/ui/hudDomTree.ts",
-          "lines": 279
+          "lines": 291
         },
         {
           "file": "packages/userscript-hud/src/ui/hudMixAction.ts",
-          "lines": 90
+          "lines": 98
         },
         {
           "file": "packages/userscript-hud/src/ui/hudRender.ts",
@@ -323,11 +335,11 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 363
+          "lines": 364
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 212
+          "lines": 289
         },
         {
           "file": "packages/userscript-hud/src/ui/updateBanner.ts",
@@ -371,7 +383,8 @@
       "hasDefault85k": true,
       "hasMaxParts10": true,
       "hasTxtExtension": true,
-      "hasExplicitOversizeRejection": true,
+      "hasTruncationContract": true,
+      "hasHudTruncationWarning": true,
       "hasIgnoreUtils": true,
       "hasDynamicIgnoreInMixer": true,
       "storageSupports2M": true,
@@ -379,6 +392,7 @@
       "bundleHasIncludePaths": true,
       "bundleHasMaxChunkChars": true,
       "bundleHasTxtMime": true,
+      "bundleHasTruncationWarning": true,
       "functionalBudgetPass": true,
       "guardrailPass": true,
       "ignorePass": true

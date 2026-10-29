@@ -152,30 +152,53 @@ const worstCase = [];
   console.log(`PASS: maxChunkChars=500000 is clamped to ${HARD_GEMINI_CHAR_LIMIT} (${parts.length} parts, max ${Math.max(...parts.map((p) => p.length))})`);
 }
 
-// --- Case 3: pathogenic single-file oversize fails explicitly instead of silently dropping it ---
+// --- Case 3: oversized single files are omitted explicitly; zero includable files still fail ---
 {
-  const file = {
+  const oversized = {
     path: 'src/oversized.ts',
     content: 'export const x = ' + 'X'.repeat(150_000) + ';\n',
   };
+  const normal = { path: 'src/normal.ts', content: 'export const ok = true;\n' };
+  const result = buildChunkedMixXml(makeInput([oversized, normal]));
+  const parts = assertConforming('single oversized + normal', result, worstCase);
+  assert.equal(result.truncation?.reason, 'file_over_hard_limit', 'oversized omission is reported');
+  assert.equal(result.truncation?.includedFiles, 1, 'the normal file is included');
+  assert.equal(result.truncation?.totalFiles, 2, 'total accounting includes the oversized file');
+  assert.equal(result.truncation?.omittedFiles.length, 1, 'exactly one file is omitted');
+  assert.equal(result.truncation?.omittedFiles[0]?.path, 'src/oversized.ts');
+  assert.equal(result.stats.fileCount, 1, 'stats.fileCount counts included files');
+  assert.equal(result.stats.totalFileCount, 2, 'stats.totalFileCount counts all attempted files');
+  assert.ok(parts[0].content.includes('<truncation_notice>'), 'Part 1 carries the truncation notice');
+  assert.ok(parts[0].content.includes('<omitted_files count="1">'), 'Part 1 carries the omitted manifest');
   assert.throws(
-    () => buildChunkedMixXml(makeInput([file])),
-    /cannot preserve 1 file\(s\).*character limit/i,
-    'oversized single files fail explicitly rather than silently disappearing from the output'
+    () => buildChunkedMixXml(makeInput([oversized])),
+    /cannot include any file/i,
+    'a mix with zero includable files fails explicitly'
   );
-  console.log('PASS: oversized single file fails explicitly instead of silently dropping data');
+  console.log('PASS: oversized files are omitted with explicit accounting; zero-includable input fails');
 }
 
-// --- Case 3b: pathological metadata + indivisible files reject impossible complete output ---
+// --- Case 3b: pathological metadata + too many parts truncates whole files instead of failing ---
 {
   const metadata = makeHugeMetadata(12_000);
   const files = padFiles(12, 60_000);
-  assert.throws(
-    () => buildChunkedMixXml(makeInput(files, { recentCommitsText: metadata, maxChunkChars: 500_000 })),
-    new RegExp(`more than ${MAX_GEMINI_PARTS} parts`),
-    'indivisible files that cannot fit within ten parts fail instead of being silently dropped'
+  const result = buildChunkedMixXml(makeInput(files, { recentCommitsText: metadata, maxChunkChars: 500_000 }));
+  const parts = assertConforming('pathological metadata + large files', result, worstCase);
+  assert.ok(parts.length <= MAX_GEMINI_PARTS, 'output never exceeds the ten-part limit');
+  assert.equal(result.truncation?.reason, 'part_limit_exceeded', 'part-limit omission is reported');
+  assert.equal(result.truncation?.availableParts, MAX_GEMINI_PARTS, 'available parts is the hard guardrail');
+  assert.equal(
+    (result.truncation?.includedFiles ?? -1) + (result.truncation?.omittedFiles.length ?? -1),
+    files.length,
+    'included plus omitted equals the attempted file count'
   );
-  console.log(`PASS: pathological metadata + large files explicitly reject output beyond ${MAX_GEMINI_PARTS} parts`);
+  assert.equal(result.stats.totalFileCount, files.length, 'stats.totalFileCount reports all files');
+  assert.equal(result.stats.fileCount, result.truncation?.includedFiles, 'stats.fileCount reports included files');
+  assert.ok(
+    result.parts?.[0]?.xmlContent.includes(`<omitted_files count="${result.truncation?.omittedFiles.length}">`),
+    'Part 1 manifest matches the omitted count'
+  );
+  console.log(`PASS: beyond ${MAX_GEMINI_PARTS} parts the mix truncates whole files with explicit accounting`);
 }
 
 // --- Case 3c: long continuation file trees are included in the measured size ---
@@ -213,17 +236,22 @@ const worstCase = [];
   console.log(`PASS: long paths with capped Part 1 metadata preserve ${files.length} files (${parts.length} parts)`);
 }
 
-// --- Case 3d: the ten-part guardrail rejects long-path output that cannot fit completely ---
+// --- Case 3d: the ten-part guardrail truncates whole long-path files with explicit accounting ---
 {
   for (const metadata of [undefined, makeHugeMetadata()]) {
     const files = makeLongPathFiles(5_000);
-    assert.throws(
-      () => buildChunkedMixXml(makeInput(files, { recentCommitsText: metadata })),
-      new RegExp(`more than ${MAX_GEMINI_PARTS} parts`),
-      `5,000 long paths ${metadata ? 'with' : 'without'} metadata must fail explicitly`
+    const result = buildChunkedMixXml(makeInput(files, { recentCommitsText: metadata }));
+    const parts = assertConforming(`5,000 long paths ${metadata ? 'with' : 'without'} metadata`, result, worstCase);
+    assert.ok(parts.length <= MAX_GEMINI_PARTS, 'long-path output never exceeds the ten-part limit');
+    assert.ok(result.truncation, 'long-path overflow reports truncation');
+    assert.equal(result.truncation?.reason, 'part_limit_exceeded', 'long-path omission uses the part-limit reason');
+    assert.equal(
+      (result.truncation?.includedFiles ?? -1) + (result.truncation?.omittedFiles.length ?? -1),
+      files.length,
+      'included plus omitted equals the long-path file count'
     );
   }
-  console.log(`PASS: long-path output beyond ${MAX_GEMINI_PARTS} parts is rejected with and without metadata`);
+  console.log(`PASS: long-path output beyond ${MAX_GEMINI_PARTS} parts truncates whole files with accounting`);
 }
 
 // --- Case 4a: normal small input keeps single-part behavior and stats ---
@@ -303,6 +331,60 @@ const worstCase = [];
   assert.equal(result.stats.fileCount, 2, 'no file is dropped when splitting can preserve it');
   assert.ok(!result.xmlContent.includes(SKIP_MARKER), 'no skip annotation is needed when splitting preserves content');
   console.log('PASS: splitOutput=false never returns an oversized or content-dropping single part');
+}
+
+// --- Case 7: exactly ten parts is not truncated ---
+{
+  const files = padFiles(10, 60_000);
+  const result = buildChunkedMixXml(makeInput(files, { splitOutput: true }));
+  const parts = assertConforming('exact ten parts', result, worstCase);
+  assert.equal(parts.length, MAX_GEMINI_PARTS, 'exactly ten parts are emitted');
+  assert.equal(result.truncation, undefined, 'no truncation metadata is attached at the boundary');
+  assert.equal(result.stats.fileCount, files.length, 'all files are included at the boundary');
+  assert.equal(result.stats.totalFileCount, files.length, 'totalFileCount matches at the boundary');
+  console.log(`PASS: exactly ${MAX_GEMINI_PARTS} parts is not truncated`);
+}
+
+// --- Case 8: truncation is deterministic and Part 1 does not advertise omitted paths in the tree ---
+{
+  const files = padFiles(40, 40_000);
+  const first = buildChunkedMixXml(makeInput(files));
+  const second = buildChunkedMixXml(makeInput(files));
+  assert.ok(first.truncation && second.truncation, 'both runs are truncated');
+  assert.deepEqual(
+    first.truncation?.omittedFiles.map((entry) => entry.path),
+    second.truncation?.omittedFiles.map((entry) => entry.path),
+    'omitted file order is deterministic'
+  );
+  assert.deepEqual(
+    first.parts?.map((part) => `${part.fileName}:${part.stats.fileCount}`),
+    second.parts?.map((part) => `${part.fileName}:${part.stats.fileCount}`),
+    'part assignment is deterministic'
+  );
+  const firstPart = first.parts?.[0]?.xmlContent ?? '';
+  const treeStart = firstPart.indexOf('<file_tree>');
+  const treeEnd = firstPart.indexOf('</file_tree>');
+  assert.ok(treeStart >= 0 && treeEnd > treeStart, 'Part 1 contains a file tree');
+  const tree = firstPart.slice(treeStart, treeEnd);
+  const omittedPath = first.truncation?.omittedFiles[0]?.path;
+  assert.ok(omittedPath, 'at least one omitted path exists');
+  assert.ok(!tree.includes(omittedPath), 'the master tree lists only included files');
+  assert.ok(
+    firstPart.includes(`<omitted_files count="${first.truncation?.omittedFiles.length}">`),
+    'the omitted manifest count matches the response'
+  );
+  console.log(`PASS: truncation is deterministic (${first.truncation?.includedFiles} included, ${first.truncation?.omittedFiles.length} omitted)`);
+}
+
+// --- Case 9: an explicit user budget is never escalated by the ladder ---
+{
+  const files = padFiles(4, 30_000);
+  const result = buildChunkedMixXml(makeInput(files, { maxChunkChars: 40_000 }));
+  const parts = assertConforming('explicit 40k budget', result, worstCase);
+  assert.ok(parts.length >= 4, 'the explicit budget forces finer partitioning');
+  assert.ok(parts.every((part) => part.length <= 40_000), 'no part exceeds the explicit 40k ceiling');
+  assert.equal(result.truncation, undefined, 'all files fit under the explicit budget');
+  console.log(`PASS: explicit maxChunkChars=40000 remains a ceiling (${parts.length} parts)`);
 }
 
 console.log('\nMeasured worst-case part sizes:');

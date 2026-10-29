@@ -1,5 +1,6 @@
-import type { MixPart } from '../types';
-import { escapeCdata } from './mixerTarScan';
+import type { MixOmittedFile, MixPart, MixTruncation } from '../types';
+import { buildOmittedManifest, buildTruncationNotice, capFileTree, selectFilesWithinPartLimit } from './mixSelection';
+import { buildPartXml, formatFileXml } from './mixSerializer';
 
 export const DEFAULT_MAX_CHUNK_CHARS = 85_000;     // 85k Chars (15% buffer below Gemini's 100k char cutoff)
 export const HARD_GEMINI_CHAR_LIMIT = 100_000;     // Hard 100k character cutoff in Gemini Web UI
@@ -8,6 +9,7 @@ export const DEFAULT_MAX_CHUNK_BYTES = 512 * 1024; // Legacy byte ceiling
 export const DEFAULT_MAX_CHUNK_TOKENS = 125_000;   // Legacy token ceiling
 export const MAX_RECENT_COMMITS_CHARS = 8_000;     // Metadata cap before partitioning (Part 1 only)
 export const RECENT_COMMITS_TRUNCATION_MARKER = '... [recent_commits truncated to preserve character budget]';
+const TRUNCATION_RESERVE_CHARS = 9_000;            // Part-1 notice + omitted manifest reserve
 
 /**
  * Deterministically caps recent-commit metadata so it can never inflate a part.
@@ -84,58 +86,13 @@ export interface ChunkMixResult {
   xmlContent: string;
   parts?: MixPart[];
   isChunked: boolean;
+  truncation?: MixTruncation;
   stats: {
     fileCount: number;
+    totalFileCount?: number;
     estimatedTokens: number;
     charCount: number;
   };
-}
-
-/**
- * Formats a single file as a safe XML `<file>` element.
- */
-function formatFileXml(f: { path: string; content: string }): string {
-  return `  <file path="${f.path}"><![CDATA[${escapeCdata(f.content)}]]></file>`;
-}
-
-/**
- * Builds a complete structured XML document for a single mix part or the whole repository.
- */
-function buildPartXml(params: {
-  owner: string;
-  repo: string;
-  branch: string;
-  headOid: string;
-  partNum?: number;
-  totalParts?: number;
-  instructionsText?: string;
-  recentCommitsText?: string;
-  treeText: string;
-  fileXmlList: string[];
-}): string {
-  const repoAttr =
-    params.partNum !== undefined && params.totalParts !== undefined
-      ? `<repository repo="${params.owner}/${params.repo}" branch="${params.branch}" headOid="${params.headOid}" part="${params.partNum}" totalParts="${params.totalParts}">`
-      : `<repository repo="${params.owner}/${params.repo}" branch="${params.branch}" headOid="${params.headOid}">`;
-
-  const sections: string[] = [repoAttr];
-  if (params.instructionsText) {
-    sections.push(params.instructionsText);
-  }
-  if (params.recentCommitsText) {
-    sections.push(params.recentCommitsText);
-  }
-  sections.push(
-    '<file_tree>',
-    params.treeText,
-    '</file_tree>',
-    '<files>',
-    ...params.fileXmlList,
-    '</files>',
-    '</repository>'
-  );
-
-  return sections.join('\n');
 }
 
 /**
@@ -157,6 +114,11 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
     splitOutput,
   } = input;
 
+  const hasExplicitUserBudget =
+    input.maxChunkChars !== undefined ||
+    input.maxChunkBytes !== undefined ||
+    input.maxChunkTokens !== undefined;
+
   const effectiveMaxChars = Math.min(
     maxChunkChars,
     maxChunkBytes,
@@ -165,12 +127,11 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
   );
   // Absolute ceiling: a user budget may tighten but never raise the 100k hard limit.
 
-  // 1. Reject any file that cannot be serialized within the hard Gemini cap.
-  // A single file must never be silently dropped: if it exceeds the limit, the
-  // entire RepoMix must fail explicitly rather than returning partial output.
+  // 1. Serialize every file. Files that cannot fit one part on their own are
+  // omitted explicitly and reported; they never block an otherwise usable mix.
   const treeEntries = [...fileTreeEntries];
   const validFiles: Array<{ path: string; content: string; fileXml: string }> = [];
-  const blockedFiles: string[] = [];
+  const omitted: MixOmittedFile[] = [];
 
   for (const f of files) {
     const fileXml = formatFileXml(f);
@@ -187,31 +148,24 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
     });
 
     if (standaloneXml.length > HARD_GEMINI_CHAR_LIMIT) {
-      blockedFiles.push(f.path);
+      omitted.push({ path: f.path, reason: 'file_over_hard_limit', chars: f.content.length });
       continue;
     }
 
     validFiles.push({ path: f.path, content: f.content, fileXml });
   }
 
-  if (blockedFiles.length > 0) {
-    const blockedList = blockedFiles.slice(0, 5).join(', ');
-    const suffix = blockedFiles.length > 5 ? ` and ${blockedFiles.length - 5} more` : '';
+  if (validFiles.length === 0 && files.length > 0) {
+    const sample = omitted.slice(0, 5).map((entry) => entry.path).join(', ');
+    const suffix = omitted.length > 5 ? ` and ${omitted.length - 5} more` : '';
     throw new Error(
-      `RepoMix cannot preserve ${blockedFiles.length} file(s) without splitting an individual file beyond the ${HARD_GEMINI_CHAR_LIMIT}-character limit: ${blockedList}${suffix}.`
+      `RepoMix cannot include any file: all ${files.length} file(s) exceed the ${HARD_GEMINI_CHAR_LIMIT}-character limit (${sample}${suffix}).`
     );
   }
 
   // 2. Full Tree with budget cap (<= 14k chars to reserve >= 71k chars for code)
   const maxTreeChars = Math.min(Math.floor(effectiveMaxChars * 0.45), 14_000);
-  let fullTreeXml = [...treeEntries].sort().join('\n');
-  if (fullTreeXml.length > maxTreeChars) {
-    const truncated = fullTreeXml.slice(0, maxTreeChars);
-    const lastNewline = truncated.lastIndexOf('\n');
-    fullTreeXml =
-      (lastNewline !== -1 ? truncated.slice(0, lastNewline) : truncated) +
-      '\n... [file_tree truncated to preserve character budget]';
-  }
+  let fullTreeXml = capFileTree(treeEntries, maxTreeChars);
 
   // 2b. Cap metadata before partitioning: instructions + tree + metadata must stay inside Part 1.
   // Measured Part 1 overhead (envelope + instructions + master tree) via the real serializer.
@@ -237,8 +191,10 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
     partNum?: number;
     totalParts?: number;
     instructionsText: string;
+    truncationNoticeText?: string;
     metadata: string;
     treeText: string;
+    omittedManifestText?: string;
     fileEntries: Array<{ path: string; content: string; fileXml: string }>;
   }): {
     xml: string;
@@ -258,8 +214,10 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
         partNum: params.partNum,
         totalParts: params.totalParts,
         instructionsText: params.instructionsText,
+        truncationNoticeText: params.truncationNoticeText,
         recentCommitsText: metadata || undefined,
         treeText,
+        omittedManifestText: params.omittedManifestText,
         fileXmlList: entries.map((e) => e.fileXml),
       });
 
@@ -307,7 +265,7 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
       validFiles.length > 1 &&
       singleRawXml.length > effectiveMaxChars);
 
-  if (!shouldSplit) {
+  if (!shouldSplit && omitted.length === 0) {
     if (single.xml.length > HARD_GEMINI_CHAR_LIMIT) {
       throw new Error(
         `RepoMix serialized to ${single.xml.length} characters, exceeding the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
@@ -318,6 +276,7 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
       isChunked: false,
       stats: {
         fileCount: single.entries.length,
+        totalFileCount: files.length,
         estimatedTokens: Math.ceil(single.xml.length / 4),
         charCount: single.xml.length,
       },
@@ -326,7 +285,8 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
 
   // 4. Partition by complete serialized size, including each part's tree and XML envelope.
   type FsEntry = { path: string; content: string; fileXml: string };
-  function partitionFiles(budgetChars: number) {
+  let part1Extras: { notice: string; manifest: string } = { notice: '', manifest: '' };
+  function partitionFiles(budgetChars: number, source: FsEntry[] = validFiles) {
     const partBudget = Math.min(budgetChars, HARD_GEMINI_CHAR_LIMIT);
     const serializedSize = (bucket: FsEntry[], index: number): number => {
       const partNum = index + 1;
@@ -343,16 +303,18 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
         totalParts: MAX_GEMINI_PARTS,
         instructionsText:
           partNum === 1 ? DEFAULT_MIX_INSTRUCTIONS : CONTINUATION_MIX_INSTRUCTIONS(partNum, MAX_GEMINI_PARTS),
+        truncationNoticeText: partNum === 1 ? part1Extras.notice || undefined : undefined,
         recentCommitsText: partNum === 1 ? cappedRecentCommitsText || undefined : undefined,
         treeText,
+        omittedManifestText: partNum === 1 ? part1Extras.manifest || undefined : undefined,
         fileXmlList: bucket.map((f) => f.fileXml),
       }).length;
     };
 
     // First-Fit Decreasing: largest files first, each placed into the first bucket that fits.
     // serializedSize stays the single source of truth for every fit decision.
-    if (partBudget <= 0) return validFiles.map((f) => [f]);
-    const packList = [...validFiles].sort(
+    if (partBudget <= 0) return source.map((f) => [f]);
+    const packList = [...source].sort(
       (a, b) => b.fileXml.length - a.fileXml.length || a.path.localeCompare(b.path)
     );
     const buckets: FsEntry[][] = [];
@@ -371,35 +333,61 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
     return buckets;
   }
 
+  const maxPackBudget = hasExplicitUserBudget ? effectiveMaxChars : HARD_GEMINI_CHAR_LIMIT;
+  const requiredParts = partitionFiles(maxPackBudget, validFiles).length;
+
+  let keptFiles = validFiles;
+  if (requiredParts > MAX_GEMINI_PARTS || omitted.length > 0) {
+    const selectionBudget = Math.max(1, maxPackBudget - TRUNCATION_RESERVE_CHARS);
+    const selection = selectFilesWithinPartLimit(
+      validFiles,
+      (subset) => partitionFiles(selectionBudget, subset).length,
+      MAX_GEMINI_PARTS
+    );
+    keptFiles = selection.kept;
+    omitted.push(...selection.omitted);
+    if (keptFiles.length === 0) {
+      throw new Error(
+        `RepoMix cannot include any file within ${MAX_GEMINI_PARTS} parts and the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
+      );
+    }
+    // The master tree must describe only files whose contents are present.
+    const keptPaths = new Set(keptFiles.map((file) => file.path));
+    fullTreeXml = capFileTree(
+      treeEntries.filter((entry) => keptPaths.has(entry)),
+      maxTreeChars
+    );
+    part1Extras = {
+      notice: buildTruncationNotice({
+        includedFiles: keptFiles.length,
+        totalFiles: files.length,
+        omittedFiles: omitted,
+        requiredParts,
+        availableParts: MAX_GEMINI_PARTS,
+      }),
+      manifest: buildOmittedManifest(omitted),
+    };
+  }
+
   // Budget ladder: 85k default first, then 95k, then the absolute 100k ceiling.
-  const budgetLadder = [
-    effectiveMaxChars,
-    Math.min(95_000, HARD_GEMINI_CHAR_LIMIT),
-    HARD_GEMINI_CHAR_LIMIT,
-  ];
-  const triedBudgets: Array<{ budget: number; parts: number }> = [];
+  const budgetLadder = hasExplicitUserBudget
+    ? [effectiveMaxChars]
+    : [
+        effectiveMaxChars,
+        Math.min(95_000, HARD_GEMINI_CHAR_LIMIT),
+        HARD_GEMINI_CHAR_LIMIT,
+      ];
+  const triedBudgets: number[] = [];
   let chunkBuckets: Array<Array<{ path: string; content: string; fileXml: string }>> = [];
   for (const budget of budgetLadder) {
-    if (triedBudgets.some((t) => t.budget === budget)) continue;
-    chunkBuckets = partitionFiles(budget);
-    triedBudgets.push({ budget, parts: chunkBuckets.length });
+    if (triedBudgets.includes(budget)) continue;
+    chunkBuckets = partitionFiles(budget, keptFiles);
+    triedBudgets.push(budget);
     if (chunkBuckets.length <= MAX_GEMINI_PARTS) break;
   }
   if (chunkBuckets.length > MAX_GEMINI_PARTS) {
-    const partsAt = (budget: number): number =>
-      triedBudgets.find((t) => t.budget === budget)?.parts ?? -1;
-    const metrics = {
-      files: validFiles.length,
-      largestFileXmlChars: validFiles.reduce((max, f) => Math.max(max, f.fileXml.length), 0),
-      partsTriedAt85k: partsAt(DEFAULT_MAX_CHUNK_CHARS),
-      partsTriedAt95k: partsAt(95_000),
-      partsTriedAt100k: partsAt(HARD_GEMINI_CHAR_LIMIT),
-      part1OverheadChars,
-      treeChars: fullTreeXml.length,
-      cappedMetaChars: cappedRecentCommitsText.length,
-    };
     throw new Error(
-      `RepoMix needs more than ${MAX_GEMINI_PARTS} parts to preserve all files within the ${HARD_GEMINI_CHAR_LIMIT}-character limit. Metrics: ${JSON.stringify(metrics)}`
+      `RepoMix truncation invariant failed: ${chunkBuckets.length} parts after selecting within ${MAX_GEMINI_PARTS}.`
     );
   }
 
@@ -425,8 +413,10 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
       partNum,
       totalParts,
       instructionsText: partInstructions,
+      truncationNoticeText: partNum === 1 ? part1Extras.notice || undefined : undefined,
       metadata: partNum === 1 ? cappedRecentCommitsText : '',
       treeText: partTreeText,
+      omittedManifestText: partNum === 1 ? part1Extras.manifest || undefined : undefined,
       fileEntries: bucket,
     });
 
@@ -452,18 +442,36 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
     });
   }
 
-  if (parts.length > MAX_GEMINI_PARTS || emittedFileCount !== validFiles.length) {
+  if (parts.length > MAX_GEMINI_PARTS || emittedFileCount + omitted.length !== files.length) {
     throw new Error(
-      `RepoMix output could not preserve all files within ${MAX_GEMINI_PARTS} conforming parts.`
+      `RepoMix output could not preserve the file accounting within ${MAX_GEMINI_PARTS} conforming parts.`
     );
   }
+
+  const hasPartLimit = omitted.some((entry) => entry.reason === 'part_limit_exceeded');
+  const hasHardLimit = omitted.some((entry) => entry.reason === 'file_over_hard_limit');
+  const truncationReason: MixTruncation['reason'] =
+    hasPartLimit && hasHardLimit ? 'mixed' : hasPartLimit ? 'part_limit_exceeded' : 'file_over_hard_limit';
+  const truncation: MixTruncation | undefined = omitted.length > 0
+    ? {
+        reason: truncationReason,
+        requiredParts,
+        availableParts: MAX_GEMINI_PARTS,
+        includedFiles: emittedFileCount,
+        totalFiles: files.length,
+        omittedFiles: [...omitted].sort((a, b) => a.path.localeCompare(b.path)),
+        omittedChars: omitted.reduce((sum, entry) => sum + (entry.chars ?? 0), 0),
+      }
+    : undefined;
 
   return {
     xmlContent: parts[0]?.xmlContent ?? single.xml,
     parts,
     isChunked: true,
+    ...(truncation ? { truncation } : {}),
     stats: {
       fileCount: emittedFileCount,
+      totalFileCount: files.length,
       estimatedTokens: Math.ceil(totalChars / 4),
       charCount: totalChars,
     },

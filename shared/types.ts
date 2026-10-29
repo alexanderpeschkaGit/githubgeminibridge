@@ -25,6 +25,26 @@ export interface MixPart {
   };
 }
 
+export type MixOmissionReason = 'file_over_hard_limit' | 'part_limit_exceeded';
+
+export interface MixOmittedFile {
+  path: string;
+  reason: MixOmissionReason;
+  chars?: number;
+}
+
+export type MixTruncationReason = MixOmissionReason | 'mixed';
+
+export interface MixTruncation {
+  reason: MixTruncationReason;
+  requiredParts: number;
+  availableParts: number;
+  includedFiles: number;
+  totalFiles: number;
+  omittedFiles: MixOmittedFile[];
+  omittedChars: number;
+}
+
 export interface MixRequest {
   repo: string;              // Format: "owner/repository"
   branch: string;            // z.B. "main"
@@ -38,6 +58,7 @@ export interface MixRequest {
   recentCommitsCount?: number;   // Number of recent commits to analyze (default: 3, max: 5)
 }
 
+// Tarball-level skips only; chunker omissions are reported via MixOmittedFile in MixTruncation.
 export interface SkippedFile {
   path: string;
   reason: 'too_large';
@@ -51,8 +72,10 @@ export interface MixResponse {
   xmlContent: string;        // Strukturierter XML-Kontext (Part 1 oder Gesamtmix für Abwärtskompatibilität)
   parts?: MixPart[];         // Aufgeteilte Parts für Multi-File Ingestion bei großen Repos
   isChunked?: boolean;       // Zeigt an, ob der Output in mehrere Parts gesplittet wurde
+  truncation?: MixTruncation; // Set when whole files were omitted to satisfy Gemini limits
   stats: {
     fileCount: number;
+    totalFileCount?: number;
     estimatedTokens: number;
     charCount?: number;
     recentCommitsCount?: number;

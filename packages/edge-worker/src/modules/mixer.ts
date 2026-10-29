@@ -172,6 +172,7 @@ export async function handleMixRequest(
         xmlContent: mixResult.xmlContent,
         parts: mixResult.parts,
         isChunked: mixResult.isChunked,
+        ...(mixResult.truncation ? { truncation: mixResult.truncation } : {}),
         stats: {
           ...mixResult.stats,
           ...(recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {})
@@ -190,6 +191,7 @@ export async function handleMixRequest(
     xmlContent: mixResult.xmlContent,
     parts: mixResult.parts,
     isChunked: mixResult.isChunked,
+    ...(mixResult.truncation ? { truncation: mixResult.truncation } : {}),
     stats: {
       ...mixResult.stats,
       ...(recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {})

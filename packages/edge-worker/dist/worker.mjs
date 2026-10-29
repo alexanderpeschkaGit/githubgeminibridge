@@ -1416,6 +1416,106 @@ async function resolveFileContent(fileInput, existingContentFetcher) {
   return resolved;
 }
 
+// src/modules/mixSelection.ts
+var ROOT_CONFIG_FILES = /* @__PURE__ */ new Set([
+  "package.json",
+  "tsconfig.json",
+  "wrangler.toml",
+  "wrangler.jsonc",
+  "pnpm-workspace.yaml",
+  "turbo.json"
+]);
+var ENTRYPOINT_PATTERN = /^(index|main|worker|app)\.(ts|tsx|js|jsx|mjs)$/;
+function capFileTree(entries, maxChars) {
+  let tree = [...entries].sort().join("\n");
+  if (tree.length > maxChars) {
+    const truncated = tree.slice(0, maxChars);
+    const lastNewline = truncated.lastIndexOf("\n");
+    tree = (lastNewline !== -1 ? truncated.slice(0, lastNewline) : truncated) + "\n... [file_tree truncated to preserve character budget]";
+  }
+  return tree;
+}
+function priorityTier(filePath) {
+  const segments = filePath.split("/");
+  const baseName = segments[segments.length - 1] ?? "";
+  if (segments.length === 1 && ROOT_CONFIG_FILES.has(baseName)) return 0;
+  if (ENTRYPOINT_PATTERN.test(baseName)) return 1;
+  if (filePath.startsWith("src/") || filePath.startsWith("shared/") || filePath.startsWith("packages/")) {
+    return 2;
+  }
+  return 3;
+}
+function rankFilesForOmission(files) {
+  return [...files].sort(
+    (a, b) => priorityTier(a.path) - priorityTier(b.path) || a.fileXml.length - b.fileXml.length || a.path.localeCompare(b.path)
+  );
+}
+function selectFilesWithinPartLimit(files, countParts, maxParts) {
+  const requiredParts = countParts(files);
+  if (requiredParts <= maxParts) {
+    return { kept: [...files], omitted: [], requiredParts };
+  }
+  const kept = rankFilesForOmission(files);
+  const omitted = [];
+  const dropLowest = (count) => {
+    const dropped = kept.splice(Math.max(0, kept.length - count));
+    for (const file of dropped) {
+      omitted.push({
+        path: file.path,
+        reason: "part_limit_exceeded",
+        chars: file.content.length
+      });
+    }
+  };
+  if (kept.length <= 500) {
+    while (kept.length > 0 && countParts(kept) > maxParts) {
+      dropLowest(1);
+    }
+  } else {
+    let batch = Math.max(1, Math.ceil(kept.length * 0.1));
+    while (kept.length > 0 && countParts(kept) > maxParts) {
+      dropLowest(Math.min(batch, kept.length));
+      batch = Math.min(batch * 2, Math.max(1, Math.ceil(files.length / 2)));
+    }
+  }
+  return { kept, omitted, requiredParts };
+}
+function buildOmittedManifest(omitted, maxChars = 8e3) {
+  if (omitted.length === 0) return "";
+  const sorted = [...omitted].sort((a, b) => a.path.localeCompare(b.path));
+  const header = `<omitted_files count="${sorted.length}">`;
+  const footer = "</omitted_files>";
+  const marker = "... [omitted file list truncated to preserve character budget]";
+  let body = "";
+  for (const entry of sorted) {
+    const line = `${entry.path}
+`;
+    const projected = header.length + 1 + body.length + line.length + footer.length + 1;
+    if (projected + marker.length + 2 > maxChars) {
+      body += `${marker}
+`;
+      break;
+    }
+    body += line;
+  }
+  return `${header}
+${body}${footer}`;
+}
+function buildTruncationNotice(summary) {
+  const sample = summary.omittedFiles.slice(0, 5).map((entry) => entry.path).join(", ");
+  const suffix = summary.omittedFiles.length > 5 ? " ..." : "";
+  const reasons = [...new Set(summary.omittedFiles.map((entry) => entry.reason))].join(", ");
+  return [
+    "<truncation_notice>",
+    `RepoMix is TRUNCATED to fit Gemini's ${summary.availableParts}-file attachment limit.`,
+    `Included: ${summary.includedFiles} of ${summary.totalFiles} files. Omitted: ${summary.omittedFiles.length} file(s) (${reasons}).`,
+    `The complete file set would need at least ${summary.requiredParts} parts; available: ${summary.availableParts}.`,
+    sample ? `Sample omitted paths: ${sample}${suffix}` : "",
+    "Do not emit patches for omitted paths. Ask the user to narrow includePaths or update .repomixignore.cf.",
+    "</truncation_notice>"
+  ].filter((line) => line.length > 0).join("\n");
+}
+
 // src/utils/tarUtils.ts
 function concatBuffers(a, b) {
   const result = new Uint8Array(a.length + b.length);
@@ -1776,6 +1876,30 @@ async function scanTarGzipStream(stream, includePaths) {
   return { headOid, fileTreeEntries, files, skippedFiles: skippedFiles.length > 0 ? skippedFiles : void 0 };
 }
 
+// src/modules/mixSerializer.ts
+function formatFileXml(file) {
+  return `  <file path="${file.path}"><![CDATA[${escapeCdata(file.content)}]]></file>`;
+}
+function buildPartXml(params) {
+  const repoAttr = params.partNum !== void 0 && params.totalParts !== void 0 ? `<repository repo="${params.owner}/${params.repo}" branch="${params.branch}" headOid="${params.headOid}" part="${params.partNum}" totalParts="${params.totalParts}">` : `<repository repo="${params.owner}/${params.repo}" branch="${params.branch}" headOid="${params.headOid}">`;
+  const sections = [repoAttr];
+  if (params.instructionsText) {
+    sections.push(params.instructionsText);
+  }
+  if (params.truncationNoticeText) {
+    sections.push(params.truncationNoticeText);
+  }
+  if (params.recentCommitsText) {
+    sections.push(params.recentCommitsText);
+  }
+  sections.push("<file_tree>", params.treeText, "</file_tree>");
+  if (params.omittedManifestText) {
+    sections.push(params.omittedManifestText);
+  }
+  sections.push("<files>", ...params.fileXmlList, "</files>", "</repository>");
+  return sections.join("\n");
+}
+
 // src/modules/mixChunker.ts
 var DEFAULT_MAX_CHUNK_CHARS = 85e3;
 var HARD_GEMINI_CHAR_LIMIT = 1e5;
@@ -1784,6 +1908,7 @@ var DEFAULT_MAX_CHUNK_BYTES = 512 * 1024;
 var DEFAULT_MAX_CHUNK_TOKENS = 125e3;
 var MAX_RECENT_COMMITS_CHARS = 8e3;
 var RECENT_COMMITS_TRUNCATION_MARKER = "... [recent_commits truncated to preserve character budget]";
+var TRUNCATION_RESERVE_CHARS = 9e3;
 function capRecentCommitsText(text, maxChars = MAX_RECENT_COMMITS_CHARS) {
   if (!text || text.trim().length === 0) return "";
   const limit = Math.max(0, Math.floor(maxChars));
@@ -1828,29 +1953,6 @@ var DEFAULT_MIX_INSTRUCTIONS = [
 var CONTINUATION_MIX_INSTRUCTIONS = (partNum, totalParts) => `<instructions>
 # Part ${partNum}/${totalParts} Continuation: Refer to Part 1 for master file_tree and modification protocol.
 </instructions>`;
-function formatFileXml(f) {
-  return `  <file path="${f.path}"><![CDATA[${escapeCdata(f.content)}]]></file>`;
-}
-function buildPartXml(params) {
-  const repoAttr = params.partNum !== void 0 && params.totalParts !== void 0 ? `<repository repo="${params.owner}/${params.repo}" branch="${params.branch}" headOid="${params.headOid}" part="${params.partNum}" totalParts="${params.totalParts}">` : `<repository repo="${params.owner}/${params.repo}" branch="${params.branch}" headOid="${params.headOid}">`;
-  const sections = [repoAttr];
-  if (params.instructionsText) {
-    sections.push(params.instructionsText);
-  }
-  if (params.recentCommitsText) {
-    sections.push(params.recentCommitsText);
-  }
-  sections.push(
-    "<file_tree>",
-    params.treeText,
-    "</file_tree>",
-    "<files>",
-    ...params.fileXmlList,
-    "</files>",
-    "</repository>"
-  );
-  return sections.join("\n");
-}
 function buildChunkedMixXml(input) {
   const {
     owner,
@@ -1864,6 +1966,7 @@ function buildChunkedMixXml(input) {
     maxChunkTokens = DEFAULT_MAX_CHUNK_TOKENS,
     splitOutput
   } = input;
+  const hasExplicitUserBudget = input.maxChunkChars !== void 0 || input.maxChunkBytes !== void 0 || input.maxChunkTokens !== void 0;
   const effectiveMaxChars = Math.min(
     maxChunkChars,
     maxChunkBytes,
@@ -1872,7 +1975,7 @@ function buildChunkedMixXml(input) {
   );
   const treeEntries = [...fileTreeEntries];
   const validFiles = [];
-  const blockedFiles = [];
+  const omitted = [];
   for (const f of files) {
     const fileXml = formatFileXml(f);
     const standaloneXml = buildPartXml({
@@ -1887,29 +1990,34 @@ function buildChunkedMixXml(input) {
       fileXmlList: [fileXml]
     });
     if (standaloneXml.length > HARD_GEMINI_CHAR_LIMIT) {
-      blockedFiles.push(f.path);
+      omitted.push({ path: f.path, reason: "file_over_hard_limit", chars: f.content.length });
       continue;
     }
     validFiles.push({ path: f.path, content: f.content, fileXml });
   }
-  if (blockedFiles.length > 0) {
-    const blockedList = blockedFiles.slice(0, 5).join(", ");
-    const suffix = blockedFiles.length > 5 ? ` and ${blockedFiles.length - 5} more` : "";
+  if (validFiles.length === 0 && files.length > 0) {
+    const sample = omitted.slice(0, 5).map((entry) => entry.path).join(", ");
+    const suffix = omitted.length > 5 ? ` and ${omitted.length - 5} more` : "";
     throw new Error(
-      `RepoMix cannot preserve ${blockedFiles.length} file(s) without splitting an individual file beyond the ${HARD_GEMINI_CHAR_LIMIT}-character limit: ${blockedList}${suffix}.`
+      `RepoMix cannot include any file: all ${files.length} file(s) exceed the ${HARD_GEMINI_CHAR_LIMIT}-character limit (${sample}${suffix}).`
     );
   }
   const maxTreeChars = Math.min(Math.floor(effectiveMaxChars * 0.45), 14e3);
-  let fullTreeXml = [...treeEntries].sort().join("\n");
-  if (fullTreeXml.length > maxTreeChars) {
-    const truncated = fullTreeXml.slice(0, maxTreeChars);
-    const lastNewline = truncated.lastIndexOf("\n");
-    fullTreeXml = (lastNewline !== -1 ? truncated.slice(0, lastNewline) : truncated) + "\n... [file_tree truncated to preserve character budget]";
-  }
-  const part1OverheadGuess = fullTreeXml.length + DEFAULT_MIX_INSTRUCTIONS.length + 512;
+  let fullTreeXml = capFileTree(treeEntries, maxTreeChars);
+  const part1OverheadChars = buildPartXml({
+    owner,
+    repo,
+    branch,
+    headOid,
+    partNum: 1,
+    totalParts: MAX_GEMINI_PARTS,
+    instructionsText: DEFAULT_MIX_INSTRUCTIONS,
+    treeText: fullTreeXml,
+    fileXmlList: []
+  }).length;
   const metadataBudget = Math.max(
     0,
-    Math.min(MAX_RECENT_COMMITS_CHARS, effectiveMaxChars - part1OverheadGuess)
+    Math.min(MAX_RECENT_COMMITS_CHARS, effectiveMaxChars - part1OverheadChars)
   );
   const cappedRecentCommitsText = capRecentCommitsText(input.recentCommitsText, metadataBudget);
   function fitPart(params) {
@@ -1921,8 +2029,10 @@ function buildChunkedMixXml(input) {
       partNum: params.partNum,
       totalParts: params.totalParts,
       instructionsText: params.instructionsText,
+      truncationNoticeText: params.truncationNoticeText,
       recentCommitsText: metadata2 || void 0,
       treeText,
+      omittedManifestText: params.omittedManifestText,
       fileXmlList: entries.map((e) => e.fileXml)
     });
     let metadata = params.metadata;
@@ -1957,7 +2067,7 @@ function buildChunkedMixXml(input) {
     fileEntries: validFiles
   });
   const shouldSplit = splitOutput === true || single.xml.length > HARD_GEMINI_CHAR_LIMIT || splitOutput !== false && validFiles.length > 1 && singleRawXml.length > effectiveMaxChars;
-  if (!shouldSplit) {
+  if (!shouldSplit && omitted.length === 0) {
     if (single.xml.length > HARD_GEMINI_CHAR_LIMIT) {
       throw new Error(
         `RepoMix serialized to ${single.xml.length} characters, exceeding the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
@@ -1968,14 +2078,14 @@ function buildChunkedMixXml(input) {
       isChunked: false,
       stats: {
         fileCount: single.entries.length,
+        totalFileCount: files.length,
         estimatedTokens: Math.ceil(single.xml.length / 4),
         charCount: single.xml.length
       }
     };
   }
-  function partitionFiles(budgetChars) {
-    const buckets = [];
-    let currentBucket = [];
+  let part1Extras = { notice: "", manifest: "" };
+  function partitionFiles(budgetChars, source = validFiles) {
     const partBudget = Math.min(budgetChars, HARD_GEMINI_CHAR_LIMIT);
     const serializedSize = (bucket, index) => {
       const partNum = index + 1;
@@ -1989,37 +2099,82 @@ ${bucket.map((f) => f.path).join("\n")}`;
         partNum,
         totalParts: MAX_GEMINI_PARTS,
         instructionsText: partNum === 1 ? DEFAULT_MIX_INSTRUCTIONS : CONTINUATION_MIX_INSTRUCTIONS(partNum, MAX_GEMINI_PARTS),
+        truncationNoticeText: partNum === 1 ? part1Extras.notice || void 0 : void 0,
         recentCommitsText: partNum === 1 ? cappedRecentCommitsText || void 0 : void 0,
         treeText,
+        omittedManifestText: partNum === 1 ? part1Extras.manifest || void 0 : void 0,
         fileXmlList: bucket.map((f) => f.fileXml)
       }).length;
     };
-    for (const file of validFiles) {
-      let candidate = [...currentBucket, file];
-      let candidateSize = serializedSize(candidate, buckets.length);
-      if (currentBucket.length > 0 && candidateSize > partBudget) {
-        buckets.push(currentBucket);
-        currentBucket = [];
-        candidate = [file];
-        candidateSize = serializedSize(candidate, buckets.length);
+    if (partBudget <= 0) return source.map((f) => [f]);
+    const packList = [...source].sort(
+      (a, b) => b.fileXml.length - a.fileXml.length || a.path.localeCompare(b.path)
+    );
+    const buckets = [];
+    for (const file of packList) {
+      let placed = false;
+      for (let i = 0; i < buckets.length; i++) {
+        const candidate = [...buckets[i], file];
+        if (serializedSize(candidate, i) <= partBudget) {
+          buckets[i] = candidate;
+          placed = true;
+          break;
+        }
       }
-      if (currentBucket.length === 0 && candidateSize > partBudget && buckets.length === 0) {
-        buckets.push([]);
-        candidateSize = serializedSize([file], 1);
-      }
-      currentBucket = candidate;
+      if (!placed) buckets.push([file]);
     }
-    if (currentBucket.length > 0 || buckets.length === 0) buckets.push(currentBucket);
     return buckets;
   }
-  let chunkBuckets = partitionFiles(effectiveMaxChars);
-  if (chunkBuckets.length > MAX_GEMINI_PARTS) {
-    chunkBuckets = partitionFiles(HARD_GEMINI_CHAR_LIMIT);
-    if (chunkBuckets.length > MAX_GEMINI_PARTS) {
+  const maxPackBudget = hasExplicitUserBudget ? effectiveMaxChars : HARD_GEMINI_CHAR_LIMIT;
+  const requiredParts = partitionFiles(maxPackBudget, validFiles).length;
+  let keptFiles = validFiles;
+  if (requiredParts > MAX_GEMINI_PARTS || omitted.length > 0) {
+    const selectionBudget = Math.max(1, maxPackBudget - TRUNCATION_RESERVE_CHARS);
+    const selection = selectFilesWithinPartLimit(
+      validFiles,
+      (subset) => partitionFiles(selectionBudget, subset).length,
+      MAX_GEMINI_PARTS
+    );
+    keptFiles = selection.kept;
+    omitted.push(...selection.omitted);
+    if (keptFiles.length === 0) {
       throw new Error(
-        `RepoMix needs more than ${MAX_GEMINI_PARTS} parts to preserve all files within the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
+        `RepoMix cannot include any file within ${MAX_GEMINI_PARTS} parts and the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
       );
     }
+    const keptPaths = new Set(keptFiles.map((file) => file.path));
+    fullTreeXml = capFileTree(
+      treeEntries.filter((entry) => keptPaths.has(entry)),
+      maxTreeChars
+    );
+    part1Extras = {
+      notice: buildTruncationNotice({
+        includedFiles: keptFiles.length,
+        totalFiles: files.length,
+        omittedFiles: omitted,
+        requiredParts,
+        availableParts: MAX_GEMINI_PARTS
+      }),
+      manifest: buildOmittedManifest(omitted)
+    };
+  }
+  const budgetLadder = hasExplicitUserBudget ? [effectiveMaxChars] : [
+    effectiveMaxChars,
+    Math.min(95e3, HARD_GEMINI_CHAR_LIMIT),
+    HARD_GEMINI_CHAR_LIMIT
+  ];
+  const triedBudgets = [];
+  let chunkBuckets = [];
+  for (const budget of budgetLadder) {
+    if (triedBudgets.includes(budget)) continue;
+    chunkBuckets = partitionFiles(budget, keptFiles);
+    triedBudgets.push(budget);
+    if (chunkBuckets.length <= MAX_GEMINI_PARTS) break;
+  }
+  if (chunkBuckets.length > MAX_GEMINI_PARTS) {
+    throw new Error(
+      `RepoMix truncation invariant failed: ${chunkBuckets.length} parts after selecting within ${MAX_GEMINI_PARTS}.`
+    );
   }
   const totalParts = chunkBuckets.length;
   const parts = [];
@@ -2035,8 +2190,10 @@ ${bucket.map((b) => b.path).join("\n")}`;
       partNum,
       totalParts,
       instructionsText: partInstructions,
+      truncationNoticeText: partNum === 1 ? part1Extras.notice || void 0 : void 0,
       metadata: partNum === 1 ? cappedRecentCommitsText : "",
       treeText: partTreeText,
+      omittedManifestText: partNum === 1 ? part1Extras.manifest || void 0 : void 0,
       fileEntries: bucket
     });
     const partXml = fitted.xml;
@@ -2059,17 +2216,31 @@ ${bucket.map((b) => b.path).join("\n")}`;
       }
     });
   }
-  if (parts.length > MAX_GEMINI_PARTS || emittedFileCount !== validFiles.length) {
+  if (parts.length > MAX_GEMINI_PARTS || emittedFileCount + omitted.length !== files.length) {
     throw new Error(
-      `RepoMix output could not preserve all files within ${MAX_GEMINI_PARTS} conforming parts.`
+      `RepoMix output could not preserve the file accounting within ${MAX_GEMINI_PARTS} conforming parts.`
     );
   }
+  const hasPartLimit = omitted.some((entry) => entry.reason === "part_limit_exceeded");
+  const hasHardLimit = omitted.some((entry) => entry.reason === "file_over_hard_limit");
+  const truncationReason = hasPartLimit && hasHardLimit ? "mixed" : hasPartLimit ? "part_limit_exceeded" : "file_over_hard_limit";
+  const truncation = omitted.length > 0 ? {
+    reason: truncationReason,
+    requiredParts,
+    availableParts: MAX_GEMINI_PARTS,
+    includedFiles: emittedFileCount,
+    totalFiles: files.length,
+    omittedFiles: [...omitted].sort((a, b) => a.path.localeCompare(b.path)),
+    omittedChars: omitted.reduce((sum, entry) => sum + (entry.chars ?? 0), 0)
+  } : void 0;
   return {
     xmlContent: parts[0]?.xmlContent ?? single.xml,
     parts,
     isChunked: true,
+    ...truncation ? { truncation } : {},
     stats: {
       fileCount: emittedFileCount,
+      totalFileCount: files.length,
       estimatedTokens: Math.ceil(totalChars / 4),
       charCount: totalChars
     }
@@ -2354,6 +2525,7 @@ async function handleMixRequest(req, githubToken) {
         xmlContent: mixResult.xmlContent,
         parts: mixResult.parts,
         isChunked: mixResult.isChunked,
+        ...mixResult.truncation ? { truncation: mixResult.truncation } : {},
         stats: {
           ...mixResult.stats,
           ...recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {}
@@ -2370,6 +2542,7 @@ async function handleMixRequest(req, githubToken) {
     xmlContent: mixResult.xmlContent,
     parts: mixResult.parts,
     isChunked: mixResult.isChunked,
+    ...mixResult.truncation ? { truncation: mixResult.truncation } : {},
     stats: {
       ...mixResult.stats,
       ...recentCommitsCount > 0 ? { recentCommitsCount, volatileFilesCount } : {}

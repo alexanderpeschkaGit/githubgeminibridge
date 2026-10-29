@@ -11,7 +11,7 @@ Pack the repository into semantically partitioned chunks with a strict maximum l
 
 ## Core Architecture & 130k Partitioning Strategy
 
-> [!IMPORTANT] **Two different limits — do not confuse them.** The `#repomix` / `#bundle` CLI workflow below targets **130,000 characters per chunk** for generic LLM context. The **edge-worker's own** RepoMix generator (`packages/edge-worker/src/modules/mixChunker.ts`) is stricter because it feeds the Gemini Web UI: `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, `MAX_GEMINI_PARTS = 10`. Never raise those constants to the 130k CLI budget.
+> [!IMPORTANT] **Two different limits — do not confuse them.** The `#repomix` / `#bundle` CLI workflow below targets **130,000 characters per chunk** for generic LLM context. The **edge-worker's own** RepoMix generator (`packages/edge-worker/src/modules/mixChunker.ts`) is stricter because it feeds the Gemini Web UI: `DEFAULT_MAX_CHUNK_CHARS = 85_000`, `HARD_GEMINI_CHAR_LIMIT = 100_000`, `MAX_GEMINI_PARTS = 10`. Never raise those constants to the 130k CLI budget. When a repository needs more than 10 parts, the worker omits whole files deterministically, reports `MixTruncation`, and warns in the HUD; file contents are never compressed or truncated for patch fidelity.
 
 1. **Semantic Grouping (Preserving Code Context):**
    Repomix uses top-level directory boundaries to group files logically. A single file or function is **never sliced down the middle** across chunks.

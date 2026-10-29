@@ -518,9 +518,10 @@ async function main() {
     const mixerScanPath = path.join(ROOT_DIR, 'packages/edge-worker/src/modules/mixerTarScan.ts');
     const injectorPath = path.join(ROOT_DIR, 'packages/userscript-hud/src/dom/injector.ts');
     const storagePath = path.join(ROOT_DIR, 'packages/userscript-hud/src/services/storage.ts');
+    const hudMixPath = path.join(ROOT_DIR, 'packages/userscript-hud/src/ui/hudMixAction.ts');
     const rootUserScriptPath = path.join(ROOT_DIR, 'gemini-bridge.user.js');
 
-    const filesExist = [chunkerPath, tarUtilsPath, mixerPath, injectorPath, storagePath, rootUserScriptPath].every((p) => fs.existsSync(p));
+    const filesExist = [chunkerPath, tarUtilsPath, mixerPath, injectorPath, storagePath, hudMixPath, rootUserScriptPath].every((p) => fs.existsSync(p));
     if (!filesExist) return { pass: false, error: 'Required chunking files missing' };
 
     const chunkerContent = fs.readFileSync(chunkerPath, 'utf-8');
@@ -530,6 +531,7 @@ async function main() {
       .join('\n');
     const injectorContent = fs.readFileSync(injectorPath, 'utf-8');
     const storageContent = fs.readFileSync(storagePath, 'utf-8');
+    const hudMixContent = fs.readFileSync(hudMixPath, 'utf-8');
     const rootUserScript = fs.readFileSync(rootUserScriptPath, 'utf-8');
 
     const hasBuildChunked = chunkerContent.includes('export function buildChunkedMixXml');
@@ -537,9 +539,13 @@ async function main() {
     const hasDefault85k = chunkerContent.includes('DEFAULT_MAX_CHUNK_CHARS = 85_000') || chunkerContent.includes('85000');
     const hasMaxParts10 = chunkerContent.includes('MAX_GEMINI_PARTS = 10');
     const hasTxtExtension = chunkerContent.includes('repo-mix.part${partNum}.txt') && injectorContent.includes("type: 'text/plain'") && injectorContent.includes("'repo-mix.txt'");
-    const hasExplicitOversizeRejection =
-      chunkerContent.includes('if (blockedFiles.length > 0)') &&
-      chunkerContent.includes('RepoMix cannot preserve');
+    const hasTruncationContract =
+      chunkerContent.includes('selectFilesWithinPartLimit') &&
+      chunkerContent.includes('buildTruncationNotice') &&
+      chunkerContent.includes('omittedFiles') &&
+      !chunkerContent.includes('needs more than ${MAX_GEMINI_PARTS} parts');
+    const hasHudTruncationWarning =
+      hudMixContent.includes('⚠️ Truncated:') && hudMixContent.includes('attachment slots');
     const hasIgnoreUtils = tarUtilsContent.includes('export function parseIgnoreLines') && tarUtilsContent.includes('export function matchesIgnorePattern');
     const hasDynamicIgnoreInMixer = mixerContent.includes('dynamicIgnorePatterns') && mixerContent.includes('.repomixignore.cf') && mixerContent.includes('.venv');
     const storageSupports2M = storageContent.includes('2000000');
@@ -548,6 +554,7 @@ async function main() {
     const bundleHasMaxChunkChars = rootUserScript.includes('maxChunkCharsInput');
     const bundleHasTxtMime = (rootUserScript.includes("'text/plain'") || rootUserScript.includes('"text/plain"')) &&
       (rootUserScript.includes("'repo-mix.txt'") || rootUserScript.includes('"repo-mix.txt"'));
+    const bundleHasTruncationWarning = rootUserScript.includes('Truncated:') && rootUserScript.includes('attachment slots');
 
     // Functional test of 85k char budgeting, 10-parts guardrail & atomic file boundaries
     function simulateChunking(files, fileTreeEntries, maxChunkChars = 85000, hardLimit = 100000) {
@@ -642,18 +649,6 @@ async function main() {
     const part1HasFullTree = resA.parts[0].tree.includes('src/a.ts') && resA.parts[0].tree.includes('src/c.ts');
     const part2HasCompactTree = resA.parts[1].tree.includes('# Part 2/');
 
-    // Test B: File > 100k chars is rejected rather than silently skipped
-    const testFilesB = [
-      { path: 'src/huge.ts', content: 'H'.repeat(105000) },
-      { path: 'src/small.ts', content: 'console.log("ok");' }
-    ];
-    let oversizedFileRejected = false;
-    try {
-      simulateChunking(testFilesB, ['src/huge.ts', 'src/small.ts'], 85000, 100000);
-    } catch (err) {
-      oversizedFileRejected = err.message.includes('RepoMix cannot preserve oversized file');
-    }
-
     // Test C: 10-parts Guardrail (25 files of 20k chars each)
     const testFilesC = Array.from({ length: 25 }, (_, i) => ({
       path: `src/mod${i}.ts`,
@@ -700,12 +695,12 @@ async function main() {
       !matchesIgnoreTest('src/index.ts', testPats) &&
       !matchesIgnoreTest('nested/root_only.txt', testPats);
 
-    const functionalBudgetPass = partsUnder85k && part1HasFullTree && part2HasCompactTree && oversizedFileRejected;
+    const functionalBudgetPass = partsUnder85k && part1HasFullTree && part2HasCompactTree;
 
     const pass = hasBuildChunked && hasInjectParts && hasDefault85k && hasMaxParts10 &&
-      hasTxtExtension && hasExplicitOversizeRejection && hasIgnoreUtils && hasDynamicIgnoreInMixer &&
+      hasTxtExtension && hasTruncationContract && hasHudTruncationWarning && hasIgnoreUtils && hasDynamicIgnoreInMixer &&
       storageSupports2M && bundleHasInjectParts && bundleHasIncludePaths &&
-      bundleHasMaxChunkChars && bundleHasTxtMime && functionalBudgetPass && guardrailPass && ignorePass;
+      bundleHasMaxChunkChars && bundleHasTxtMime && bundleHasTruncationWarning && functionalBudgetPass && guardrailPass && ignorePass;
 
     return {
       pass,
@@ -714,7 +709,8 @@ async function main() {
       hasDefault85k,
       hasMaxParts10,
       hasTxtExtension,
-      hasExplicitOversizeRejection,
+      hasTruncationContract,
+      hasHudTruncationWarning,
       hasIgnoreUtils,
       hasDynamicIgnoreInMixer,
       storageSupports2M,
@@ -722,6 +718,7 @@ async function main() {
       bundleHasIncludePaths,
       bundleHasMaxChunkChars,
       bundleHasTxtMime,
+      bundleHasTruncationWarning,
       functionalBudgetPass,
       guardrailPass,
       ignorePass
@@ -812,8 +809,9 @@ async function main() {
     const chunkerEnforcesHardLimit = chunkerContent.includes('partXml.length > HARD_GEMINI_CHAR_LIMIT') &&
       chunkerContent.includes('xml.length > HARD_GEMINI_CHAR_LIMIT') &&
       chunkerContent.includes('exceeding the ${HARD_GEMINI_CHAR_LIMIT}-character limit');
-    const chunkerEnforcesPartCount = chunkerContent.includes('chunkBuckets.length > MAX_GEMINI_PARTS') &&
-      chunkerContent.includes('needs more than ${MAX_GEMINI_PARTS} parts');
+    const chunkerEnforcesPartCount = chunkerContent.includes('selectFilesWithinPartLimit') &&
+      chunkerContent.includes('truncation') &&
+      !chunkerContent.includes('needs more than ${MAX_GEMINI_PARTS} parts');
 
     // 6. Verify Userscript bundle wiring
     const bundleHasRecentCommitsCheck = rootUserScript.includes('recentCommitsCheck') && rootUserScript.includes('includeRecentCommits');

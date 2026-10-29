@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.17
+// @version      2.0.18
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -860,6 +860,15 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     repoRow.appendChild(repoLabel);
     repoRow.appendChild(repoInput);
     body.appendChild(repoRow);
+    const repoHistoryRow = createHudElement("div", "hud-form-row");
+    const repoHistoryLabel = createHudElement("span", "hud-label", "Recent Repositories");
+    const repoHistorySelect = createHudElement("select", "hud-input hud-select");
+    const repoHistoryPlaceholder = createHudElement("option", void 0, "Select a previous repo...");
+    repoHistoryPlaceholder.value = "";
+    repoHistorySelect.appendChild(repoHistoryPlaceholder);
+    repoHistoryRow.appendChild(repoHistoryLabel);
+    repoHistoryRow.appendChild(repoHistorySelect);
+    body.appendChild(repoHistoryRow);
     const ownerRow = createHudElement("div", "hud-form-row");
     const ownerLabel = createHudElement("span", "hud-label", "GitHub Owner (active account)");
     const ownerInput = createHudElement("input", "hud-input");
@@ -1015,6 +1024,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       updateBannerBtn,
       closeBtn,
       repoInput,
+      repoHistorySelect,
       ownerInput,
       ownerHintEl,
       branchInput,
@@ -1229,9 +1239,98 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     void runCheck(false);
   }
 
+  // src/services/repoHistory.ts
+  var HISTORY_KEY = "repo_history_v1";
+  var MAX_ENTRIES = 4;
+  function historyKey() {
+    try {
+      return `${HISTORY_KEY}_${getActiveProfileId()}`;
+    } catch {
+      return HISTORY_KEY;
+    }
+  }
+  function normalizeEntry(entry) {
+    return {
+      owner: (entry.owner || "").trim(),
+      repo: (entry.repo || "").trim(),
+      branch: (entry.branch || "").trim(),
+      targetBranch: (entry.targetBranch || "").trim() || void 0
+    };
+  }
+  function entryKey(e) {
+    const n = normalizeEntry(e);
+    return `${n.owner}|||${n.repo}|||${n.branch}|||${n.targetBranch || ""}`;
+  }
+  function loadRepoHistory() {
+    try {
+      const raw = getStoredValue(historyKey(), "");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const out = [];
+      const seen = /* @__PURE__ */ new Set();
+      for (const p of parsed) {
+        if (!p) continue;
+        const n = normalizeEntry(p);
+        if (!n.repo) continue;
+        const key = entryKey(n);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(n);
+      }
+      return out.slice(0, MAX_ENTRIES);
+    } catch {
+      return [];
+    }
+  }
+  function saveRepoHistory(entries) {
+    try {
+      const cleaned = entries.map(normalizeEntry).filter((e) => e.repo).slice(0, MAX_ENTRIES);
+      setStoredValue(historyKey(), JSON.stringify(cleaned));
+    } catch {
+    }
+  }
+  function pushRepoHistory(entry) {
+    const n = normalizeEntry(entry);
+    if (!n.repo) return loadRepoHistory();
+    const current = loadRepoHistory();
+    const key = entryKey(n);
+    const filtered = current.filter((e) => entryKey(e) !== key);
+    const next = [n, ...filtered].slice(0, MAX_ENTRIES);
+    saveRepoHistory(next);
+    return next;
+  }
+  function recordFromConfig(cfg) {
+    return pushRepoHistory({
+      owner: cfg.owner || "",
+      repo: cfg.repo || "",
+      branch: cfg.branch || "",
+      targetBranch: cfg.targetBranch || ""
+    });
+  }
+
   // src/ui/hudConfigBindings.ts
+  var refreshRepoHistorySelect = null;
+  function setRepoHistorySelectRefresher(fn) {
+    refreshRepoHistorySelect = fn;
+  }
+  function refreshRepoHistorySelectNow() {
+    refreshRepoHistorySelect?.();
+  }
   function bindHudConfigInputs(deps) {
     const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, renderState } = deps;
+    const recordCurrentHistory = () => {
+      try {
+        pushRepoHistory({
+          owner: config.owner,
+          repo: config.repo,
+          branch: config.branch,
+          targetBranch: config.targetBranch || ""
+        });
+      } catch {
+      }
+      refreshRepoHistorySelect?.();
+    };
     dom.repoInput.onchange = () => {
       try {
         const sanitized = sanitizeRepo(sanitizeNoGithubPat(dom.repoInput.value.trim(), "repo"));
@@ -1239,6 +1338,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
         config.repo = sanitized;
         saveHudConfig({ repo: sanitized });
         if (sanitized !== previousRepo) resetPatchOidState(`Repository changed to "${sanitized}".`);
+        recordCurrentHistory();
       } catch (e) {
         alert(e.message);
         dom.repoInput.value = config.repo;
@@ -1249,6 +1349,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
         const sanitized = sanitizeNoGithubPat(dom.ownerInput.value.trim(), "owner");
         config.owner = sanitized;
         saveHudConfig({ owner: sanitized });
+        recordCurrentHistory();
       } catch (e) {
         alert(e.message);
         dom.ownerInput.value = config.owner;
@@ -1261,6 +1362,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
         config.branch = sanitized;
         saveHudConfig({ branch: sanitized });
         if (sanitized !== previousBranch) resetPatchOidState(`Branch changed to "${sanitized}".`);
+        recordCurrentHistory();
       } catch (e) {
         alert(e.message);
         dom.branchInput.value = config.branch;
@@ -1269,9 +1371,11 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     dom.targetBranchInput.onchange = () => {
       try {
         const sanitized = sanitizeNoGithubPat(dom.targetBranchInput.value.trim(), "targetBranch");
+        const previousTarget = config.targetBranch || "";
         config.targetBranch = sanitized;
-        clearTargetOidState2(state);
+        if (sanitized !== previousTarget) clearTargetOidState2(state);
         saveHudConfig({ targetBranch: sanitized });
+        recordCurrentHistory();
         renderState();
       } catch (e) {
         alert(e.message);
@@ -1447,6 +1551,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
     updateAccountButtons();
     refreshAccountHint();
+    recordFromConfig(config);
+    refreshRepoHistorySelectNow();
     renderState();
   }
   function bindAccountSwitch(deps) {
@@ -1974,6 +2080,9 @@ Fix Instructions:
           const metaCommits = res.stats.recentCommitsCount ? ` (incl. ${res.stats.recentCommitsCount} recent commits, ${res.stats.volatileFilesCount ?? 0} volatile files)` : "";
           const skipped = res.skippedFiles || [];
           const skippedNotice = skipped.length > 0 ? ` | Skipped ${skipped.length} file(s)${skipped.length <= 3 ? ": " + skipped.slice(0, 3).map((s) => s.path.split("/").pop()).join(", ") + (skipped.length > 3 ? "..." : "") : ""} \u2014 see details (add to .repomixignore.cf or narrow includePaths)` : "";
+          const truncation = res.truncation;
+          const truncationNotice = truncation ? ` | \u26A0\uFE0F Truncated: ${truncation.includedFiles}/${truncation.totalFiles} files (${truncation.omittedFiles.length} omitted${truncation.omittedFiles.length <= 3 ? ": " + truncation.omittedFiles.slice(0, 3).map((entry) => entry.path.split("/").pop()).join(", ") : ""}) \u2014 add to .repomixignore.cf or narrow includePaths` : "";
+          const slotNotice = res.parts && res.parts.length >= 9 ? ` | \u26A0\uFE0F Using ${res.parts.length}/10 Gemini attachment slots; existing prompt attachments may trigger the 10-file warning` : "";
           if (res.parts && res.parts.length > 1) {
             const partBreakdown = res.parts.map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`).join(", ");
             injected = injectRepoMixParts(
@@ -1981,14 +2090,14 @@ Fix Instructions:
             );
             updateState({
               status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}${skippedNotice}`
+              statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}${skippedNotice}${truncationNotice}${slotNotice}`
             });
           } else {
             injected = injectRepoMixFile(res.xmlContent);
             const charLen = res.stats.charCount ?? res.xmlContent.length;
             updateState({
               status: "IDLE",
-              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}${skippedNotice}`
+              statusMessage: `\u2705 Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}${skippedNotice}${truncationNotice}${slotNotice}`
             });
           }
         } else {
@@ -2249,6 +2358,65 @@ Fix Instructions:
       }
     };
     dom.closeBtn.onclick = closePanel;
+    const refreshRepoHistorySelectUI = () => {
+      const select = dom.repoHistorySelect;
+      if (!select) return;
+      const previousIndex = select.value;
+      const entries = loadRepoHistory();
+      select.innerHTML = "";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Select a previous repo...";
+      select.appendChild(placeholder);
+      entries.forEach((entry, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        const repoLabel = entry.repo.includes("/") ? entry.repo : `${entry.owner}/${entry.repo}`;
+        const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : "";
+        option.textContent = `${repoLabel} @ ${entry.branch}${target}`;
+        select.appendChild(option);
+      });
+      select.disabled = entries.length === 0;
+      select.value = previousIndex && entries[Number(previousIndex)] ? previousIndex : "";
+    };
+    const applyRepoHistorySelection = () => {
+      const select = dom.repoHistorySelect;
+      if (!select) return;
+      const index = Number(select.value);
+      const entries = loadRepoHistory();
+      const entry = Number.isInteger(index) && index >= 0 ? entries[index] : void 0;
+      if (!entry) {
+        select.value = "";
+        return;
+      }
+      const previousRepo = config.repo;
+      const previousBranch = config.branch;
+      const previousTarget = config.targetBranch || "";
+      config.owner = entry.owner || config.owner;
+      config.repo = sanitizeRepo(entry.repo || config.repo);
+      config.branch = entry.branch || config.branch;
+      config.targetBranch = entry.targetBranch || "";
+      dom.ownerInput.value = config.owner;
+      dom.repoInput.value = config.repo;
+      dom.branchInput.value = config.branch;
+      dom.targetBranchInput.value = config.targetBranch || "";
+      saveHudConfig({
+        owner: config.owner,
+        repo: config.repo,
+        branch: config.branch,
+        targetBranch: config.targetBranch
+      });
+      const repoOrBranchChanged = config.repo !== previousRepo || config.branch !== previousBranch;
+      if (repoOrBranchChanged) {
+        resetPatchOidState(`Switched to "${config.repo} @ ${config.branch}".`);
+      } else if ((config.targetBranch || "") !== previousTarget) {
+        clearTargetOidState(state);
+      }
+      recordFromConfig(config);
+      refreshRepoHistorySelectUI();
+      select.value = "";
+      renderState();
+    };
     bindHudConfigInputs({
       dom,
       config,
@@ -2257,6 +2425,9 @@ Fix Instructions:
       clearTargetOidState,
       renderState
     });
+    dom.repoHistorySelect.onchange = applyRepoHistorySelection;
+    setRepoHistorySelectRefresher(refreshRepoHistorySelectUI);
+    refreshRepoHistorySelectUI();
     const applyAccountSwitch = bindAccountSwitch({ dom, config, state, resetPatchOidState, renderState });
     applyAccountSwitch();
     bindMixAction({

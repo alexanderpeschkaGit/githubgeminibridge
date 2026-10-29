@@ -112,8 +112,6 @@ if (cmd === 'generate-id') {
   console.log(JSON.stringify(result));
 } else if (cmd === 'start') {
   console.log(JSON.stringify(start(args[0])));
-
-  return;
 } else if (cmd === 'complete') {
   console.log(JSON.stringify(complete(args[0])));
 } else if (cmd === 'lock') {

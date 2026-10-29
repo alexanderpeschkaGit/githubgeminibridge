@@ -38,6 +38,14 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
           ? ` | Skipped ${skipped.length} file(s)${skipped.length <= 3 ? ': ' + skipped.slice(0, 3).map(s => s.path.split('/').pop()).join(', ') + (skipped.length > 3 ? '...' : '') : ''} — see details (add to .repomixignore.cf or narrow includePaths)`
           : '';
 
+        const truncation = res.truncation;
+        const truncationNotice = truncation
+          ? ` | ⚠️ Truncated: ${truncation.includedFiles}/${truncation.totalFiles} files (${truncation.omittedFiles.length} omitted${truncation.omittedFiles.length <= 3 ? ': ' + truncation.omittedFiles.slice(0, 3).map((entry) => entry.path.split('/').pop()).join(', ') : ''}) — add to .repomixignore.cf or narrow includePaths`
+          : '';
+        const slotNotice = res.parts && res.parts.length >= 9
+          ? ` | ⚠️ Using ${res.parts.length}/10 Gemini attachment slots; existing prompt attachments may trigger the 10-file warning`
+          : '';
+
         if (res.parts && res.parts.length > 1) {
           const partBreakdown = res.parts
             .map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`)
@@ -47,14 +55,14 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
           );
           updateState({
             status: 'IDLE',
-            statusMessage: `✅ Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}${skippedNotice}`,
+            statusMessage: `✅ Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}${skippedNotice}${truncationNotice}${slotNotice}`,
           });
         } else {
           injected = injectRepoMixFile(res.xmlContent);
           const charLen = res.stats.charCount ?? res.xmlContent.length;
           updateState({
             status: 'IDLE',
-            statusMessage: `✅ Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}${skippedNotice}`,
+            statusMessage: `✅ Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}${skippedNotice}${truncationNotice}${slotNotice}`,
           });
         }
       } else {
