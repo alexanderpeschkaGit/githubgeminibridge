@@ -38,6 +38,8 @@ export function escapeCdata(content: string): string {
   return content.replace(/\]\]>/g, ']]]]><![CDATA[>');
 }
 
+const MINIFIED_ASSET_PATTERN = /\.min\.(?:js|mjs|cjs|css)$/i;
+
 /**
  * Filter decision helper to avoid allocating buffer or string memory for ignored entries.
  * Evaluates TAR entry metadata at the 512-byte header level.
@@ -88,7 +90,8 @@ export function shouldSkipTarEntry(
     DEFAULT_IGNORED_FILES.has(filename) ||
     filename.endsWith('.bundle') ||
     filename.startsWith('repomix-output') ||
-    /.*-bundle.*\.txt$/i.test(filename)
+    /.*-bundle.*\.txt$/i.test(filename) ||
+    MINIFIED_ASSET_PATTERN.test(filename)
   ) {
     return { skip: true, reason: 'IGNORED_PATH' };
   }

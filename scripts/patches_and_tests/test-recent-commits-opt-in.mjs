@@ -90,6 +90,7 @@ const mixerBuild = await esbuild.build({
           export const parseRepoOwner = (...args) => globalThis.__mixMocks.parseRepoOwner(...args);
           export const getBranchHeadOid = (...args) => globalThis.__mixMocks.getBranchHeadOid(...args);
           export const commitSingleFileViaGraphQL = (...args) => globalThis.__mixMocks.commitSingleFileViaGraphQL(...args);
+          export class BranchNotFoundError extends Error { constructor(o, r, b, d) { super(); this.defaultBranch = d; } }
         `,
         loader: 'js',
       }));

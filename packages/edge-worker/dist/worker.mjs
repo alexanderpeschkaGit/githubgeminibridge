@@ -50,9 +50,11 @@ function parseRepoOwner(repoInput, ownerInput) {
 // src/utils/githubGraphQL.ts
 var GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql";
 var BranchNotFoundError = class extends Error {
-  constructor(owner, repo, branch) {
+  defaultBranch;
+  constructor(owner, repo, branch, defaultBranch) {
     super(`Branch "${branch}" was not found in repository "${owner}/${repo}".`);
     this.name = "BranchNotFoundError";
+    this.defaultBranch = defaultBranch || void 0;
   }
 };
 async function executeGraphQL(query, variables, token) {
@@ -98,7 +100,12 @@ async function getBranchHeadOid(owner, repo, branch, token) {
   if (!branch && repository.defaultBranchRef?.target?.oid) {
     return { headOid: repository.defaultBranchRef.target.oid, resolvedBranch: repository.defaultBranchRef.name, repositoryId: repository.id };
   }
-  throw new BranchNotFoundError(owner, repo, branch || qualifiedBranch);
+  throw new BranchNotFoundError(
+    owner,
+    repo,
+    branch || qualifiedBranch,
+    repository.defaultBranchRef?.name
+  );
 }
 async function createBranchRef(owner, repo, branchName, oid, token, repositoryId) {
   const cleanBranch = branchName.replace(/^refs\/heads\//, "");
@@ -1455,29 +1462,26 @@ function selectFilesWithinPartLimit(files, countParts, maxParts) {
   if (requiredParts <= maxParts) {
     return { kept: [...files], omitted: [], requiredParts };
   }
-  const kept = rankFilesForOmission(files);
-  const omitted = [];
-  const dropLowest = (count) => {
-    const dropped = kept.splice(Math.max(0, kept.length - count));
-    for (const file of dropped) {
-      omitted.push({
-        path: file.path,
-        reason: "part_limit_exceeded",
-        chars: file.content.length
-      });
-    }
-  };
-  if (kept.length <= 500) {
-    while (kept.length > 0 && countParts(kept) > maxParts) {
-      dropLowest(1);
-    }
-  } else {
-    let batch = Math.max(1, Math.ceil(kept.length * 0.1));
-    while (kept.length > 0 && countParts(kept) > maxParts) {
-      dropLowest(Math.min(batch, kept.length));
-      batch = Math.min(batch * 2, Math.max(1, Math.ceil(files.length / 2)));
+  const ranked = rankFilesForOmission(files);
+  let low = 0;
+  let high = ranked.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (countParts(ranked.slice(0, mid)) <= maxParts) {
+      low = mid;
+    } else {
+      high = mid - 1;
     }
   }
+  const kept = ranked.slice(0, low);
+  while (kept.length > 0 && countParts(kept) > maxParts) {
+    kept.pop();
+  }
+  const omitted = ranked.slice(kept.length).map((file) => ({
+    path: file.path,
+    reason: "part_limit_exceeded",
+    chars: file.content.length
+  }));
   return { kept, omitted, requiredParts };
 }
 function buildOmittedManifest(omitted, maxChars = 8e3) {
@@ -1502,8 +1506,9 @@ function buildOmittedManifest(omitted, maxChars = 8e3) {
 ${body}${footer}`;
 }
 function buildTruncationNotice(summary) {
-  const sample = summary.omittedFiles.slice(0, 5).map((entry) => entry.path).join(", ");
-  const suffix = summary.omittedFiles.length > 5 ? " ..." : "";
+  const rawSample = summary.omittedFiles.slice(0, 5).map((entry) => entry.path).join(", ");
+  const sample = rawSample.length > 480 ? `${rawSample.slice(0, 477)}...` : rawSample;
+  const suffix = rawSample.length <= 480 && summary.omittedFiles.length > 5 ? " ..." : "";
   const reasons = [...new Set(summary.omittedFiles.map((entry) => entry.reason))].join(", ");
   return [
     "<truncation_notice>",
@@ -1607,13 +1612,32 @@ var DEFAULT_IGNORED_DIR_NAMES = /* @__PURE__ */ new Set([
   ".pytest_cache",
   ".mypy_cache",
   ".ruff_cache",
-  ".ipynb_checkpoints"
+  ".ipynb_checkpoints",
+  ".tmp",
+  "out",
+  ".output",
+  ".nuxt",
+  ".svelte-kit",
+  ".astro",
+  ".vercel",
+  ".netlify",
+  ".cache",
+  ".parcel-cache",
+  "storybook-static",
+  "playwright-report",
+  "test-results"
 ]);
 var DEFAULT_IGNORED_FILES = /* @__PURE__ */ new Set([
   "package-lock.json",
   "yarn.lock",
   "pnpm-lock.yaml",
-  "bun.lockb"
+  "bun.lockb",
+  "bun.lock",
+  "Cargo.lock",
+  "poetry.lock",
+  "uv.lock",
+  "composer.lock",
+  "Gemfile.lock"
 ]);
 var DEFAULT_IGNORED_EXTENSIONS = /* @__PURE__ */ new Set([
   ".png",
@@ -1644,7 +1668,9 @@ var DEFAULT_IGNORED_EXTENSIONS = /* @__PURE__ */ new Set([
   ".dll",
   ".so",
   ".dylib",
-  ".pyc"
+  ".pyc",
+  ".map",
+  ".tsbuildinfo"
 ]);
 
 // src/modules/mixerTarScan.ts
@@ -1659,6 +1685,7 @@ var TarScanError = class extends Error {
 function escapeCdata(content) {
   return content.replace(/\]\]>/g, "]]]]><![CDATA[>");
 }
+var MINIFIED_ASSET_PATTERN = /\.min\.(?:js|mjs|cjs|css)$/i;
 function shouldSkipTarEntry(relPath, size, typeflag, includePaths) {
   if (typeflag === "5" || typeflag === "g" || typeflag === "x" || relPath.endsWith("/") || typeflag !== "0" && typeflag !== "" && typeflag !== "\0") {
     return { skip: true, reason: "DIR_OR_NON_FILE" };
@@ -1679,7 +1706,7 @@ function shouldSkipTarEntry(relPath, size, typeflag, includePaths) {
       return { skip: true, reason: "IGNORED_PATH" };
     }
   }
-  if (DEFAULT_IGNORED_FILES.has(filename) || filename.endsWith(".bundle") || filename.startsWith("repomix-output") || /.*-bundle.*\.txt$/i.test(filename)) {
+  if (DEFAULT_IGNORED_FILES.has(filename) || filename.endsWith(".bundle") || filename.startsWith("repomix-output") || /.*-bundle.*\.txt$/i.test(filename) || MINIFIED_ASSET_PATTERN.test(filename)) {
     return { skip: true, reason: "IGNORED_PATH" };
   }
   const extMatch = filename.match(/\.[a-zA-Z0-9]+$/);
@@ -1877,6 +1904,9 @@ async function scanTarGzipStream(stream, includePaths) {
 }
 
 // src/modules/mixSerializer.ts
+var CONTINUATION_MIX_INSTRUCTIONS = (partNum, totalParts) => `<instructions>
+# Part ${partNum}/${totalParts} Continuation: Refer to Part 1 for master file_tree and modification protocol.
+</instructions>`;
 function formatFileXml(file) {
   return `  <file path="${file.path}"><![CDATA[${escapeCdata(file.content)}]]></file>`;
 }
@@ -1899,6 +1929,131 @@ function buildPartXml(params) {
   sections.push("<files>", ...params.fileXmlList, "</files>", "</repository>");
   return sections.join("\n");
 }
+function canFileFitContinuationPart(params) {
+  const treeText = `# Part ${params.maxParts}/${params.maxParts} files (1 files):
+${params.file.path}`;
+  const xml = buildPartXml({
+    owner: params.owner,
+    repo: params.repo,
+    branch: params.branch,
+    headOid: params.headOid,
+    partNum: params.maxParts,
+    totalParts: params.maxParts,
+    instructionsText: CONTINUATION_MIX_INSTRUCTIONS(params.maxParts, params.maxParts),
+    treeText,
+    fileXmlList: [params.file.fileXml]
+  });
+  return xml.length <= params.maxPartChars;
+}
+function packFilesIntoBuckets(params) {
+  if (params.partBudget <= 0) {
+    return {
+      buckets: params.files.map((f) => [f]),
+      allWithinBudget: false
+    };
+  }
+  const { owner, repo, branch, headOid, maxParts, partBudget } = params;
+  const part1EmptyLen = buildPartXml({
+    owner,
+    repo,
+    branch,
+    headOid,
+    partNum: 1,
+    totalParts: maxParts,
+    instructionsText: params.part1Instructions,
+    truncationNoticeText: params.part1Notice || void 0,
+    recentCommitsText: params.part1RecentCommits || void 0,
+    treeText: params.part1TreeText,
+    omittedManifestText: params.part1Manifest || void 0,
+    fileXmlList: []
+  }).length + (params.part1ReserveChars ?? 0);
+  const contBaseCache = /* @__PURE__ */ new Map();
+  function getContBaseLen(partNum) {
+    const cached = contBaseCache.get(partNum);
+    if (cached !== void 0) return cached;
+    const dummy = "__TREE__";
+    const xml = buildPartXml({
+      owner,
+      repo,
+      branch,
+      headOid,
+      partNum,
+      totalParts: maxParts,
+      instructionsText: CONTINUATION_MIX_INSTRUCTIONS(partNum, maxParts),
+      treeText: dummy,
+      fileXmlList: []
+    });
+    const len = xml.length - dummy.length;
+    contBaseCache.set(partNum, len);
+    return len;
+  }
+  function candidateBucketSize(bucketIndex, current, addedFile) {
+    const newCount = current.entries.length + (addedFile ? 1 : 0);
+    const newFilesXmlChars = current.filesXmlChars + (addedFile ? addedFile.fileXml.length : 0);
+    if (bucketIndex === 0) {
+      return part1EmptyLen + newFilesXmlChars + newCount;
+    }
+    const partNum = bucketIndex + 1;
+    const newPathsChars = current.pathsChars + (addedFile ? addedFile.path.length : 0);
+    const treeHeaderLen = `# Part ${partNum}/${maxParts} files (${newCount} files):
+`.length;
+    const treeTextLen = treeHeaderLen + newPathsChars + Math.max(0, newCount - 1);
+    const filesListLen = newFilesXmlChars + newCount;
+    return getContBaseLen(partNum) + treeTextLen + filesListLen;
+  }
+  const packList = [...params.files].sort(
+    (a, b) => b.fileXml.length - a.fileXml.length || a.path.localeCompare(b.path)
+  );
+  const buckets = [];
+  let allWithinBudget = true;
+  for (const file of packList) {
+    let placed = false;
+    for (let i = 0; i < buckets.length; i++) {
+      const size = candidateBucketSize(i, buckets[i], file);
+      if (size <= partBudget) {
+        buckets[i].entries.push(file);
+        buckets[i].filesXmlChars += file.fileXml.length;
+        buckets[i].pathsChars += file.path.length;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      const nextIdx = buckets.length;
+      const emptyState = { entries: [], filesXmlChars: 0, pathsChars: 0 };
+      if (nextIdx === 0 && candidateBucketSize(0, emptyState, file) > partBudget) {
+        const fitsContinuation = candidateBucketSize(1, emptyState, file) <= partBudget;
+        if (fitsContinuation && part1EmptyLen <= partBudget) {
+          buckets.push({ entries: [], filesXmlChars: 0, pathsChars: 0 });
+          buckets.push({
+            entries: [file],
+            filesXmlChars: file.fileXml.length,
+            pathsChars: file.path.length
+          });
+          placed = true;
+        }
+      }
+      if (!placed) {
+        const size = candidateBucketSize(nextIdx, emptyState, file);
+        if (size > partBudget) {
+          allWithinBudget = false;
+        }
+        buckets.push({
+          entries: [file],
+          filesXmlChars: file.fileXml.length,
+          pathsChars: file.path.length
+        });
+      }
+    }
+  }
+  if (buckets.length > maxParts) {
+    allWithinBudget = false;
+  }
+  return {
+    buckets: buckets.map((b) => b.entries),
+    allWithinBudget
+  };
+}
 
 // src/modules/mixChunker.ts
 var DEFAULT_MAX_CHUNK_CHARS = 85e3;
@@ -1908,7 +2063,6 @@ var DEFAULT_MAX_CHUNK_BYTES = 512 * 1024;
 var DEFAULT_MAX_CHUNK_TOKENS = 125e3;
 var MAX_RECENT_COMMITS_CHARS = 8e3;
 var RECENT_COMMITS_TRUNCATION_MARKER = "... [recent_commits truncated to preserve character budget]";
-var TRUNCATION_RESERVE_CHARS = 9e3;
 function capRecentCommitsText(text, maxChars = MAX_RECENT_COMMITS_CHARS) {
   if (!text || text.trim().length === 0) return "";
   const limit = Math.max(0, Math.floor(maxChars));
@@ -1950,9 +2104,6 @@ var DEFAULT_MIX_INSTRUCTIONS = [
   "     V1 MARKERS: use the established SEARCH, separator, and REPLACE markers, each one alone on its own line.",
   "</instructions>"
 ].join("\n");
-var CONTINUATION_MIX_INSTRUCTIONS = (partNum, totalParts) => `<instructions>
-# Part ${partNum}/${totalParts} Continuation: Refer to Part 1 for master file_tree and modification protocol.
-</instructions>`;
 function buildChunkedMixXml(input) {
   const {
     owner,
@@ -1966,30 +2117,29 @@ function buildChunkedMixXml(input) {
     maxChunkTokens = DEFAULT_MAX_CHUNK_TOKENS,
     splitOutput
   } = input;
-  const hasExplicitUserBudget = input.maxChunkChars !== void 0 || input.maxChunkBytes !== void 0 || input.maxChunkTokens !== void 0;
+  const canEscalateBudget = (input.maxChunkChars === void 0 || input.maxChunkChars === DEFAULT_MAX_CHUNK_CHARS) && input.maxChunkBytes === void 0 && input.maxChunkTokens === void 0;
   const effectiveMaxChars = Math.min(
     maxChunkChars,
     maxChunkBytes,
     maxChunkTokens * 4,
     HARD_GEMINI_CHAR_LIMIT
   );
+  const maxPackBudget = canEscalateBudget ? HARD_GEMINI_CHAR_LIMIT : effectiveMaxChars;
   const treeEntries = [...fileTreeEntries];
   const validFiles = [];
   const omitted = [];
   for (const f of files) {
     const fileXml = formatFileXml(f);
-    const standaloneXml = buildPartXml({
+    const fits = canFileFitContinuationPart({
       owner,
       repo,
       branch,
       headOid,
-      partNum: 1,
-      totalParts: 1,
-      instructionsText: DEFAULT_MIX_INSTRUCTIONS,
-      treeText: f.path,
-      fileXmlList: [fileXml]
+      maxParts: MAX_GEMINI_PARTS,
+      file: { path: f.path, content: f.content, fileXml },
+      maxPartChars: maxPackBudget
     });
-    if (standaloneXml.length > HARD_GEMINI_CHAR_LIMIT) {
+    if (!fits) {
       omitted.push({ path: f.path, reason: "file_over_hard_limit", chars: f.content.length });
       continue;
     }
@@ -1999,7 +2149,7 @@ function buildChunkedMixXml(input) {
     const sample = omitted.slice(0, 5).map((entry) => entry.path).join(", ");
     const suffix = omitted.length > 5 ? ` and ${omitted.length - 5} more` : "";
     throw new Error(
-      `RepoMix cannot include any file: all ${files.length} file(s) exceed the ${HARD_GEMINI_CHAR_LIMIT}-character limit (${sample}${suffix}).`
+      `RepoMix cannot include any file: all ${files.length} file(s) exceed the ${maxPackBudget}-character limit (${sample}${suffix}).`
     );
   }
   const maxTreeChars = Math.min(Math.floor(effectiveMaxChars * 0.45), 14e3);
@@ -2017,7 +2167,7 @@ function buildChunkedMixXml(input) {
   }).length;
   const metadataBudget = Math.max(
     0,
-    Math.min(MAX_RECENT_COMMITS_CHARS, effectiveMaxChars - part1OverheadChars)
+    Math.min(MAX_RECENT_COMMITS_CHARS, maxPackBudget - part1OverheadChars)
   );
   const cappedRecentCommitsText = capRecentCommitsText(input.recentCommitsText, metadataBudget);
   function fitPart(params) {
@@ -2066,7 +2216,7 @@ function buildChunkedMixXml(input) {
     treeText: fullTreeXml,
     fileEntries: validFiles
   });
-  const shouldSplit = splitOutput === true || single.xml.length > HARD_GEMINI_CHAR_LIMIT || splitOutput !== false && validFiles.length > 1 && singleRawXml.length > effectiveMaxChars;
+  const shouldSplit = splitOutput === true || single.xml.length > HARD_GEMINI_CHAR_LIMIT || single.xml.length > maxPackBudget || splitOutput !== false && validFiles.length > 1 && singleRawXml.length > effectiveMaxChars;
   if (!shouldSplit && omitted.length === 0) {
     if (single.xml.length > HARD_GEMINI_CHAR_LIMIT) {
       throw new Error(
@@ -2085,54 +2235,40 @@ function buildChunkedMixXml(input) {
     };
   }
   let part1Extras = { notice: "", manifest: "" };
-  function partitionFiles(budgetChars, source = validFiles) {
-    const partBudget = Math.min(budgetChars, HARD_GEMINI_CHAR_LIMIT);
-    const serializedSize = (bucket, index) => {
-      const partNum = index + 1;
-      const treeText = index === 0 ? fullTreeXml : `# Part ${partNum}/${MAX_GEMINI_PARTS} files (${bucket.length} files):
-${bucket.map((f) => f.path).join("\n")}`;
-      return buildPartXml({
-        owner,
-        repo,
-        branch,
-        headOid,
-        partNum,
-        totalParts: MAX_GEMINI_PARTS,
-        instructionsText: partNum === 1 ? DEFAULT_MIX_INSTRUCTIONS : CONTINUATION_MIX_INSTRUCTIONS(partNum, MAX_GEMINI_PARTS),
-        truncationNoticeText: partNum === 1 ? part1Extras.notice || void 0 : void 0,
-        recentCommitsText: partNum === 1 ? cappedRecentCommitsText || void 0 : void 0,
-        treeText,
-        omittedManifestText: partNum === 1 ? part1Extras.manifest || void 0 : void 0,
-        fileXmlList: bucket.map((f) => f.fileXml)
-      }).length;
-    };
-    if (partBudget <= 0) return source.map((f) => [f]);
-    const packList = [...source].sort(
-      (a, b) => b.fileXml.length - a.fileXml.length || a.path.localeCompare(b.path)
-    );
-    const buckets = [];
-    for (const file of packList) {
-      let placed = false;
-      for (let i = 0; i < buckets.length; i++) {
-        const candidate = [...buckets[i], file];
-        if (serializedSize(candidate, i) <= partBudget) {
-          buckets[i] = candidate;
-          placed = true;
-          break;
-        }
-      }
-      if (!placed) buckets.push([file]);
-    }
-    return buckets;
+  function partitionFiles(budgetChars, source = validFiles, part1ReserveChars = 0) {
+    const partBudget = Math.min(budgetChars, maxPackBudget, HARD_GEMINI_CHAR_LIMIT);
+    return packFilesIntoBuckets({
+      owner,
+      repo,
+      branch,
+      headOid,
+      maxParts: MAX_GEMINI_PARTS,
+      partBudget,
+      part1Instructions: DEFAULT_MIX_INSTRUCTIONS,
+      part1Notice: part1Extras.notice || void 0,
+      part1RecentCommits: cappedRecentCommitsText || void 0,
+      part1TreeText: fullTreeXml,
+      part1Manifest: part1Extras.manifest || void 0,
+      part1ReserveChars,
+      files: source
+    });
   }
-  const maxPackBudget = hasExplicitUserBudget ? effectiveMaxChars : HARD_GEMINI_CHAR_LIMIT;
-  const requiredParts = partitionFiles(maxPackBudget, validFiles).length;
+  const initialPack = partitionFiles(maxPackBudget, validFiles);
+  const requiredParts = initialPack.buckets.length;
   let keptFiles = validFiles;
-  if (requiredParts > MAX_GEMINI_PARTS || omitted.length > 0) {
-    const selectionBudget = Math.max(1, maxPackBudget - TRUNCATION_RESERVE_CHARS);
+  if (!initialPack.allWithinBudget || requiredParts > MAX_GEMINI_PARTS || omitted.length > 0) {
+    const part1WithMetaChars = part1OverheadChars + (cappedRecentCommitsText ? cappedRecentCommitsText.length + 1 : 0);
+    const manifestMaxChars = Math.max(
+      0,
+      Math.min(8e3, Math.floor((maxPackBudget - part1WithMetaChars - 1500) * 0.5))
+    );
+    const part1ReserveChars = manifestMaxChars + 1200;
     const selection = selectFilesWithinPartLimit(
       validFiles,
-      (subset) => partitionFiles(selectionBudget, subset).length,
+      (subset) => {
+        const res = partitionFiles(maxPackBudget, subset, part1ReserveChars);
+        return res.allWithinBudget ? res.buckets.length : MAX_GEMINI_PARTS + 1;
+      },
       MAX_GEMINI_PARTS
     );
     keptFiles = selection.kept;
@@ -2155,21 +2291,22 @@ ${bucket.map((f) => f.path).join("\n")}`;
         requiredParts,
         availableParts: MAX_GEMINI_PARTS
       }),
-      manifest: buildOmittedManifest(omitted)
+      manifest: buildOmittedManifest(omitted, manifestMaxChars)
     };
   }
-  const budgetLadder = hasExplicitUserBudget ? [effectiveMaxChars] : [
+  const budgetLadder = canEscalateBudget ? [
     effectiveMaxChars,
     Math.min(95e3, HARD_GEMINI_CHAR_LIMIT),
     HARD_GEMINI_CHAR_LIMIT
-  ];
+  ] : [effectiveMaxChars];
   const triedBudgets = [];
   let chunkBuckets = [];
   for (const budget of budgetLadder) {
     if (triedBudgets.includes(budget)) continue;
-    chunkBuckets = partitionFiles(budget, keptFiles);
+    const packed = partitionFiles(budget, keptFiles);
+    chunkBuckets = packed.buckets;
     triedBudgets.push(budget);
-    if (chunkBuckets.length <= MAX_GEMINI_PARTS) break;
+    if (packed.allWithinBudget && chunkBuckets.length <= MAX_GEMINI_PARTS) break;
   }
   if (chunkBuckets.length > MAX_GEMINI_PARTS) {
     throw new Error(
@@ -2200,6 +2337,11 @@ ${bucket.map((b) => b.path).join("\n")}`;
     if (partXml.length > HARD_GEMINI_CHAR_LIMIT) {
       throw new Error(
         `RepoMix part ${partNum} serialized to ${partXml.length} characters, exceeding the ${HARD_GEMINI_CHAR_LIMIT}-character limit.`
+      );
+    }
+    if (partXml.length > maxPackBudget) {
+      throw new Error(
+        `RepoMix part ${partNum} serialized to ${partXml.length} characters, exceeding the ${maxPackBudget}-character budget.`
       );
     }
     totalChars += partXml.length;
@@ -2393,12 +2535,14 @@ async function describeTarballNotFound(owner, repo, branch, token) {
     if (/Could not resolve to a Repository|not accessible|Repository .* not found/i.test(message)) {
       return ` Repository "${owner}/${repo}" was not found or is not accessible with this worker's GitHub token. Check the Repo field and the active account/worker.`;
     }
-    if (/Branch .* was not found/i.test(message)) {
-      let defaultBranch = "";
-      try {
-        const fallback = await getBranchHeadOid(owner, repo, "", token);
-        defaultBranch = fallback.resolvedBranch || "";
-      } catch {
+    if (err instanceof BranchNotFoundError || /Branch .* was not found/i.test(message)) {
+      let defaultBranch = err instanceof BranchNotFoundError && err.defaultBranch ? err.defaultBranch : "";
+      if (!defaultBranch && !(err instanceof BranchNotFoundError)) {
+        try {
+          const fallback = await getBranchHeadOid(owner, repo, "", token);
+          defaultBranch = fallback.resolvedBranch || "";
+        } catch {
+        }
       }
       const suggestion = defaultBranch ? ` The repository's default branch is "${defaultBranch}".` : "";
       return ` Branch "${branch}" does not exist in "${owner}/${repo}".${suggestion} Update the Branch field in the HUD and retry.`;
@@ -2899,7 +3043,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "2.0.7",
+        version: "2.0.8",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))

@@ -245,6 +245,28 @@ async function main() {
     const hasShadowDom = rootScriptContent.includes('attachShadow') && rootScriptContent.includes('gemini-edge-hud-root');
     const hasTrustedTypes = rootScriptContent.includes('trustedTypes');
 
+    // Verify zero raw .innerHTML / .outerHTML / .insertAdjacentHTML in HUD source files
+    function findHudTsFiles(dir) {
+      let files = [];
+      if (!fs.existsSync(dir)) return files;
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) files = files.concat(findHudTsFiles(full));
+        else if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx'))) files.push(full);
+      }
+      return files;
+    }
+    const hudTsFiles = findHudTsFiles(hudSrcDir);
+    let rawInnerHtmlFound = false;
+    for (const file of hudTsFiles) {
+      const code = fs.readFileSync(file, 'utf-8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+      if (/\.(?:innerHTML|outerHTML|insertAdjacentHTML)\b/.test(code)) {
+        rawInnerHtmlFound = true;
+        break;
+      }
+    }
+    const zeroRawInnerHtml = !rawInnerHtmlFound;
+
     const pass = missing.length === 0 &&
                  rootUserScriptExists &&
                  testPatBlocked &&
@@ -253,11 +275,12 @@ async function main() {
                  hasDualMatch &&
                  hasGmXml &&
                  hasShadowDom &&
-                 hasTrustedTypes;
+                 hasTrustedTypes &&
+                 zeroRawInnerHtml;
 
     return {
       pass, missingHudFiles: missing, rootUserScriptExists, testPatBlocked,
-      testGithubPatBlocked, testSecretAllowed, hasDualMatch, hasGmXml, hasShadowDom, hasTrustedTypes
+      testGithubPatBlocked, testSecretAllowed, hasDualMatch, hasGmXml, hasShadowDom, hasTrustedTypes, zeroRawInnerHtml
     };
   }));
 
@@ -547,6 +570,7 @@ async function main() {
     const hasHudTruncationWarning =
       hudMixContent.includes('⚠️ Truncated:') && hudMixContent.includes('attachment slots');
     const hasIgnoreUtils = tarUtilsContent.includes('export function parseIgnoreLines') && tarUtilsContent.includes('export function matchesIgnorePattern');
+    const hasTarNoiseExclusions = tarUtilsContent.includes("'.map'") && tarUtilsContent.includes("'bun.lock'") && mixerContent.includes('\\.min\\.');
     const hasDynamicIgnoreInMixer = mixerContent.includes('dynamicIgnorePatterns') && mixerContent.includes('.repomixignore.cf') && mixerContent.includes('.venv');
     const storageSupports2M = storageContent.includes('2000000');
     const bundleHasInjectParts = rootUserScript.includes('injectRepoMixParts');
@@ -698,7 +722,7 @@ async function main() {
     const functionalBudgetPass = partsUnder85k && part1HasFullTree && part2HasCompactTree;
 
     const pass = hasBuildChunked && hasInjectParts && hasDefault85k && hasMaxParts10 &&
-      hasTxtExtension && hasTruncationContract && hasHudTruncationWarning && hasIgnoreUtils && hasDynamicIgnoreInMixer &&
+      hasTxtExtension && hasTruncationContract && hasHudTruncationWarning && hasIgnoreUtils && hasTarNoiseExclusions && hasDynamicIgnoreInMixer &&
       storageSupports2M && bundleHasInjectParts && bundleHasIncludePaths &&
       bundleHasMaxChunkChars && bundleHasTxtMime && bundleHasTruncationWarning && functionalBudgetPass && guardrailPass && ignorePass;
 

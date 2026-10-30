@@ -85,6 +85,64 @@ function register({ planId, artifactPath, scope, workflow, tier, baseSha, descri
   return registry[planId];
 }
 
+function update(planId, updates) {
+  const registry = loadRegistry();
+  if (!registry[planId]) throw new Error(`Plan ${planId} not found`);
+  registry[planId] = { ...registry[planId], ...updates, updatedAt: new Date().toISOString() };
+  saveRegistry(registry);
+  return registry[planId];
+}
+
+function start(planId) {
+  return update(planId, { status: 'RUNNING' });
+}
+
+function complete(planId) {
+  return update(planId, { status: 'COMPLETED', locks: [] });
+}
+
+function abort(planId) {
+  return update(planId, { status: 'ABORTED', locks: [] });
+}
+
+function lockFiles(planId, files) {
+  const registry = loadRegistry();
+  const normalized = (files || []).map((f) => normalizeRepoPath(f));
+  for (const [id, plan] of Object.entries(registry)) {
+    if (id === planId) continue;
+    if (plan.status === 'RUNNING') {
+      const conflict = normalized.filter((f) => (plan.locks || []).includes(f));
+      if (conflict.length > 0) {
+        throw new Error(`File lock conflict with ${id}: ${conflict.join(', ')}`);
+      }
+    }
+  }
+  if (!registry[planId]) throw new Error(`Plan ${planId} not found`);
+  registry[planId].locks = [...new Set([...(registry[planId].locks || []), ...normalized])];
+  registry[planId].updatedAt = new Date().toISOString();
+  saveRegistry(registry);
+  return registry[planId];
+}
+
+function releaseLocks(planId) {
+  return update(planId, { locks: [] });
+}
+
+function getPlan(planId) {
+  const registry = loadRegistry();
+  return registry[planId] || null;
+}
+
+function getRunningPlans() {
+  const registry = loadRegistry();
+  return Object.values(registry).filter((p) => p.status === 'RUNNING');
+}
+
+function getQueuedPlans() {
+  const registry = loadRegistry();
+  return Object.values(registry).filter((p) => p.status === 'QUEUED');
+}
+
 function scope(planId, files) {
   const registry = loadRegistry();
   if (!registry[planId]) throw new Error(`Plan ${planId} not found`);

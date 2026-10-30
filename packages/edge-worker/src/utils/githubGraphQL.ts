@@ -1,9 +1,12 @@
 const GITHUB_GRAPHQL_ENDPOINT = 'https://api.github.com/graphql';
 
 export class BranchNotFoundError extends Error {
-  constructor(owner: string, repo: string, branch: string) {
+  readonly defaultBranch?: string;
+
+  constructor(owner: string, repo: string, branch: string, defaultBranch?: string) {
     super(`Branch "${branch}" was not found in repository "${owner}/${repo}".`);
     this.name = 'BranchNotFoundError';
+    this.defaultBranch = defaultBranch || undefined;
   }
 }
 
@@ -75,7 +78,12 @@ export async function getBranchHeadOid(
     return { headOid: repository.defaultBranchRef.target.oid, resolvedBranch: repository.defaultBranchRef.name, repositoryId: repository.id };
   }
 
-  throw new BranchNotFoundError(owner, repo, branch || qualifiedBranch);
+  throw new BranchNotFoundError(
+    owner,
+    repo,
+    branch || qualifiedBranch,
+    repository.defaultBranchRef?.name
+  );
 }
 
 /**

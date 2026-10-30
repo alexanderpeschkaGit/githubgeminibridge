@@ -23,7 +23,7 @@ import { buildHudDomTree } from './hudDomTree';
 import { initHudUpdateBanner } from './updateBanner';
 import { bindHudConfigInputs, setRepoHistorySelectRefresher } from './hudConfigBindings';
 import { loadRepoHistory, recordFromConfig } from '../services/repoHistory';
-import { bindAccountSwitch } from './hudAccountSwitch';
+import { bindAccountSwitch, refreshAccountHint } from './hudAccountSwitch';
 import { renderHudState } from './hudRender';
 import { bindMixAction } from './hudMixAction';
 import { applyHudPatch } from './hudApplyPatch';
@@ -118,14 +118,13 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     const previousIndex = select.value;
     const entries = loadRepoHistory();
 
-    select.innerHTML = '';
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Select a previous repo...';
+    select.textContent = '';
+    const placeholder = createHudElement('option', undefined, 'Select a previous repo...');
+    (placeholder as HTMLOptionElement).value = '';
     select.appendChild(placeholder);
 
     entries.forEach((entry, index) => {
-      const option = document.createElement('option');
+      const option = createHudElement('option', undefined);
       option.value = String(index);
       const repoLabel = entry.repo.includes('/') ? entry.repo : `${entry.owner}/${entry.repo}`;
       const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : '';
@@ -179,6 +178,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     recordFromConfig(config);
     refreshRepoHistorySelectUI();
     select.value = '';
+    refreshAccountHint();
     renderState();
   };
 

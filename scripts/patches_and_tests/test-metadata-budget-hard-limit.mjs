@@ -387,6 +387,51 @@ const worstCase = [];
   console.log(`PASS: explicit maxChunkChars=40000 remains a ceiling (${parts.length} parts)`);
 }
 
+// --- Case 10: HUD default maxChunkChars=85000 escalates ladder instead of truncating ---
+{
+  const files = padFiles(10, 88_000);
+  const result = buildChunkedMixXml(makeInput(files, { maxChunkChars: DEFAULT_MAX_CHUNK_CHARS }));
+  const parts = assertConforming('HUD default 85k ladder escalation', result, worstCase);
+  assert.equal(parts.length, MAX_GEMINI_PARTS, '10 files fit within 10 parts via ladder escalation');
+  assert.equal(result.truncation, undefined, 'no truncation occurs when ladder escalation suffices');
+  assert.equal(result.stats.fileCount, 10, 'all 10 files are included');
+  console.log(`PASS: HUD default maxChunkChars=${DEFAULT_MAX_CHUNK_CHARS} escalates ladder without truncating (${parts.length} parts)`);
+}
+
+// --- Case 11: Part-1 FFD overflow guard places large file in continuation part ---
+{
+  const giant = {
+    path: 'src/giant.ts',
+    content: '// giant\n' + 'G'.repeat(88_000),
+  };
+  const files = [giant, ...makeLongPathFiles(399)];
+  const result = buildChunkedMixXml(makeInput(files, { recentCommitsText: makeHugeMetadata(2_000) }));
+  const parts = assertConforming('giant file + master tree + metadata', result, worstCase);
+  assert.ok(parts[0].length <= HARD_GEMINI_CHAR_LIMIT, 'Part 1 never exceeds hard limit');
+  assert.ok(!parts[0].content.includes('path="src/giant.ts"'), 'giant file was not placed in Part 1');
+  assert.ok(
+    parts.slice(1).some((p) => p.content.includes('path="src/giant.ts"')),
+    'giant file was placed in a continuation part'
+  );
+  assert.equal(result.stats.fileCount, 400, 'all 400 files preserved');
+  console.log('PASS: Part-1 FFD overflow guard prevents Part 1 from exceeding 100k');
+}
+
+// --- Case 12: tightened user ceiling omits oversized file as file_over_hard_limit ---
+{
+  const files = [
+    { path: 'src/oversized-for-40k.ts', content: 'export const a = "' + 'A'.repeat(55_000) + '";\n' },
+    { path: 'src/fits-40k.ts', content: 'export const b = "' + 'B'.repeat(10_000) + '";\n' },
+  ];
+  const result = buildChunkedMixXml(makeInput(files, { maxChunkChars: 40_000 }));
+  const parts = assertConforming('40k budget with oversized file', result, worstCase);
+  assert.ok(parts.every((p) => p.length <= 40_000), 'all parts obey the 40k ceiling');
+  assert.equal(result.truncation?.reason, 'file_over_hard_limit', 'omission uses file_over_hard_limit reason');
+  assert.equal(result.truncation?.includedFiles, 1, 'only the fitting file is included');
+  assert.equal(result.truncation?.omittedFiles[0]?.path, 'src/oversized-for-40k.ts');
+  console.log('PASS: tightened user budget omits oversized files and keeps all parts <= 40k');
+}
+
 console.log('\nMeasured worst-case part sizes:');
 for (const entry of worstCase) {
   console.log(`  ${entry.label}: max ${entry.maxPartChars} chars across ${entry.partCount} part(s)`);

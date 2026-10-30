@@ -114,11 +114,14 @@ export function matchesIgnorePattern(relPath: string, patterns: string[]): boole
 export const DEFAULT_IGNORED_DIR_NAMES = new Set([
   '.git', 'node_modules', 'dist', 'build', '.wrangler', '.turbo', '.next',
   'coverage', '_v1_backup', 'backup_unused', '.venv', 'venv', 'env',
-  '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.ipynb_checkpoints'
+  '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.ipynb_checkpoints',
+  '.tmp', 'out', '.output', '.nuxt', '.svelte-kit', '.astro', '.vercel', '.netlify',
+  '.cache', '.parcel-cache', 'storybook-static', 'playwright-report', 'test-results'
 ]);
 
 export const DEFAULT_IGNORED_FILES = new Set([
-  'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb'
+  'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb',
+  'bun.lock', 'Cargo.lock', 'poetry.lock', 'uv.lock', 'composer.lock', 'Gemfile.lock'
 ]);
 
 export const DEFAULT_IGNORED_EXTENSIONS = new Set([
@@ -126,5 +129,6 @@ export const DEFAULT_IGNORED_EXTENSIONS = new Set([
   '.mp4', '.webm', '.mov', '.mp3', '.wav', '.ogg',
   '.woff', '.woff2', '.ttf', '.eot',
   '.pdf', '.zip', '.tar', '.gz', '.7z',
-  '.wasm', '.exe', '.dll', '.so', '.dylib', '.pyc'
+  '.wasm', '.exe', '.dll', '.so', '.dylib', '.pyc',
+  '.map', '.tsbuildinfo'
 ]);

@@ -3,6 +3,8 @@ import { injectPromptText, injectRepoMixFile, injectRepoMixParts } from '../dom/
 import { requestRepoMix } from '../services/workerClient';
 import { buildBatchFormulaPrompt } from '../services/batchFormula';
 import { setSourceHeadOid } from '../services/patchOidStore';
+import { recordFromConfig } from '../services/repoHistory';
+import { refreshRepoHistorySelectNow } from './hudConfigBindings';
 import type { HudDomElements } from './hudStylesAndDom';
 
 export interface HudMixActionDeps {
@@ -26,6 +28,12 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
       const res = await requestRepoMix(config);
       if (res.status === 'OK' && (res.parts?.length || res.xmlContent)) {
         setSourceHeadOid(config, state, res.headOid);
+        try {
+          recordFromConfig(config);
+          refreshRepoHistorySelectNow();
+        } catch {
+          // ignore history persistence errors
+        }
         state.lastMixStats = res.stats;
 
         let injected = false;

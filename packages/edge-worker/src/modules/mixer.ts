@@ -1,5 +1,5 @@
 import type { MixRequest, MixResponse } from '../types';
-import { parseRepoOwner, getBranchHeadOid, commitSingleFileViaGraphQL } from '../utils/github';
+import { parseRepoOwner, getBranchHeadOid, commitSingleFileViaGraphQL, BranchNotFoundError } from '../utils/github';
 import { buildChunkedMixXml } from './mixChunker';
 import { fetchRecentCommitsAndVolatileFiles } from './recentCommits';
 import { scanTarGzipStream, TarScanError, type TarScanResult } from './mixerTarScan';
@@ -26,13 +26,15 @@ async function describeTarballNotFound(
     if (/Could not resolve to a Repository|not accessible|Repository .* not found/i.test(message)) {
       return ` Repository "${owner}/${repo}" was not found or is not accessible with this worker's GitHub token. Check the Repo field and the active account/worker.`;
     }
-    if (/Branch .* was not found/i.test(message)) {
-      let defaultBranch = '';
-      try {
-        const fallback = await getBranchHeadOid(owner, repo, '', token);
-        defaultBranch = fallback.resolvedBranch || '';
-      } catch {
-        // Empty repository or no default branch: keep the generic branch hint.
+    if (err instanceof BranchNotFoundError || /Branch .* was not found/i.test(message)) {
+      let defaultBranch = err instanceof BranchNotFoundError && err.defaultBranch ? err.defaultBranch : '';
+      if (!defaultBranch && !(err instanceof BranchNotFoundError)) {
+        try {
+          const fallback = await getBranchHeadOid(owner, repo, '', token);
+          defaultBranch = fallback.resolvedBranch || '';
+        } catch {
+          // Empty repository or no default branch: keep the generic branch hint.
+        }
       }
       const suggestion = defaultBranch ? ` The repository's default branch is "${defaultBranch}".` : '';
       return ` Branch "${branch}" does not exist in "${owner}/${repo}".${suggestion} Update the Branch field in the HUD and retry.`;

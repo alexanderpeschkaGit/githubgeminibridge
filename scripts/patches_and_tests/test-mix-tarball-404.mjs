@@ -78,16 +78,11 @@ try {
   assert.match(missingBranch.errorMessage, /Branch "preview" does not exist/);
   assert.match(missingBranch.errorMessage, /default branch is "main"/);
   assert.match(missingBranch.errorMessage, /Update the Branch field/);
-  assert.equal(graphqlBodies.length, 2, 'branch check plus default-branch hint');
+  assert.equal(graphqlBodies.length, 1, 'single GraphQL query resolves missing ref and defaultBranchRef together');
   assert.deepEqual(graphqlBodies[0].variables, {
     owner: 'alexanderpeschkaGit',
     repo: 'Portfolio_VJ_Brave_V2_0',
     branch: 'refs/heads/preview',
-  });
-  assert.deepEqual(graphqlBodies[1].variables, {
-    owner: 'alexanderpeschkaGit',
-    repo: 'Portfolio_VJ_Brave_V2_0',
-    branch: 'refs/heads/',
   });
 
   // 2. Repository is missing or the worker token cannot see it: name access, not the branch.

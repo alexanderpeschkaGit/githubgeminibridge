@@ -74,31 +74,30 @@ export function selectFilesWithinPartLimit<T extends OmissionFile>(
     return { kept: [...files], omitted: [], requiredParts };
   }
 
-  const kept = rankFilesForOmission(files);
-  const omitted: MixOmittedFile[] = [];
+  const ranked = rankFilesForOmission(files);
+  let low = 0;
+  let high = ranked.length;
 
-  const dropLowest = (count: number): void => {
-    const dropped = kept.splice(Math.max(0, kept.length - count));
-    for (const file of dropped) {
-      omitted.push({
-        path: file.path,
-        reason: 'part_limit_exceeded',
-        chars: file.content.length,
-      });
-    }
-  };
-
-  if (kept.length <= 500) {
-    while (kept.length > 0 && countParts(kept) > maxParts) {
-      dropLowest(1);
-    }
-  } else {
-    let batch = Math.max(1, Math.ceil(kept.length * 0.1));
-    while (kept.length > 0 && countParts(kept) > maxParts) {
-      dropLowest(Math.min(batch, kept.length));
-      batch = Math.min(batch * 2, Math.max(1, Math.ceil(files.length / 2)));
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (countParts(ranked.slice(0, mid)) <= maxParts) {
+      low = mid;
+    } else {
+      high = mid - 1;
     }
   }
+
+  const kept = ranked.slice(0, low);
+  // Safety guard for potential FFD non-monotonic edge cases:
+  while (kept.length > 0 && countParts(kept) > maxParts) {
+    kept.pop();
+  }
+
+  const omitted: MixOmittedFile[] = ranked.slice(kept.length).map((file) => ({
+    path: file.path,
+    reason: 'part_limit_exceeded',
+    chars: file.content.length,
+  }));
 
   return { kept, omitted, requiredParts };
 }
@@ -135,11 +134,12 @@ export interface TruncationSummary {
 
 /** LLM-visible notice: omission is explicit and patching omitted paths is forbidden. */
 export function buildTruncationNotice(summary: TruncationSummary): string {
-  const sample = summary.omittedFiles
+  const rawSample = summary.omittedFiles
     .slice(0, 5)
     .map((entry) => entry.path)
     .join(', ');
-  const suffix = summary.omittedFiles.length > 5 ? ' ...' : '';
+  const sample = rawSample.length > 480 ? `${rawSample.slice(0, 477)}...` : rawSample;
+  const suffix = rawSample.length <= 480 && summary.omittedFiles.length > 5 ? ' ...' : '';
   const reasons = [...new Set(summary.omittedFiles.map((entry) => entry.reason))].join(', ');
   return [
     '<truncation_notice>',

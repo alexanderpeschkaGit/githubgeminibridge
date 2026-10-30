@@ -86,3 +86,5 @@ Note: The codebase already implements HEAD recovery (added in 2.0.6). If user \"
 2. `packages/userscript-hud/src/services/storage.ts`: ship a valid default pair (`Portfolio_VJ_Brave_V2_0@main` instead of the non-existent `preview` branch).
 3. New regression `scripts/patches_and_tests/test-mix-tarball-404.mjs` covers all three diagnosis paths and is registered in the aggregate gate.
 4. Operator action: set the HUD **Branch** field to an existing branch (`main` for `Portfolio_VJ_Brave_V2_0`; `preview` for `sikanda_projectinart_11-on-main`), update the userscript, and deploy the worker. The raw tarball 404 cannot be fixed by retrying or by a repo mix.
+
+5. Consolidated Release (`plan-20261029221634-0f4k`): `describeTarballNotFound` was further optimized to reuse `BranchNotFoundError.defaultBranch` in a single GraphQL query (1 subrequest instead of 2). The live Worker rollout (`v2.0.8` on Default + Account-2) and HUD release (`v2.0.20`) are unified into `plan-20261029221634-0f4k`.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.19
+// @version      2.0.20
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -1988,7 +1988,7 @@ Fix Instructions:
       branch: req?.branch || cfg.branch,
       includePaths: req?.includePaths || (cfg.includePaths.length > 0 ? cfg.includePaths : void 0),
       persistToGitHub: req?.persistToGitHub ?? cfg.persistToGitHub,
-      maxChunkChars: req?.maxChunkChars ?? cfg.maxChunkChars,
+      maxChunkChars: req?.maxChunkChars ?? (cfg.maxChunkChars !== 85e3 ? cfg.maxChunkChars : void 0),
       maxChunkBytes: req?.maxChunkBytes,
       maxChunkTokens: req?.maxChunkTokens,
       splitOutput: req?.splitOutput,
@@ -2075,6 +2075,11 @@ Fix Instructions:
         const res = await requestRepoMix(config);
         if (res.status === "OK" && (res.parts?.length || res.xmlContent)) {
           setSourceHeadOid(config, state, res.headOid);
+          try {
+            recordFromConfig(config);
+            refreshRepoHistorySelectNow();
+          } catch {
+          }
           state.lastMixStats = res.stats;
           let injected = false;
           const metaCommits = res.stats.recentCommitsCount ? ` (incl. ${res.stats.recentCommitsCount} recent commits, ${res.stats.volatileFilesCount ?? 0} volatile files)` : "";
@@ -2363,13 +2368,12 @@ Fix Instructions:
       if (!select) return;
       const previousIndex = select.value;
       const entries = loadRepoHistory();
-      select.innerHTML = "";
-      const placeholder = document.createElement("option");
+      select.textContent = "";
+      const placeholder = createHudElement("option", void 0, "Select a previous repo...");
       placeholder.value = "";
-      placeholder.textContent = "Select a previous repo...";
       select.appendChild(placeholder);
       entries.forEach((entry, index) => {
-        const option = document.createElement("option");
+        const option = createHudElement("option", void 0);
         option.value = String(index);
         const repoLabel = entry.repo.includes("/") ? entry.repo : `${entry.owner}/${entry.repo}`;
         const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : "";
@@ -2415,6 +2419,7 @@ Fix Instructions:
       recordFromConfig(config);
       refreshRepoHistorySelectUI();
       select.value = "";
+      refreshAccountHint();
       renderState();
     };
     bindHudConfigInputs({
