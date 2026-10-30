@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.20
+// @version      2.0.21
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -651,6 +651,113 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     gap: 10px 12px;
     align-items: start;
   }
+  .hud-repo-owner-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+  }
+  .hud-repo-combo-wrap {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .hud-input-combo {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+  }
+  .hud-input-combo .hud-input {
+    flex: 1;
+    min-width: 0;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .hud-combo-arrow {
+    width: 30px;
+    flex: 0 0 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-left: none;
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 0;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+    user-select: none;
+  }
+  .hud-combo-arrow:hover:not(:disabled) {
+    background: #334155;
+    color: #f8fafc;
+  }
+  .hud-combo-arrow:focus {
+    outline: none;
+    border-color: #38bdf8;
+  }
+  .hud-combo-arrow:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .hud-repo-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 180px;
+    overflow-y: auto;
+    z-index: 40;
+    background: #0f172a;
+    border: 1px solid #38bdf8;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+    gap: 2px;
+  }
+  .hud-repo-menu-item {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: #e2e8f0;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 6px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.15s, color 0.15s;
+  }
+  .hud-repo-menu-item:hover {
+    background: #1e293b;
+    color: #38bdf8;
+  }
+  .hud-repo-menu-item:focus {
+    outline: none;
+    background: #1e293b;
+    color: #38bdf8;
+  }
+  .hud-account-worker-grid {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+  }
+  .hud-account-btns { display: flex; gap: 6px; }
+  .hud-account-btns .hud-btn { padding: 7px 9px; font-size: 11px; white-space: nowrap; }
+  .hud-toggles-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }
+  .hud-retry-pill { font-size: 10px; color: #94a3b8; white-space: nowrap; }
   .hud-label {
     font-size: 11px;
     font-weight: 600;
@@ -853,29 +960,33 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     updateBanner.appendChild(updateBannerText);
     updateBanner.appendChild(updateBannerBtn);
     body.appendChild(updateBanner);
-    const repoRow = createHudElement("div", "hud-form-row");
-    const repoLabel = createHudElement("span", "hud-label", "GitHub Repository (owner/repo)");
+    const repoOwnerGrid = createHudElement("div", "hud-repo-owner-grid");
+    const repoComboWrap = createHudElement("div", "hud-repo-combo-wrap");
+    const repoLabel = createHudElement("span", "hud-label", "GitHub Repository");
+    repoLabel.title = "GitHub Repository (owner/repo)";
+    const inputCombo = createHudElement("div", "hud-input-combo");
     const repoInput = createHudElement("input", "hud-input");
     repoInput.value = config.repo;
-    repoRow.appendChild(repoLabel);
-    repoRow.appendChild(repoInput);
-    body.appendChild(repoRow);
-    const repoHistoryRow = createHudElement("div", "hud-form-row");
-    const repoHistoryLabel = createHudElement("span", "hud-label", "Recent Repositories");
-    const repoHistorySelect = createHudElement("select", "hud-input hud-select");
-    const repoHistoryPlaceholder = createHudElement("option", void 0, "Select a previous repo...");
-    repoHistoryPlaceholder.value = "";
-    repoHistorySelect.appendChild(repoHistoryPlaceholder);
-    repoHistoryRow.appendChild(repoHistoryLabel);
-    repoHistoryRow.appendChild(repoHistorySelect);
-    body.appendChild(repoHistoryRow);
+    const repoHistoryBtn = createHudElement("button", "hud-combo-arrow", "\u25BE");
+    repoHistoryBtn.type = "button";
+    repoHistoryBtn.title = "Recent Repositories";
+    inputCombo.appendChild(repoInput);
+    inputCombo.appendChild(repoHistoryBtn);
+    const repoHistoryMenu = createHudElement("div", "hud-repo-menu");
+    repoHistoryMenu.style.display = "none";
+    repoComboWrap.appendChild(repoLabel);
+    repoComboWrap.appendChild(inputCombo);
+    repoComboWrap.appendChild(repoHistoryMenu);
+    repoOwnerGrid.appendChild(repoComboWrap);
     const ownerRow = createHudElement("div", "hud-form-row");
-    const ownerLabel = createHudElement("span", "hud-label", "GitHub Owner (active account)");
+    const ownerLabel = createHudElement("span", "hud-label", "GitHub Owner");
+    ownerLabel.title = "GitHub Owner (active account)";
     const ownerInput = createHudElement("input", "hud-input");
     ownerInput.value = config.owner;
     ownerRow.appendChild(ownerLabel);
     ownerRow.appendChild(ownerInput);
-    body.appendChild(ownerRow);
+    repoOwnerGrid.appendChild(ownerRow);
+    body.appendChild(repoOwnerGrid);
     const ownerHintEl = createHudElement("div", "hud-account-hint");
     ownerHintEl.style.display = "none";
     body.appendChild(ownerHintEl);
@@ -916,28 +1027,34 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     scopeGrid.appendChild(pathsRow);
     scopeGrid.appendChild(maxChunkRow);
     body.appendChild(scopeGrid);
-    const workerUrlRow = createHudElement("div", "hud-form-row");
-    const workerUrlLabel = createHudElement("span", "hud-label", "Worker URL (Edge Worker Endpoint)");
+    const accountWorkerGrid = createHudElement("div", "hud-account-worker-grid");
+    const accountCol = createHudElement("div", "hud-form-row");
+    const accountLabel = createHudElement("span", "hud-label", "Account");
+    accountLabel.title = "GitHub Account Profile (active)";
+    const accountBtnGroup = createHudElement("div", "hud-account-btns");
+    const accountBtn1 = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F464} Acc 1");
+    accountBtn1.type = "button";
+    accountBtn1.title = "Switch to GitHub Account Profile 1";
+    const accountBtn2 = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F464} Acc 2");
+    accountBtn2.type = "button";
+    accountBtn2.title = "Switch to GitHub Account Profile 2";
+    accountBtnGroup.appendChild(accountBtn1);
+    accountBtnGroup.appendChild(accountBtn2);
+    accountCol.appendChild(accountLabel);
+    accountCol.appendChild(accountBtnGroup);
+    const workerUrlCol = createHudElement("div", "hud-form-row");
+    const workerUrlLabel = createHudElement("span", "hud-label", "Worker URL");
+    workerUrlLabel.title = "Worker URL (Edge Worker Endpoint)";
     const workerUrlInput = createHudElement("input", "hud-input");
     workerUrlInput.type = "url";
     workerUrlInput.placeholder = "https://<your-worker>.workers.dev";
     workerUrlInput.value = config.workerUrl;
-    workerUrlRow.appendChild(workerUrlLabel);
-    workerUrlRow.appendChild(workerUrlInput);
-    body.appendChild(workerUrlRow);
-    const accountRow = createHudElement("div", "hud-form-row");
-    const accountLabel = createHudElement("span", "hud-label", "GitHub Account");
-    const accountBtnGroup = createHudElement("div");
-    accountBtnGroup.style.cssText = "display: flex; gap: 6px;";
-    const accountBtn1 = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F464} Account 1");
-    accountBtn1.type = "button";
-    const accountBtn2 = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F464} Account 2");
-    accountBtn2.type = "button";
-    accountBtnGroup.appendChild(accountBtn1);
-    accountBtnGroup.appendChild(accountBtn2);
-    accountRow.appendChild(accountLabel);
-    accountRow.appendChild(accountBtnGroup);
-    body.appendChild(accountRow);
+    workerUrlInput.style.minWidth = "0";
+    workerUrlCol.appendChild(workerUrlLabel);
+    workerUrlCol.appendChild(workerUrlInput);
+    accountWorkerGrid.appendChild(accountCol);
+    accountWorkerGrid.appendChild(workerUrlCol);
+    body.appendChild(accountWorkerGrid);
     const secretGrid = createHudElement("div", "hud-form-grid");
     const secretRow = createHudElement("div", "hud-form-row");
     const secretLabel = createHudElement("span", "hud-label", "Worker Secret (WORKER_SECRET)");
@@ -959,35 +1076,39 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     const mixBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u{1F4E6} Load Repo Mix (/api/mix)");
     mixBtn.style.flex = "1";
     actionRow.appendChild(mixBtn);
+    const continueMixBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u23ED\uFE0F Next Parts");
+    continueMixBtn.type = "button";
+    continueMixBtn.style.display = "none";
+    actionRow.appendChild(continueMixBtn);
     const batchFormulaBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F9E9} Batch Formula");
     batchFormulaBtn.title = "Insert optimal V2 integratable batch prompt formula into chat";
     actionRow.appendChild(batchFormulaBtn);
     body.appendChild(actionRow);
-    const optRow = createHudElement("div");
-    optRow.style.cssText = "display: flex; align-items: center; justify-content: space-between;";
+    const togglesRow = createHudElement("div", "hud-toggles-row");
+    const autoPilotGroup = createHudElement("div");
+    autoPilotGroup.style.cssText = "display: flex; align-items: center; gap: 6px;";
     const autoPilotLabel = createHudElement("label", "hud-toggle-label");
+    autoPilotLabel.title = "Auto-Pilot Self-Healing (max 3 retries)";
     const autoPilotCheck = createHudElement("input");
     autoPilotCheck.type = "checkbox";
     autoPilotCheck.checked = config.autoPilot;
-    const autoPilotText = createHudElement("span", void 0, "\u{1F916} Auto-Pilot Self-Healing");
+    const autoPilotText = createHudElement("span", void 0, "\u{1F916} Auto-Pilot");
     autoPilotLabel.appendChild(autoPilotCheck);
     autoPilotLabel.appendChild(autoPilotText);
-    const retryIndicator = createHudElement("span", void 0, `Retries: ${state.retryCount}/3`);
-    retryIndicator.style.cssText = "font-size: 11px; color: #94a3b8;";
-    optRow.appendChild(autoPilotLabel);
-    optRow.appendChild(retryIndicator);
-    body.appendChild(optRow);
-    const commitsRow = createHudElement("div");
-    commitsRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-top: 4px;";
+    const retryIndicator = createHudElement("span", "hud-retry-pill", "(" + state.retryCount + "/3)");
+    autoPilotGroup.appendChild(autoPilotLabel);
+    autoPilotGroup.appendChild(retryIndicator);
     const recentCommitsLabel = createHudElement("label", "hud-toggle-label");
+    recentCommitsLabel.title = "Volatile Dateien & Letzte Commits in RepoMix einbeziehen";
     const recentCommitsCheck = createHudElement("input");
     recentCommitsCheck.type = "checkbox";
     recentCommitsCheck.checked = config.includeRecentCommits === true;
-    const recentCommitsText = createHudElement("span", void 0, "\u{1F552} Volatile Dateien & Letzte Commits");
+    const recentCommitsText = createHudElement("span", void 0, "\u{1F552} Letzte Commits");
     recentCommitsLabel.appendChild(recentCommitsCheck);
     recentCommitsLabel.appendChild(recentCommitsText);
-    commitsRow.appendChild(recentCommitsLabel);
-    body.appendChild(commitsRow);
+    togglesRow.appendChild(autoPilotGroup);
+    togglesRow.appendChild(recentCommitsLabel);
+    body.appendChild(togglesRow);
     const queueHeaderRow = createHudElement("div");
     queueHeaderRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-top: 4px;";
     const queueLabel = createHudElement("span", "hud-label", "Harvested Patches");
@@ -1024,7 +1145,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       updateBannerBtn,
       closeBtn,
       repoInput,
-      repoHistorySelect,
+      repoHistoryBtn,
+      repoHistoryMenu,
       ownerInput,
       ownerHintEl,
       branchInput,
@@ -1037,6 +1159,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       maxChunkCharsInput,
       oidBadge,
       mixBtn,
+      continueMixBtn,
       batchFormulaBtn,
       autoPilotCheck,
       recentCommitsCheck,
@@ -1437,6 +1560,120 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
+  // src/ui/hudRepoHistoryDropdown.ts
+  function formatRepoHistoryLabel(entry) {
+    const repoLabel = entry.repo.includes("/") ? entry.repo : `${entry.owner}/${entry.repo}`;
+    const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : "";
+    return `${repoLabel} @ ${entry.branch}${target}`;
+  }
+  function bindRepoHistoryDropdown(deps) {
+    const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, refreshAccountHint: refreshAccountHint2, renderState } = deps;
+    const closeMenu = () => {
+      dom.repoHistoryMenu.style.display = "none";
+      dom.repoHistoryBtn.setAttribute("aria-expanded", "false");
+    };
+    const openMenu = () => {
+      dom.repoHistoryMenu.style.display = "flex";
+      dom.repoHistoryBtn.setAttribute("aria-expanded", "true");
+    };
+    const onSelectEntry = (entry) => {
+      const previousRepo = config.repo;
+      const previousBranch = config.branch;
+      const previousTarget = config.targetBranch || "";
+      config.owner = entry.owner || config.owner;
+      config.repo = sanitizeRepo(entry.repo || config.repo);
+      config.branch = entry.branch || config.branch;
+      config.targetBranch = entry.targetBranch || "";
+      dom.ownerInput.value = config.owner;
+      dom.repoInput.value = config.repo;
+      dom.branchInput.value = config.branch;
+      dom.targetBranchInput.value = config.targetBranch || "";
+      saveHudConfig({
+        owner: config.owner,
+        repo: config.repo,
+        branch: config.branch,
+        targetBranch: config.targetBranch
+      });
+      const repoOrBranchChanged = config.repo !== previousRepo || config.branch !== previousBranch;
+      if (repoOrBranchChanged) {
+        resetPatchOidState(`Switched to "${config.repo} @ ${config.branch}".`);
+      } else if ((config.targetBranch || "") !== previousTarget) {
+        clearTargetOidState2(state);
+      }
+      recordFromConfig(config);
+      refresh();
+      closeMenu();
+      refreshAccountHint2();
+      renderState();
+    };
+    const refresh = () => {
+      const entries = loadRepoHistory();
+      dom.repoHistoryMenu.textContent = "";
+      if (entries.length === 0) {
+        dom.repoHistoryBtn.disabled = true;
+        dom.repoHistoryBtn.title = "No recent repositories";
+        closeMenu();
+        return;
+      }
+      dom.repoHistoryBtn.disabled = false;
+      dom.repoHistoryBtn.title = "Recent Repositories";
+      entries.forEach((entry) => {
+        const label = formatRepoHistoryLabel(entry);
+        const btn = createHudElement("button", "hud-repo-menu-item", label);
+        btn.type = "button";
+        btn.title = label;
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          onSelectEntry(entry);
+        };
+        dom.repoHistoryMenu.appendChild(btn);
+      });
+    };
+    dom.repoHistoryBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (dom.repoHistoryMenu.style.display === "none") {
+        refresh();
+        const entries = loadRepoHistory();
+        if (entries.length > 0) {
+          openMenu();
+        }
+      } else {
+        closeMenu();
+      }
+    };
+    const handleOutsideClick = (event) => {
+      if (dom.repoHistoryMenu.style.display === "none") return;
+      const target = event.target;
+      if (target) {
+        if (dom.repoHistoryBtn.contains(target) || dom.repoHistoryMenu.contains(target)) {
+          return;
+        }
+      }
+      closeMenu();
+    };
+    dom.shadowRoot.addEventListener("click", handleOutsideClick);
+    document.addEventListener("click", handleOutsideClick);
+    const handleKeydown = (event) => {
+      if (event.key === "Escape" && dom.repoHistoryMenu.style.display !== "none") {
+        closeMenu();
+      }
+    };
+    dom.shadowRoot.addEventListener("keydown", handleKeydown);
+    document.addEventListener("keydown", handleKeydown);
+    refresh();
+    const refresher = Object.assign(
+      () => {
+        refresh();
+      },
+      {
+        refresh: () => {
+          refresh();
+        }
+      }
+    );
+    return refresher;
+  }
+
   // src/services/accountProfiles.ts
   var ACCOUNT_PROFILES = [
     { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
@@ -1797,7 +2034,8 @@ Fix Instructions:
       dom.oidBadge.textContent = "(Not mixed yet)";
       dom.oidBadge.style.color = "#94a3b8";
     }
-    dom.retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
+    dom.retryIndicator.textContent = `(${state.retryCount}/3)`;
+    dom.retryIndicator.title = `Self-Healing Retries: ${state.retryCount}/3`;
     const statusClasses = {
       ERROR: "error",
       PREFLIGHT_FAILED: "error",
@@ -1839,6 +2077,19 @@ Fix Instructions:
     }
     const patchCount = state.harvestedPatches.length;
     const isBusy = state.status === "PATCHING" || state.status === "MIXING";
+    if (state.continuationQueue && state.continuationQueue.length > 0) {
+      const nextBatch = state.continuationQueue.slice(0, 10);
+      const first = nextBatch[0]?.partIndex ?? 11;
+      const last = nextBatch[nextBatch.length - 1]?.partIndex ?? first;
+      const fileCount = nextBatch.reduce((sum, p) => sum + (p.stats?.fileCount ?? 0), 0);
+      const totalRemaining = state.continuationQueue.length;
+      dom.continueMixBtn.style.display = "inline-flex";
+      dom.continueMixBtn.disabled = isBusy;
+      dom.continueMixBtn.textContent = `\u23ED\uFE0F Parts ${first}\u2013${last}`;
+      dom.continueMixBtn.title = `Inject Parts ${first}\u2013${last} (${fileCount} files, ${totalRemaining} part(s) remaining in queue)`;
+    } else {
+      dom.continueMixBtn.style.display = "none";
+    }
     dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
     dom.applyAllBtn.textContent = patchCount > 0 ? `\u26A1 Apply All (${patchCount})` : "\u26A1 Apply All";
     dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
@@ -1992,7 +2243,8 @@ Fix Instructions:
       maxChunkBytes: req?.maxChunkBytes,
       maxChunkTokens: req?.maxChunkTokens,
       splitOutput: req?.splitOutput,
-      includeRecentCommits: req?.includeRecentCommits ?? cfg.includeRecentCommits
+      includeRecentCommits: req?.includeRecentCommits ?? cfg.includeRecentCommits,
+      enableContinuation: req?.enableContinuation ?? true
     };
     return gmRequestJson(url, "POST", cfg.workerSecret, payload);
   }
@@ -2070,7 +2322,8 @@ Fix Instructions:
         dom.mixBtn.style.opacity = "0.6";
         updateState({
           status: "MIXING",
-          statusMessage: `\u23F3 Streaming repo mix for ${config.repo} (${config.branch})...`
+          statusMessage: `\u23F3 Streaming repo mix for ${config.repo} (${config.branch})...`,
+          continuationQueue: []
         });
         const res = await requestRepoMix(config);
         if (res.status === "OK" && (res.parts?.length || res.xmlContent)) {
@@ -2086,7 +2339,9 @@ Fix Instructions:
           const skipped = res.skippedFiles || [];
           const skippedNotice = skipped.length > 0 ? ` | Skipped ${skipped.length} file(s)${skipped.length <= 3 ? ": " + skipped.slice(0, 3).map((s) => s.path.split("/").pop()).join(", ") + (skipped.length > 3 ? "..." : "") : ""} \u2014 see details (add to .repomixignore.cf or narrow includePaths)` : "";
           const truncation = res.truncation;
-          const truncationNotice = truncation ? ` | \u26A0\uFE0F Truncated: ${truncation.includedFiles}/${truncation.totalFiles} files (${truncation.omittedFiles.length} omitted${truncation.omittedFiles.length <= 3 ? ": " + truncation.omittedFiles.slice(0, 3).map((entry) => entry.path.split("/").pop()).join(", ") : ""}) \u2014 add to .repomixignore.cf or narrow includePaths` : "";
+          const nextContinuation = res.continuationParts ? [...res.continuationParts] : [];
+          const continuationNoticeHint = nextContinuation.length > 0 ? ` \u2014 click "\u23ED\uFE0F Parts 11\u2013${10 + Math.min(10, nextContinuation.length)}" in Prompt 2` : "";
+          const truncationNotice = truncation ? ` | \u26A0\uFE0F Truncated: ${truncation.includedFiles}/${truncation.totalFiles} files (${truncation.omittedFiles.length} omitted${truncation.omittedFiles.length <= 3 ? ": " + truncation.omittedFiles.slice(0, 3).map((entry) => entry.path.split("/").pop()).join(", ") : ""})${continuationNoticeHint} \u2014 add to .repomixignore.cf or narrow includePaths` : "";
           const slotNotice = res.parts && res.parts.length >= 9 ? ` | \u26A0\uFE0F Using ${res.parts.length}/10 Gemini attachment slots; existing prompt attachments may trigger the 10-file warning` : "";
           if (res.parts && res.parts.length > 1) {
             const partBreakdown = res.parts.map((p) => `P${p.partIndex}: ${(p.stats.charCount ?? p.xmlContent.length).toLocaleString()} chars`).join(", ");
@@ -2095,6 +2350,7 @@ Fix Instructions:
             );
             updateState({
               status: "IDLE",
+              continuationQueue: nextContinuation,
               statusMessage: `\u2705 Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}${skippedNotice}${truncationNotice}${slotNotice}`
             });
           } else {
@@ -2102,6 +2358,7 @@ Fix Instructions:
             const charLen = res.stats.charCount ?? res.xmlContent.length;
             updateState({
               status: "IDLE",
+              continuationQueue: nextContinuation,
               statusMessage: `\u2705 Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? " (Injected into chat prompt)" : ""}${skippedNotice}${truncationNotice}${slotNotice}`
             });
           }
@@ -2121,6 +2378,37 @@ Fix Instructions:
       } finally {
         dom.mixBtn.disabled = false;
         dom.mixBtn.style.opacity = "1";
+      }
+    };
+    dom.continueMixBtn.onclick = () => {
+      if (!state.continuationQueue || state.continuationQueue.length === 0) return;
+      const batch = state.continuationQueue.slice(0, 10);
+      if (batch.length === 0) return;
+      const first = batch[0].partIndex;
+      const last = batch[batch.length - 1].partIndex;
+      const promptEl = findPromptInputElement();
+      const promptText = promptEl && ("value" in promptEl ? promptEl.value : promptEl.textContent) || "";
+      if (promptText.trim().length === 0) {
+        injectPromptText(
+          `[RepoMix Continuation: Parts ${first}\u2013${last} for ${config.repo} (${config.branch})]`,
+          false
+        );
+      }
+      const injected = injectRepoMixParts(
+        batch.map((p) => ({ fileName: p.fileName, xmlContent: p.xmlContent }))
+      );
+      if (injected) {
+        const remainingQueue = state.continuationQueue.slice(batch.length);
+        state.continuationQueue = remainingQueue;
+        const remainingNotice = remainingQueue.length > 0 ? ` (${remainingQueue.length} continuation part(s) remaining)` : "";
+        updateState({
+          continuationQueue: remainingQueue,
+          statusMessage: `\u2705 Injected continuation Parts ${first}\u2013${last} into chat prompt${remainingNotice}.`
+        });
+      } else {
+        updateState({
+          statusMessage: `\u274C Failed to inject continuation Parts ${first}\u2013${last} into chat prompt. Focus prompt input and try again.`
+        });
       }
     };
     dom.batchFormulaBtn.onclick = () => {
@@ -2321,7 +2609,8 @@ Fix Instructions:
       statusMessage: config.workerSecret ? "Ready. Load Repo Mix or commit patches." : "Set your Worker Secret (WORKER_SECRET) in the panel before using the bridge.",
       retryCount: 0,
       lastErrors: [],
-      harvestedPatches: []
+      harvestedPatches: [],
+      continuationQueue: []
     };
     const dom = buildHudDomTree(config, state);
     const runningVersion = getRunningScriptVersion();
@@ -2329,13 +2618,19 @@ Fix Instructions:
       dom.title.textContent = `\u26A1 Cloudflare Edge HUD v${runningVersion}`;
     }
     initHudUpdateBanner(dom);
+    function updateState(partial) {
+      Object.assign(state, partial);
+      renderState();
+    }
     function resetPatchOidState(reason) {
       clearPatchOidState(state);
-      controller.updateState({
+      state.continuationQueue = [];
+      updateState({
         status: "IDLE",
         statusMessage: `\u{1F504} ${reason} Snapshot OID reset \u2014 click "Load Repo Mix" before applying patches.`,
         retryCount: 0,
-        lastErrors: []
+        lastErrors: [],
+        continuationQueue: []
       });
     }
     function renderState() {
@@ -2343,9 +2638,9 @@ Fix Instructions:
         dom,
         state,
         config,
-        updateState: (partial) => controller.updateState(partial),
+        updateState: (partial) => updateState(partial),
         onApplyPatch: (patch) => {
-          controller.handleApplyPatch(patch);
+          void handleApplyPatch(patch);
         }
       });
     }
@@ -2363,65 +2658,15 @@ Fix Instructions:
       }
     };
     dom.closeBtn.onclick = closePanel;
-    const refreshRepoHistorySelectUI = () => {
-      const select = dom.repoHistorySelect;
-      if (!select) return;
-      const previousIndex = select.value;
-      const entries = loadRepoHistory();
-      select.textContent = "";
-      const placeholder = createHudElement("option", void 0, "Select a previous repo...");
-      placeholder.value = "";
-      select.appendChild(placeholder);
-      entries.forEach((entry, index) => {
-        const option = createHudElement("option", void 0);
-        option.value = String(index);
-        const repoLabel = entry.repo.includes("/") ? entry.repo : `${entry.owner}/${entry.repo}`;
-        const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : "";
-        option.textContent = `${repoLabel} @ ${entry.branch}${target}`;
-        select.appendChild(option);
-      });
-      select.disabled = entries.length === 0;
-      select.value = previousIndex && entries[Number(previousIndex)] ? previousIndex : "";
-    };
-    const applyRepoHistorySelection = () => {
-      const select = dom.repoHistorySelect;
-      if (!select) return;
-      const index = Number(select.value);
-      const entries = loadRepoHistory();
-      const entry = Number.isInteger(index) && index >= 0 ? entries[index] : void 0;
-      if (!entry) {
-        select.value = "";
-        return;
-      }
-      const previousRepo = config.repo;
-      const previousBranch = config.branch;
-      const previousTarget = config.targetBranch || "";
-      config.owner = entry.owner || config.owner;
-      config.repo = sanitizeRepo(entry.repo || config.repo);
-      config.branch = entry.branch || config.branch;
-      config.targetBranch = entry.targetBranch || "";
-      dom.ownerInput.value = config.owner;
-      dom.repoInput.value = config.repo;
-      dom.branchInput.value = config.branch;
-      dom.targetBranchInput.value = config.targetBranch || "";
-      saveHudConfig({
-        owner: config.owner,
-        repo: config.repo,
-        branch: config.branch,
-        targetBranch: config.targetBranch
-      });
-      const repoOrBranchChanged = config.repo !== previousRepo || config.branch !== previousBranch;
-      if (repoOrBranchChanged) {
-        resetPatchOidState(`Switched to "${config.repo} @ ${config.branch}".`);
-      } else if ((config.targetBranch || "") !== previousTarget) {
-        clearTargetOidState(state);
-      }
-      recordFromConfig(config);
-      refreshRepoHistorySelectUI();
-      select.value = "";
-      refreshAccountHint();
-      renderState();
-    };
+    const refreshRepoHistoryDropdown = bindRepoHistoryDropdown({
+      dom,
+      config,
+      state,
+      resetPatchOidState,
+      clearTargetOidState,
+      refreshAccountHint,
+      renderState
+    });
     bindHudConfigInputs({
       dom,
       config,
@@ -2430,22 +2675,20 @@ Fix Instructions:
       clearTargetOidState,
       renderState
     });
-    dom.repoHistorySelect.onchange = applyRepoHistorySelection;
-    setRepoHistorySelectRefresher(refreshRepoHistorySelectUI);
-    refreshRepoHistorySelectUI();
+    setRepoHistorySelectRefresher(refreshRepoHistoryDropdown);
     const applyAccountSwitch = bindAccountSwitch({ dom, config, state, resetPatchOidState, renderState });
     applyAccountSwitch();
     bindMixAction({
       dom,
       config,
       state,
-      updateState: (partial) => controller.updateState(partial)
+      updateState: (partial) => updateState(partial)
     });
     const handleApplyPatch = (patch) => applyHudPatch(patch, {
       config,
       state,
       openPanel,
-      updateState: (partial) => controller.updateState(partial),
+      updateState: (partial) => updateState(partial),
       onApplyPatchCustom
     });
     dom.clearQueueBtn.onclick = () => {
@@ -2459,14 +2702,14 @@ Fix Instructions:
         if (batch) {
           const total2 = state.harvestedPatches.length;
           const fileCount = new Set(batch.payload.patches.map((entry) => entry.path)).size;
-          controller.updateState({
+          updateState({
             status: "PATCHING",
             statusMessage: `\u23F3 Applying atomic batch of ${total2} patches across ${fileCount} file(s) in 1 commit...`
           });
           const committed = await handleApplyPatch(batch);
           if (committed) {
             state.harvestedPatches = [];
-            controller.updateState({
+            updateState({
               status: "COMMITTED",
               statusMessage: `\u{1F389} Atomic batch (${total2} patches across ${fileCount} files) committed in 1 commit!`
             });
@@ -2478,14 +2721,14 @@ Fix Instructions:
         state.harvestedPatches,
         handleApplyPatch,
         (patch, index, totalCount) => {
-          controller.updateState({
+          updateState({
             status: "PATCHING",
             statusMessage: `\u23F3 [${index + 1}/${totalCount}] Applying patch: "${patch.commitMessage}"...`
           });
         }
       );
       if (applied < total) return;
-      controller.updateState({
+      updateState({
         status: "COMMITTED",
         statusMessage: `\u{1F389} All ${applied} patches successfully applied and committed!`
       });
@@ -2493,8 +2736,7 @@ Fix Instructions:
     const controller = {
       getState: () => ({ ...state }),
       updateState: (partial) => {
-        Object.assign(state, partial);
-        renderState();
+        updateState(partial);
       },
       openPanel,
       closePanel,

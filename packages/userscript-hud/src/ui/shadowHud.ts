@@ -4,8 +4,6 @@ import type {
 } from '../types';
 import {
   loadHudConfig,
-  saveHudConfig,
-  sanitizeRepo,
 } from '../services/storage';
 import { getRunningScriptVersion } from '../services/runtimeInfo';
 import {
@@ -22,7 +20,7 @@ import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } 
 import { buildHudDomTree } from './hudDomTree';
 import { initHudUpdateBanner } from './updateBanner';
 import { bindHudConfigInputs, setRepoHistorySelectRefresher } from './hudConfigBindings';
-import { loadRepoHistory, recordFromConfig } from '../services/repoHistory';
+import { bindRepoHistoryDropdown } from './hudRepoHistoryDropdown';
 import { bindAccountSwitch, refreshAccountHint } from './hudAccountSwitch';
 import { renderHudState } from './hudRender';
 import { bindMixAction } from './hudMixAction';
@@ -61,6 +59,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     retryCount: 0,
     lastErrors: [],
     harvestedPatches: [],
+    continuationQueue: [],
   };
 
   const dom = buildHudDomTree(config, state);
@@ -73,14 +72,21 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   }
   initHudUpdateBanner(dom);
 
+  function updateState(partial: Partial<HudState>) {
+    Object.assign(state, partial);
+    renderState();
+  }
+
   /** Config changes invalidate every snapshot OID: they are repo+branch bound. */
   function resetPatchOidState(reason: string) {
     clearPatchOidState(state);
-    controller.updateState({
+    state.continuationQueue = [];
+    updateState({
       status: 'IDLE',
       statusMessage: `🔄 ${reason} Snapshot OID reset — click "Load Repo Mix" before applying patches.`,
       retryCount: 0,
       lastErrors: [],
+      continuationQueue: [],
     });
   }
 
@@ -90,8 +96,8 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       dom,
       state,
       config,
-      updateState: (partial) => controller.updateState(partial),
-      onApplyPatch: (patch) => { controller.handleApplyPatch(patch); },
+      updateState: (partial) => updateState(partial),
+      onApplyPatch: (patch) => { void handleApplyPatch(patch); },
     });
   }
 
@@ -112,75 +118,15 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   };
   dom.closeBtn.onclick = closePanel;
 
-  const refreshRepoHistorySelectUI = () => {
-    const select = dom.repoHistorySelect;
-    if (!select) return;
-    const previousIndex = select.value;
-    const entries = loadRepoHistory();
-
-    select.textContent = '';
-    const placeholder = createHudElement('option', undefined, 'Select a previous repo...');
-    (placeholder as HTMLOptionElement).value = '';
-    select.appendChild(placeholder);
-
-    entries.forEach((entry, index) => {
-      const option = createHudElement('option', undefined);
-      option.value = String(index);
-      const repoLabel = entry.repo.includes('/') ? entry.repo : `${entry.owner}/${entry.repo}`;
-      const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : '';
-      option.textContent = `${repoLabel} @ ${entry.branch}${target}`;
-      select.appendChild(option);
-    });
-
-    select.disabled = entries.length === 0;
-    select.value = previousIndex && entries[Number(previousIndex)] ? previousIndex : '';
-  };
-
-  const applyRepoHistorySelection = () => {
-    const select = dom.repoHistorySelect;
-    if (!select) return;
-    const index = Number(select.value);
-    const entries = loadRepoHistory();
-    const entry = Number.isInteger(index) && index >= 0 ? entries[index] : undefined;
-    if (!entry) {
-      select.value = '';
-      return;
-    }
-
-    const previousRepo = config.repo;
-    const previousBranch = config.branch;
-    const previousTarget = config.targetBranch || '';
-
-    config.owner = entry.owner || config.owner;
-    config.repo = sanitizeRepo(entry.repo || config.repo);
-    config.branch = entry.branch || config.branch;
-    config.targetBranch = entry.targetBranch || '';
-
-    dom.ownerInput.value = config.owner;
-    dom.repoInput.value = config.repo;
-    dom.branchInput.value = config.branch;
-    dom.targetBranchInput.value = config.targetBranch || '';
-
-    saveHudConfig({
-      owner: config.owner,
-      repo: config.repo,
-      branch: config.branch,
-      targetBranch: config.targetBranch,
-    });
-
-    const repoOrBranchChanged = config.repo !== previousRepo || config.branch !== previousBranch;
-    if (repoOrBranchChanged) {
-      resetPatchOidState(`Switched to "${config.repo} @ ${config.branch}".`);
-    } else if ((config.targetBranch || '') !== previousTarget) {
-      clearTargetOidState(state);
-    }
-
-    recordFromConfig(config);
-    refreshRepoHistorySelectUI();
-    select.value = '';
-    refreshAccountHint();
-    renderState();
-  };
+  const refreshRepoHistoryDropdown = bindRepoHistoryDropdown({
+    dom,
+    config,
+    state,
+    resetPatchOidState,
+    clearTargetOidState,
+    refreshAccountHint,
+    renderState,
+  });
 
   bindHudConfigInputs({
     dom,
@@ -191,9 +137,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     renderState,
   });
 
-  dom.repoHistorySelect.onchange = applyRepoHistorySelection;
-  setRepoHistorySelectRefresher(refreshRepoHistorySelectUI);
-  refreshRepoHistorySelectUI();
+  setRepoHistorySelectRefresher(refreshRepoHistoryDropdown);
 
   const applyAccountSwitch = bindAccountSwitch({ dom, config, state, resetPatchOidState, renderState });
   applyAccountSwitch();
@@ -202,7 +146,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     dom,
     config,
     state,
-    updateState: (partial) => controller.updateState(partial),
+    updateState: (partial) => updateState(partial),
   });
 
   const handleApplyPatch = (patch: HarvestedPatch): Promise<boolean> =>
@@ -210,7 +154,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       config,
       state,
       openPanel,
-      updateState: (partial) => controller.updateState(partial),
+      updateState: (partial) => updateState(partial),
       onApplyPatchCustom,
     });
 
@@ -229,7 +173,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       if (batch) {
         const total = state.harvestedPatches.length;
         const fileCount = new Set(batch.payload.patches.map((entry) => entry.path)).size;
-        controller.updateState({
+        updateState({
           status: 'PATCHING',
           statusMessage: `⏳ Applying atomic batch of ${total} patches across ${fileCount} file(s) in 1 commit...`,
         });
@@ -237,7 +181,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
         const committed = await handleApplyPatch(batch);
         if (committed) {
           state.harvestedPatches = [];
-          controller.updateState({
+          updateState({
             status: 'COMMITTED',
             statusMessage: `🎉 Atomic batch (${total} patches across ${fileCount} files) committed in 1 commit!`,
           });
@@ -250,7 +194,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       state.harvestedPatches,
       handleApplyPatch,
       (patch, index, totalCount) => {
-        controller.updateState({
+        updateState({
           status: 'PATCHING',
           statusMessage: `⏳ [${index + 1}/${totalCount}] Applying patch: "${patch.commitMessage}"...`,
         });
@@ -260,7 +204,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     // Fail-fast: the failing patch already published its own error status.
     if (applied < total) return;
 
-    controller.updateState({
+    updateState({
       status: 'COMMITTED',
       statusMessage: `🎉 All ${applied} patches successfully applied and committed!`,
     });
@@ -269,8 +213,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   const controller: ShadowHudController = {
     getState: () => ({ ...state }),
     updateState: (partial: Partial<HudState>) => {
-      Object.assign(state, partial);
-      renderState();
+      updateState(partial);
     },
     openPanel,
     closePanel,

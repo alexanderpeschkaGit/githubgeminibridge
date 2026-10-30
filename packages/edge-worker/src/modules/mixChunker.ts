@@ -1,12 +1,20 @@
 import type { MixOmittedFile, MixPart, MixTruncation } from '../types';
-import { buildOmittedManifest, buildTruncationNotice, capFileTree, selectFilesWithinPartLimit } from './mixSelection';
+import {
+  buildOmittedManifest,
+  buildTruncationNotice,
+  capFileTree,
+  rankFilesForOmission,
+  selectFilesWithinPartLimit,
+} from './mixSelection';
 import {
   buildPartXml,
   canFileFitContinuationPart,
   CONTINUATION_MIX_INSTRUCTIONS,
+  fitPartXml,
   formatFileXml,
   packFilesIntoBuckets,
 } from './mixSerializer';
+import { buildContinuationParts } from './mixContinuation';
 
 export { CONTINUATION_MIX_INSTRUCTIONS };
 
@@ -84,11 +92,13 @@ export interface ChunkMixInput {
   maxChunkBytes?: number;
   maxChunkTokens?: number;
   splitOutput?: boolean;
+  enableContinuation?: boolean;
 }
 
 export interface ChunkMixResult {
   xmlContent: string;
   parts?: MixPart[];
+  continuationParts?: MixPart[];
   isChunked: boolean;
   truncation?: MixTruncation;
   stats: {
@@ -106,12 +116,7 @@ export interface ChunkMixResult {
  */
 export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
   const {
-    owner,
-    repo,
-    branch,
-    headOid,
-    fileTreeEntries,
-    files,
+    owner, repo, branch, headOid, fileTreeEntries, files,
     maxChunkChars = DEFAULT_MAX_CHUNK_CHARS,
     maxChunkBytes = DEFAULT_MAX_CHUNK_BYTES,
     maxChunkTokens = DEFAULT_MAX_CHUNK_TOKENS,
@@ -204,49 +209,25 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
     entries: Array<{ path: string; content: string; fileXml: string }>;
     metadata: string;
   } {
-    const build = (
-      treeText: string,
-      metadata: string,
-      entries: Array<{ path: string; content: string; fileXml: string }>
-    ): string =>
-      buildPartXml({
-        owner,
-        repo,
-        branch,
-        headOid,
-        partNum: params.partNum,
-        totalParts: params.totalParts,
-        instructionsText: params.instructionsText,
-        truncationNoticeText: params.truncationNoticeText,
-        recentCommitsText: metadata || undefined,
-        treeText,
-        omittedManifestText: params.omittedManifestText,
-        fileXmlList: entries.map((e) => e.fileXml),
-      });
-
-    let metadata = params.metadata;
-    let xml = build(params.treeText, metadata, params.fileEntries);
-    if (xml.length > HARD_GEMINI_CHAR_LIMIT && metadata) {
-      metadata = capRecentCommitsText(
-        metadata,
-        Math.max(0, metadata.length - (xml.length - HARD_GEMINI_CHAR_LIMIT) - 1)
-      );
-      xml = build(params.treeText, metadata, params.fileEntries);
-    }
-    if (xml.length > HARD_GEMINI_CHAR_LIMIT && metadata) {
-      metadata = '';
-      xml = build(params.treeText, metadata, params.fileEntries);
-    }
-    return { xml, entries: params.fileEntries, metadata };
+    return fitPartXml({
+      owner, repo, branch, headOid,
+      partNum: params.partNum,
+      totalParts: params.totalParts,
+      instructionsText: params.instructionsText,
+      truncationNoticeText: params.truncationNoticeText,
+      metadata: params.metadata,
+      treeText: params.treeText,
+      omittedManifestText: params.omittedManifestText,
+      fileEntries: params.fileEntries,
+      hardLimit: HARD_GEMINI_CHAR_LIMIT,
+      capMetadataFn: capRecentCommitsText,
+    });
   }
 
   // 3. Single-part fast path: the split decision uses the unconstrained size,
   // the emitted part is then measured against the absolute ceiling.
   const singleRawXml = buildPartXml({
-    owner,
-    repo,
-    branch,
-    headOid,
+    owner, repo, branch, headOid,
     instructionsText: DEFAULT_MIX_INSTRUCTIONS,
     recentCommitsText: cappedRecentCommitsText || undefined,
     treeText: fullTreeXml,
@@ -318,6 +299,10 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
   const requiredParts = initialPack.buckets.length;
 
   let keptFiles = validFiles;
+  let continuationParts: MixPart[] = [];
+  let continuationFilesCount = 0;
+  let continuationPartsCount = 0;
+
   if (!initialPack.allWithinBudget || requiredParts > MAX_GEMINI_PARTS || omitted.length > 0) {
     const part1WithMetaChars =
       part1OverheadChars + (cappedRecentCommitsText ? cappedRecentCommitsText.length + 1 : 0);
@@ -348,6 +333,30 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
       treeEntries.filter((entry) => keptPaths.has(entry)),
       maxTreeChars
     );
+
+    if (input.enableContinuation === true) {
+      const partLimitOmittedEntries = rankFilesForOmission(
+        validFiles.filter((file) => !keptPaths.has(file.path))
+      );
+      if (partLimitOmittedEntries.length > 0) {
+        const contRes = buildContinuationParts({
+          owner,
+          repo,
+          branch,
+          headOid,
+          basePartCount: MAX_GEMINI_PARTS,
+          omittedEntries: partLimitOmittedEntries,
+          effectiveMaxChars,
+          maxPackBudget,
+          canEscalateBudget,
+          hardLimit: HARD_GEMINI_CHAR_LIMIT,
+        });
+        continuationParts = contRes.continuationParts;
+        continuationFilesCount = contRes.coveredFilesCount;
+        continuationPartsCount = continuationParts.length;
+      }
+    }
+
     part1Extras = {
       notice: buildTruncationNotice({
         includedFiles: keptFiles.length,
@@ -355,6 +364,7 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
         omittedFiles: omitted,
         requiredParts,
         availableParts: MAX_GEMINI_PARTS,
+        ...(input.enableContinuation === true ? { continuationPartsCount, continuationFilesCount } : {}),
       }),
       manifest: buildOmittedManifest(omitted, manifestMaxChars),
     };
@@ -362,11 +372,7 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
 
   // Budget ladder: 85k default first, then 95k, then the absolute 100k ceiling.
   const budgetLadder = canEscalateBudget
-    ? [
-        effectiveMaxChars,
-        Math.min(95_000, HARD_GEMINI_CHAR_LIMIT),
-        HARD_GEMINI_CHAR_LIMIT,
-      ]
+    ? [effectiveMaxChars, Math.min(95_000, HARD_GEMINI_CHAR_LIMIT), HARD_GEMINI_CHAR_LIMIT]
     : [effectiveMaxChars];
   const triedBudgets: number[] = [];
   let chunkBuckets: FsEntry[][] = [];
@@ -458,12 +464,20 @@ export function buildChunkedMixXml(input: ChunkMixInput): ChunkMixResult {
         totalFiles: files.length,
         omittedFiles: [...omitted].sort((a, b) => a.path.localeCompare(b.path)),
         omittedChars: omitted.reduce((sum, entry) => sum + (entry.chars ?? 0), 0),
+        ...(input.enableContinuation === true
+          ? {
+              continuationPartsCount,
+              continuationFilesCount,
+              unrecoverableFilesCount: Math.max(0, omitted.length - continuationFilesCount),
+            }
+          : {}),
       }
     : undefined;
 
   return {
     xmlContent: parts[0]?.xmlContent ?? single.xml,
     parts,
+    ...(continuationParts.length > 0 ? { continuationParts } : {}),
     isChunked: true,
     ...(truncation ? { truncation } : {}),
     stats: {

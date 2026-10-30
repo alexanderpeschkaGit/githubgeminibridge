@@ -1,5 +1,5 @@
 export * from '../../../shared/types';
-import type { GeminiPatchPayload, CommitRequest, LinterError } from '../../../shared/types';
+import type { GeminiPatchPayload, CommitRequest, LinterError, MixPart } from '../../../shared/types';
 
 export interface HudConfig {
   workerUrl: string;
@@ -49,6 +49,7 @@ export interface HudState {
   retryCount: number;
   lastErrors: LinterError[];
   harvestedPatches: HarvestedPatch[];
+  continuationQueue: MixPart[];
 }
 
 // Tampermonkey & Trusted Types Ambient Declarations

@@ -52,34 +52,44 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   updateBanner.appendChild(updateBannerBtn);
   body.appendChild(updateBanner);
 
-  // Repo Row
-  const repoRow = createHudElement('div', 'hud-form-row');
-  const repoLabel = createHudElement('span', 'hud-label', 'GitHub Repository (owner/repo)');
+  // Repo & Owner Grid (Row 1: Repo + History Dropdown | Owner)
+  const repoOwnerGrid = createHudElement('div', 'hud-repo-owner-grid');
+
+  // Left: Repo Combo (Input + Dropdown Trigger + Menu)
+  const repoComboWrap = createHudElement('div', 'hud-repo-combo-wrap');
+  const repoLabel = createHudElement('span', 'hud-label', 'GitHub Repository');
+  repoLabel.title = 'GitHub Repository (owner/repo)';
+
+  const inputCombo = createHudElement('div', 'hud-input-combo');
   const repoInput = createHudElement('input', 'hud-input');
   repoInput.value = config.repo;
-  repoRow.appendChild(repoLabel);
-  repoRow.appendChild(repoInput);
-  body.appendChild(repoRow);
 
-  // Recent Repositories Row (quick switcher; only non-sensitive owner/repo/branch data)
-  const repoHistoryRow = createHudElement('div', 'hud-form-row');
-  const repoHistoryLabel = createHudElement('span', 'hud-label', 'Recent Repositories');
-  const repoHistorySelect = createHudElement('select', 'hud-input hud-select');
-  const repoHistoryPlaceholder = createHudElement('option', undefined, 'Select a previous repo...');
-  repoHistoryPlaceholder.value = '';
-  repoHistorySelect.appendChild(repoHistoryPlaceholder);
-  repoHistoryRow.appendChild(repoHistoryLabel);
-  repoHistoryRow.appendChild(repoHistorySelect);
-  body.appendChild(repoHistoryRow);
+  const repoHistoryBtn = createHudElement('button', 'hud-combo-arrow', '▾');
+  repoHistoryBtn.type = 'button';
+  repoHistoryBtn.title = 'Recent Repositories';
 
-  // Owner Row (per account profile; drives foreign-owner warnings)
+  inputCombo.appendChild(repoInput);
+  inputCombo.appendChild(repoHistoryBtn);
+
+  const repoHistoryMenu = createHudElement('div', 'hud-repo-menu');
+  repoHistoryMenu.style.display = 'none';
+
+  repoComboWrap.appendChild(repoLabel);
+  repoComboWrap.appendChild(inputCombo);
+  repoComboWrap.appendChild(repoHistoryMenu);
+  repoOwnerGrid.appendChild(repoComboWrap);
+
+  // Right: Owner
   const ownerRow = createHudElement('div', 'hud-form-row');
-  const ownerLabel = createHudElement('span', 'hud-label', 'GitHub Owner (active account)');
+  const ownerLabel = createHudElement('span', 'hud-label', 'GitHub Owner');
+  ownerLabel.title = 'GitHub Owner (active account)';
   const ownerInput = createHudElement('input', 'hud-input');
   ownerInput.value = config.owner;
   ownerRow.appendChild(ownerLabel);
   ownerRow.appendChild(ownerInput);
-  body.appendChild(ownerRow);
+  repoOwnerGrid.appendChild(ownerRow);
+
+  body.appendChild(repoOwnerGrid);
 
   // Owner-Classification Hint (hidden unless repo belongs to another/foreign owner)
   const ownerHintEl = createHudElement('div', 'hud-account-hint');
@@ -130,31 +140,38 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   scopeGrid.appendChild(maxChunkRow);
   body.appendChild(scopeGrid);
 
-  // Worker URL Row (Edge Worker Endpoint; switch between account deployments)
-  const workerUrlRow = createHudElement('div', 'hud-form-row');
-  const workerUrlLabel = createHudElement('span', 'hud-label', 'Worker URL (Edge Worker Endpoint)');
+  // Compact grid: Account | Worker URL
+  const accountWorkerGrid = createHudElement('div', 'hud-account-worker-grid');
+
+  const accountCol = createHudElement('div', 'hud-form-row');
+  const accountLabel = createHudElement('span', 'hud-label', 'Account');
+  accountLabel.title = 'GitHub Account Profile (active)';
+  const accountBtnGroup = createHudElement('div', 'hud-account-btns');
+  const accountBtn1 = createHudElement('button', 'hud-btn hud-btn-secondary', '👤 Acc 1');
+  accountBtn1.type = 'button';
+  accountBtn1.title = 'Switch to GitHub Account Profile 1';
+  const accountBtn2 = createHudElement('button', 'hud-btn hud-btn-secondary', '👤 Acc 2');
+  accountBtn2.type = 'button';
+  accountBtn2.title = 'Switch to GitHub Account Profile 2';
+  accountBtnGroup.appendChild(accountBtn1);
+  accountBtnGroup.appendChild(accountBtn2);
+  accountCol.appendChild(accountLabel);
+  accountCol.appendChild(accountBtnGroup);
+
+  const workerUrlCol = createHudElement('div', 'hud-form-row');
+  const workerUrlLabel = createHudElement('span', 'hud-label', 'Worker URL');
+  workerUrlLabel.title = 'Worker URL (Edge Worker Endpoint)';
   const workerUrlInput = createHudElement('input', 'hud-input');
   workerUrlInput.type = 'url';
   workerUrlInput.placeholder = 'https://<your-worker>.workers.dev';
   workerUrlInput.value = config.workerUrl;
-  workerUrlRow.appendChild(workerUrlLabel);
-  workerUrlRow.appendChild(workerUrlInput);
-  body.appendChild(workerUrlRow);
+  workerUrlInput.style.minWidth = '0';
+  workerUrlCol.appendChild(workerUrlLabel);
+  workerUrlCol.appendChild(workerUrlInput);
 
-  // Account Switch Row (one-click profile switching; manual buttons)
-  const accountRow = createHudElement('div', 'hud-form-row');
-  const accountLabel = createHudElement('span', 'hud-label', 'GitHub Account');
-  const accountBtnGroup = createHudElement('div');
-  accountBtnGroup.style.cssText = 'display: flex; gap: 6px;';
-  const accountBtn1 = createHudElement('button', 'hud-btn hud-btn-secondary', '👤 Account 1');
-  accountBtn1.type = 'button';
-  const accountBtn2 = createHudElement('button', 'hud-btn hud-btn-secondary', '👤 Account 2');
-  accountBtn2.type = 'button';
-  accountBtnGroup.appendChild(accountBtn1);
-  accountBtnGroup.appendChild(accountBtn2);
-  accountRow.appendChild(accountLabel);
-  accountRow.appendChild(accountBtnGroup);
-  body.appendChild(accountRow);
+  accountWorkerGrid.appendChild(accountCol);
+  accountWorkerGrid.appendChild(workerUrlCol);
+  body.appendChild(accountWorkerGrid);
 
   // Compact grid: Worker Secret | Head OID
   const secretGrid = createHudElement('div', 'hud-form-grid');
@@ -182,41 +199,49 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   mixBtn.style.flex = '1';
   actionRow.appendChild(mixBtn);
 
+  const continueMixBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '⏭️ Next Parts');
+  continueMixBtn.type = 'button';
+  continueMixBtn.style.display = 'none';
+  actionRow.appendChild(continueMixBtn);
+
   const batchFormulaBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🧩 Batch Formula');
   batchFormulaBtn.title = 'Insert optimal V2 integratable batch prompt formula into chat';
   actionRow.appendChild(batchFormulaBtn);
 
   body.appendChild(actionRow);
 
-  // Options Row: Auto-Pilot toggle
-  const optRow = createHudElement('div');
-  optRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between;';
+  // Toggles Row: Auto-Pilot (left) & Recent Commits (right)
+  const togglesRow = createHudElement('div', 'hud-toggles-row');
+
+  const autoPilotGroup = createHudElement('div');
+  autoPilotGroup.style.cssText = 'display: flex; align-items: center; gap: 6px;';
+
   const autoPilotLabel = createHudElement('label', 'hud-toggle-label');
+  autoPilotLabel.title = 'Auto-Pilot Self-Healing (max 3 retries)';
   const autoPilotCheck = createHudElement('input');
   autoPilotCheck.type = 'checkbox';
   autoPilotCheck.checked = config.autoPilot;
-  const autoPilotText = createHudElement('span', undefined, '🤖 Auto-Pilot Self-Healing');
+  const autoPilotText = createHudElement('span', undefined, '🤖 Auto-Pilot');
   autoPilotLabel.appendChild(autoPilotCheck);
   autoPilotLabel.appendChild(autoPilotText);
 
-  const retryIndicator = createHudElement('span', undefined, `Retries: ${state.retryCount}/3`);
-  retryIndicator.style.cssText = 'font-size: 11px; color: #94a3b8;';
-  optRow.appendChild(autoPilotLabel);
-  optRow.appendChild(retryIndicator);
-  body.appendChild(optRow);
+  const retryIndicator = createHudElement('span', 'hud-retry-pill', '(' + state.retryCount + '/3)');
 
-  // Commits & Volatile Files Row
-  const commitsRow = createHudElement('div');
-  commitsRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-top: 4px;';
+  autoPilotGroup.appendChild(autoPilotLabel);
+  autoPilotGroup.appendChild(retryIndicator);
+
   const recentCommitsLabel = createHudElement('label', 'hud-toggle-label');
+  recentCommitsLabel.title = 'Volatile Dateien & Letzte Commits in RepoMix einbeziehen';
   const recentCommitsCheck = createHudElement('input');
   recentCommitsCheck.type = 'checkbox';
   recentCommitsCheck.checked = config.includeRecentCommits === true;
-  const recentCommitsText = createHudElement('span', undefined, '🕒 Volatile Dateien & Letzte Commits');
+  const recentCommitsText = createHudElement('span', undefined, '🕒 Letzte Commits');
   recentCommitsLabel.appendChild(recentCommitsCheck);
   recentCommitsLabel.appendChild(recentCommitsText);
-  commitsRow.appendChild(recentCommitsLabel);
-  body.appendChild(commitsRow);
+
+  togglesRow.appendChild(autoPilotGroup);
+  togglesRow.appendChild(recentCommitsLabel);
+  body.appendChild(togglesRow);
 
   // Patch Queue Header Row
   const queueHeaderRow = createHudElement('div');
@@ -264,7 +289,8 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     updateBannerBtn,
     closeBtn,
     repoInput,
-    repoHistorySelect,
+    repoHistoryBtn,
+    repoHistoryMenu,
     ownerInput,
     ownerHintEl,
     branchInput,
@@ -277,6 +303,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     maxChunkCharsInput,
     oidBadge,
     mixBtn,
+    continueMixBtn,
     batchFormulaBtn,
     autoPilotCheck,
     recentCommitsCheck,

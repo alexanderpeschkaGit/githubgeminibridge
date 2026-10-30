@@ -83,6 +83,11 @@ const LOCAL_SUITES = [
     finding: 'Tarball 404 names the missing branch (with default hint) or repo/token access',
   },
   {
+    id: 'mix-continuation-and-hud-layout',
+    script: 'test-mix-continuation-and-hud-layout.mjs',
+    finding: 'Pre-packed RepoMix continuation parts (11..30) obey 100k ceiling and 4-row compact HUD dropdown/toggles work without innerHTML',
+  },
+  {
     id: 'path-normalization',
     script: 'test-path-normalization.mjs',
     finding: 'Repo-relative paths are canonicalized before GraphQL blob reads/commits; no invented default path',

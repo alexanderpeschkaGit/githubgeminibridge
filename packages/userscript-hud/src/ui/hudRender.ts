@@ -24,7 +24,8 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
     dom.oidBadge.style.color = '#94a3b8';
   }
 
-  dom.retryIndicator.textContent = `Retries: ${state.retryCount}/3`;
+  dom.retryIndicator.textContent = `(${state.retryCount}/3)`;
+  dom.retryIndicator.title = `Self-Healing Retries: ${state.retryCount}/3`;
 
   const statusClasses: Record<string, string> = {
     ERROR: 'error', PREFLIGHT_FAILED: 'error', GIT_CONFLICT: 'error',
@@ -69,6 +70,22 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
 
   const patchCount = state.harvestedPatches.length;
   const isBusy = state.status === 'PATCHING' || state.status === 'MIXING';
+
+  if (state.continuationQueue && state.continuationQueue.length > 0) {
+    const nextBatch = state.continuationQueue.slice(0, 10);
+    const first = nextBatch[0]?.partIndex ?? 11;
+    const last = nextBatch[nextBatch.length - 1]?.partIndex ?? first;
+    const fileCount = nextBatch.reduce((sum, p) => sum + (p.stats?.fileCount ?? 0), 0);
+    const totalRemaining = state.continuationQueue.length;
+
+    dom.continueMixBtn.style.display = 'inline-flex';
+    dom.continueMixBtn.disabled = isBusy;
+    dom.continueMixBtn.textContent = `⏭️ Parts ${first}–${last}`;
+    dom.continueMixBtn.title = `Inject Parts ${first}–${last} (${fileCount} files, ${totalRemaining} part(s) remaining in queue)`;
+  } else {
+    dom.continueMixBtn.style.display = 'none';
+  }
+
   dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
   dom.applyAllBtn.textContent = patchCount > 0 ? `⚡ Apply All (${patchCount})` : '⚡ Apply All';
   dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;

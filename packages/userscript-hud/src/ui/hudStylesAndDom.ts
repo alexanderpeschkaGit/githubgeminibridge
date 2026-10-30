@@ -157,6 +157,113 @@ export const HUD_STYLES = `
     gap: 10px 12px;
     align-items: start;
   }
+  .hud-repo-owner-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+  }
+  .hud-repo-combo-wrap {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .hud-input-combo {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+  }
+  .hud-input-combo .hud-input {
+    flex: 1;
+    min-width: 0;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .hud-combo-arrow {
+    width: 30px;
+    flex: 0 0 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-left: none;
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 0;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+    user-select: none;
+  }
+  .hud-combo-arrow:hover:not(:disabled) {
+    background: #334155;
+    color: #f8fafc;
+  }
+  .hud-combo-arrow:focus {
+    outline: none;
+    border-color: #38bdf8;
+  }
+  .hud-combo-arrow:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .hud-repo-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 180px;
+    overflow-y: auto;
+    z-index: 40;
+    background: #0f172a;
+    border: 1px solid #38bdf8;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+    gap: 2px;
+  }
+  .hud-repo-menu-item {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: #e2e8f0;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 6px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.15s, color 0.15s;
+  }
+  .hud-repo-menu-item:hover {
+    background: #1e293b;
+    color: #38bdf8;
+  }
+  .hud-repo-menu-item:focus {
+    outline: none;
+    background: #1e293b;
+    color: #38bdf8;
+  }
+  .hud-account-worker-grid {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+  }
+  .hud-account-btns { display: flex; gap: 6px; }
+  .hud-account-btns .hud-btn { padding: 7px 9px; font-size: 11px; white-space: nowrap; }
+  .hud-toggles-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }
+  .hud-retry-pill { font-size: 10px; color: #94a3b8; white-space: nowrap; }
   .hud-label {
     font-size: 11px;
     font-weight: 600;
@@ -327,7 +434,8 @@ export interface HudDomElements {
   updateBannerText: HTMLSpanElement;
   updateBannerBtn: HTMLButtonElement;
   repoInput: HTMLInputElement;
-  repoHistorySelect: HTMLSelectElement;
+  repoHistoryBtn: HTMLButtonElement;
+  repoHistoryMenu: HTMLDivElement;
   ownerInput: HTMLInputElement;
   accountBtn1: HTMLButtonElement;
   accountBtn2: HTMLButtonElement;
@@ -340,6 +448,7 @@ export interface HudDomElements {
   maxChunkCharsInput: HTMLInputElement;
   oidBadge: HTMLDivElement;
   mixBtn: HTMLButtonElement;
+  continueMixBtn: HTMLButtonElement;
   batchFormulaBtn: HTMLButtonElement;
   autoPilotCheck: HTMLInputElement;
   recentCommitsCheck: HTMLInputElement;

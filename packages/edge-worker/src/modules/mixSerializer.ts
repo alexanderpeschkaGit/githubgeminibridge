@@ -51,6 +51,58 @@ export function buildPartXml(params: {
   return sections.join('\n');
 }
 
+export function fitPartXml<
+  T extends { relativePath?: string; path?: string; content: string; fileXml?: string }
+>(params: {
+  owner: string;
+  repo: string;
+  branch: string;
+  headOid: string;
+  partNum?: number;
+  totalParts?: number;
+  instructionsText?: string;
+  truncationNoticeText?: string;
+  metadata?: string;
+  treeText: string;
+  omittedManifestText?: string;
+  fileEntries: T[];
+  hardLimit: number;
+  capMetadataFn?: (metadata: string, budget: number) => string;
+}): { xml: string; entries: T[]; metadata: string } {
+  const build = (meta: string): string =>
+    buildPartXml({
+      owner: params.owner,
+      repo: params.repo,
+      branch: params.branch,
+      headOid: params.headOid,
+      partNum: params.partNum,
+      totalParts: params.totalParts,
+      instructionsText: params.instructionsText,
+      truncationNoticeText: params.truncationNoticeText,
+      recentCommitsText: meta || undefined,
+      treeText: params.treeText,
+      omittedManifestText: params.omittedManifestText,
+      fileXmlList: params.fileEntries.map((e) =>
+        e.fileXml ?? formatFileXml({ path: e.relativePath ?? e.path ?? '', content: e.content })
+      ),
+    });
+
+  let metadata = params.metadata ?? '';
+  let xml = build(metadata);
+  if (xml.length > params.hardLimit && metadata && params.capMetadataFn) {
+    metadata = params.capMetadataFn(
+      metadata,
+      Math.max(0, metadata.length - (xml.length - params.hardLimit) - 1)
+    );
+    xml = build(metadata);
+  }
+  if (xml.length > params.hardLimit && metadata) {
+    metadata = '';
+    xml = build(metadata);
+  }
+  return { xml, entries: params.fileEntries, metadata };
+}
+
 export function canFileFitContinuationPart(params: {
   owner: string;
   repo: string;

@@ -1,5 +1,10 @@
 import type { HudConfig, HudState } from '../types';
-import { injectPromptText, injectRepoMixFile, injectRepoMixParts } from '../dom/injector';
+import {
+  injectPromptText,
+  injectRepoMixFile,
+  injectRepoMixParts,
+  findPromptInputElement,
+} from '../dom/injector';
 import { requestRepoMix } from '../services/workerClient';
 import { buildBatchFormulaPrompt } from '../services/batchFormula';
 import { setSourceHeadOid } from '../services/patchOidStore';
@@ -23,6 +28,7 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
       updateState({
         status: 'MIXING',
         statusMessage: `⏳ Streaming repo mix for ${config.repo} (${config.branch})...`,
+        continuationQueue: [],
       });
 
       const res = await requestRepoMix(config);
@@ -47,8 +53,12 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
           : '';
 
         const truncation = res.truncation;
+        const nextContinuation = res.continuationParts ? [...res.continuationParts] : [];
+        const continuationNoticeHint = nextContinuation.length > 0
+          ? ` — click "⏭️ Parts 11–${10 + Math.min(10, nextContinuation.length)}" in Prompt 2`
+          : '';
         const truncationNotice = truncation
-          ? ` | ⚠️ Truncated: ${truncation.includedFiles}/${truncation.totalFiles} files (${truncation.omittedFiles.length} omitted${truncation.omittedFiles.length <= 3 ? ': ' + truncation.omittedFiles.slice(0, 3).map((entry) => entry.path.split('/').pop()).join(', ') : ''}) — add to .repomixignore.cf or narrow includePaths`
+          ? ` | ⚠️ Truncated: ${truncation.includedFiles}/${truncation.totalFiles} files (${truncation.omittedFiles.length} omitted${truncation.omittedFiles.length <= 3 ? ': ' + truncation.omittedFiles.slice(0, 3).map((entry) => entry.path.split('/').pop()).join(', ') : ''})${continuationNoticeHint} — add to .repomixignore.cf or narrow includePaths`
           : '';
         const slotNotice = res.parts && res.parts.length >= 9
           ? ` | ⚠️ Using ${res.parts.length}/10 Gemini attachment slots; existing prompt attachments may trigger the 10-file warning`
@@ -63,6 +73,7 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
           );
           updateState({
             status: 'IDLE',
+            continuationQueue: nextContinuation,
             statusMessage: `✅ Loaded ${res.parts.length} parts (${res.stats.fileCount} files${metaCommits}, ~${res.stats.estimatedTokens} tokens) [${partBreakdown}]. Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}${skippedNotice}${truncationNotice}${slotNotice}`,
           });
         } else {
@@ -70,6 +81,7 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
           const charLen = res.stats.charCount ?? res.xmlContent.length;
           updateState({
             status: 'IDLE',
+            continuationQueue: nextContinuation,
             statusMessage: `✅ Loaded ${res.stats.fileCount} files${metaCommits} (${charLen.toLocaleString()} chars, ~${res.stats.estimatedTokens} tokens). Head: ${res.headOid.slice(0, 7)}${injected ? ' (Injected into chat prompt)' : ''}${skippedNotice}${truncationNotice}${slotNotice}`,
           });
         }
@@ -91,6 +103,46 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
     } finally {
       dom.mixBtn.disabled = false;
       dom.mixBtn.style.opacity = '1';
+    }
+  };
+
+  dom.continueMixBtn.onclick = () => {
+    if (!state.continuationQueue || state.continuationQueue.length === 0) return;
+
+    const batch = state.continuationQueue.slice(0, 10);
+    if (batch.length === 0) return;
+
+    const first = batch[0].partIndex;
+    const last = batch[batch.length - 1].partIndex;
+
+    const promptEl = findPromptInputElement();
+    const promptText =
+      (promptEl && ('value' in promptEl ? (promptEl as HTMLTextAreaElement).value : promptEl.textContent)) || '';
+    if (promptText.trim().length === 0) {
+      injectPromptText(
+        `[RepoMix Continuation: Parts ${first}–${last} for ${config.repo} (${config.branch})]`,
+        false
+      );
+    }
+
+    const injected = injectRepoMixParts(
+      batch.map((p) => ({ fileName: p.fileName, xmlContent: p.xmlContent }))
+    );
+
+    if (injected) {
+      const remainingQueue = state.continuationQueue.slice(batch.length);
+      state.continuationQueue = remainingQueue;
+      const remainingNotice = remainingQueue.length > 0
+        ? ` (${remainingQueue.length} continuation part(s) remaining)`
+        : '';
+      updateState({
+        continuationQueue: remainingQueue,
+        statusMessage: `✅ Injected continuation Parts ${first}–${last} into chat prompt${remainingNotice}.`,
+      });
+    } else {
+      updateState({
+        statusMessage: `❌ Failed to inject continuation Parts ${first}–${last} into chat prompt. Focus prompt input and try again.`,
+      });
     }
   };
 

@@ -112,7 +112,7 @@ export default {
       return jsonResponse({
         status: 'ok',
         service: 'gemini-git-bridge',
-        version: '2.0.8',
+        version: '2.0.9',
         timestamp: new Date().toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))

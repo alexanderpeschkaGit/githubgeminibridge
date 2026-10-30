@@ -130,6 +130,8 @@ export interface TruncationSummary {
   omittedFiles: MixOmittedFile[];
   requiredParts: number;
   availableParts: number;
+  continuationPartsCount?: number;
+  continuationFilesCount?: number;
 }
 
 /** LLM-visible notice: omission is explicit and patching omitted paths is forbidden. */
@@ -141,6 +143,10 @@ export function buildTruncationNotice(summary: TruncationSummary): string {
   const sample = rawSample.length > 480 ? `${rawSample.slice(0, 477)}...` : rawSample;
   const suffix = rawSample.length <= 480 && summary.omittedFiles.length > 5 ? ' ...' : '';
   const reasons = [...new Set(summary.omittedFiles.map((entry) => entry.reason))].join(', ');
+  const continuationNotice =
+    summary.continuationFilesCount && summary.continuationFilesCount > 0
+      ? `${summary.continuationFilesCount} omitted file(s) are pre-packed into ${summary.continuationPartsCount ?? 0} continuation part(s) (Parts 11-${10 + (summary.continuationPartsCount ?? 0)}) for follow-up prompt attachment.`
+      : '';
   return [
     '<truncation_notice>',
     `RepoMix is TRUNCATED to fit Gemini's ${summary.availableParts}-file attachment limit.`,
@@ -148,6 +154,7 @@ export function buildTruncationNotice(summary: TruncationSummary): string {
     `The complete file set would need at least ${summary.requiredParts} parts; available: ${summary.availableParts}.`,
     sample ? `Sample omitted paths: ${sample}${suffix}` : '',
     'Do not emit patches for omitted paths. Ask the user to narrow includePaths or update .repomixignore.cf.',
+    continuationNotice,
     '</truncation_notice>',
   ]
     .filter((line) => line.length > 0)

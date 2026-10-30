@@ -1510,6 +1510,7 @@ function buildTruncationNotice(summary) {
   const sample = rawSample.length > 480 ? `${rawSample.slice(0, 477)}...` : rawSample;
   const suffix = rawSample.length <= 480 && summary.omittedFiles.length > 5 ? " ..." : "";
   const reasons = [...new Set(summary.omittedFiles.map((entry) => entry.reason))].join(", ");
+  const continuationNotice = summary.continuationFilesCount && summary.continuationFilesCount > 0 ? `${summary.continuationFilesCount} omitted file(s) are pre-packed into ${summary.continuationPartsCount ?? 0} continuation part(s) (Parts 11-${10 + (summary.continuationPartsCount ?? 0)}) for follow-up prompt attachment.` : "";
   return [
     "<truncation_notice>",
     `RepoMix is TRUNCATED to fit Gemini's ${summary.availableParts}-file attachment limit.`,
@@ -1517,6 +1518,7 @@ function buildTruncationNotice(summary) {
     `The complete file set would need at least ${summary.requiredParts} parts; available: ${summary.availableParts}.`,
     sample ? `Sample omitted paths: ${sample}${suffix}` : "",
     "Do not emit patches for omitted paths. Ask the user to narrow includePaths or update .repomixignore.cf.",
+    continuationNotice,
     "</truncation_notice>"
   ].filter((line) => line.length > 0).join("\n");
 }
@@ -1929,6 +1931,38 @@ function buildPartXml(params) {
   sections.push("<files>", ...params.fileXmlList, "</files>", "</repository>");
   return sections.join("\n");
 }
+function fitPartXml(params) {
+  const build = (meta) => buildPartXml({
+    owner: params.owner,
+    repo: params.repo,
+    branch: params.branch,
+    headOid: params.headOid,
+    partNum: params.partNum,
+    totalParts: params.totalParts,
+    instructionsText: params.instructionsText,
+    truncationNoticeText: params.truncationNoticeText,
+    recentCommitsText: meta || void 0,
+    treeText: params.treeText,
+    omittedManifestText: params.omittedManifestText,
+    fileXmlList: params.fileEntries.map(
+      (e) => e.fileXml ?? formatFileXml({ path: e.relativePath ?? e.path ?? "", content: e.content })
+    )
+  });
+  let metadata = params.metadata ?? "";
+  let xml = build(metadata);
+  if (xml.length > params.hardLimit && metadata && params.capMetadataFn) {
+    metadata = params.capMetadataFn(
+      metadata,
+      Math.max(0, metadata.length - (xml.length - params.hardLimit) - 1)
+    );
+    xml = build(metadata);
+  }
+  if (xml.length > params.hardLimit && metadata) {
+    metadata = "";
+    xml = build(metadata);
+  }
+  return { xml, entries: params.fileEntries, metadata };
+}
 function canFileFitContinuationPart(params) {
   const treeText = `# Part ${params.maxParts}/${params.maxParts} files (1 files):
 ${params.file.path}`;
@@ -2055,6 +2089,205 @@ function packFilesIntoBuckets(params) {
   };
 }
 
+// src/modules/mixContinuation.ts
+var MAX_CONTINUATION_PARTS = 20;
+function packContinuationBuckets(params) {
+  if (params.partBudget <= 0 || params.files.length === 0) {
+    return {
+      buckets: params.files.map((f) => [f]),
+      allWithinBudget: params.files.length === 0
+    };
+  }
+  const { owner, repo, branch, headOid, basePartCount, maxContinuationParts, partBudget } = params;
+  const grandMaxParts = basePartCount + maxContinuationParts;
+  const contBaseCache = /* @__PURE__ */ new Map();
+  function getContBaseLen(partNum) {
+    const cached = contBaseCache.get(partNum);
+    if (cached !== void 0) return cached;
+    const dummy = "__TREE__";
+    const xml = buildPartXml({
+      owner,
+      repo,
+      branch,
+      headOid,
+      partNum,
+      totalParts: grandMaxParts,
+      instructionsText: CONTINUATION_MIX_INSTRUCTIONS(partNum, grandMaxParts),
+      treeText: dummy,
+      fileXmlList: []
+    });
+    const len = xml.length - dummy.length;
+    contBaseCache.set(partNum, len);
+    return len;
+  }
+  function candidateBucketSize(bucketIndex, current, addedFile) {
+    const newCount = current.entries.length + (addedFile ? 1 : 0);
+    const newFilesXmlChars = current.filesXmlChars + (addedFile ? addedFile.fileXml.length : 0);
+    const partNum = basePartCount + bucketIndex + 1;
+    const newPathsChars = current.pathsChars + (addedFile ? addedFile.path.length : 0);
+    const treeHeaderLen = `# Part ${partNum}/${grandMaxParts} files (${newCount} files):
+`.length;
+    const treeTextLen = treeHeaderLen + newPathsChars + Math.max(0, newCount - 1);
+    const filesListLen = newFilesXmlChars + newCount;
+    return getContBaseLen(partNum) + treeTextLen + filesListLen;
+  }
+  const packList = [...params.files].sort(
+    (a, b) => b.fileXml.length - a.fileXml.length || a.path.localeCompare(b.path)
+  );
+  const buckets = [];
+  let allWithinBudget = true;
+  for (const file of packList) {
+    let placed = false;
+    for (let i = 0; i < buckets.length; i++) {
+      const size = candidateBucketSize(i, buckets[i], file);
+      if (size <= partBudget) {
+        buckets[i].entries.push(file);
+        buckets[i].filesXmlChars += file.fileXml.length;
+        buckets[i].pathsChars += file.path.length;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      const nextIdx = buckets.length;
+      const emptyState = { entries: [], filesXmlChars: 0, pathsChars: 0 };
+      const size = candidateBucketSize(nextIdx, emptyState, file);
+      if (size > partBudget) {
+        allWithinBudget = false;
+      }
+      buckets.push({
+        entries: [file],
+        filesXmlChars: file.fileXml.length,
+        pathsChars: file.path.length
+      });
+    }
+  }
+  if (buckets.length > maxContinuationParts) {
+    allWithinBudget = false;
+  }
+  return {
+    buckets: buckets.map((b) => b.entries),
+    allWithinBudget
+  };
+}
+function buildContinuationParts(params) {
+  const {
+    owner,
+    repo,
+    branch,
+    headOid,
+    basePartCount,
+    omittedEntries,
+    effectiveMaxChars,
+    maxPackBudget,
+    canEscalateBudget,
+    hardLimit
+  } = params;
+  if (!omittedEntries || omittedEntries.length === 0) {
+    return { continuationParts: [], coveredFilesCount: 0 };
+  }
+  const entries = omittedEntries.map((f) => ({
+    ...f,
+    fileXml: f.fileXml ?? formatFileXml({ path: f.path, content: f.content })
+  }));
+  function partitionContinuation(budgetChars, source) {
+    const partBudget = Math.min(budgetChars, maxPackBudget, hardLimit);
+    return packContinuationBuckets({
+      owner,
+      repo,
+      branch,
+      headOid,
+      basePartCount,
+      maxContinuationParts: MAX_CONTINUATION_PARTS,
+      partBudget,
+      files: source
+    });
+  }
+  const initialPack = partitionContinuation(maxPackBudget, entries);
+  let keptFiles = entries;
+  if (!initialPack.allWithinBudget || initialPack.buckets.length > MAX_CONTINUATION_PARTS) {
+    const selection = selectFilesWithinPartLimit(
+      entries,
+      (subset) => {
+        const res = partitionContinuation(maxPackBudget, subset);
+        return res.allWithinBudget ? res.buckets.length : MAX_CONTINUATION_PARTS + 1;
+      },
+      MAX_CONTINUATION_PARTS
+    );
+    keptFiles = selection.kept;
+  }
+  if (keptFiles.length === 0) {
+    return { continuationParts: [], coveredFilesCount: 0 };
+  }
+  const budgetLadder = canEscalateBudget ? [
+    effectiveMaxChars,
+    Math.min(95e3, hardLimit),
+    hardLimit
+  ] : [effectiveMaxChars];
+  const triedBudgets = [];
+  let chunkBuckets = [];
+  for (const budget of budgetLadder) {
+    if (triedBudgets.includes(budget)) continue;
+    const packed = partitionContinuation(budget, keptFiles);
+    chunkBuckets = packed.buckets;
+    triedBudgets.push(budget);
+    if (packed.allWithinBudget && chunkBuckets.length <= MAX_CONTINUATION_PARTS) {
+      break;
+    }
+  }
+  if (chunkBuckets.length > MAX_CONTINUATION_PARTS) {
+    throw new Error(
+      `RepoMix continuation invariant failed: ${chunkBuckets.length} parts after selecting within ${MAX_CONTINUATION_PARTS}.`
+    );
+  }
+  const totalParts = basePartCount + chunkBuckets.length;
+  const continuationParts = [];
+  let coveredFilesCount = 0;
+  for (let i = 0; i < chunkBuckets.length; i++) {
+    const bucket = chunkBuckets[i];
+    const partIndex = basePartCount + i + 1;
+    const partTreeText = `# Part ${partIndex}/${totalParts} files (${bucket.length} files):
+${bucket.map((b) => b.path).join("\n")}`;
+    const partInstructions = CONTINUATION_MIX_INSTRUCTIONS(partIndex, totalParts);
+    const fitted = fitPartXml({
+      owner,
+      repo,
+      branch,
+      headOid,
+      partNum: partIndex,
+      totalParts,
+      instructionsText: partInstructions,
+      treeText: partTreeText,
+      fileEntries: bucket,
+      hardLimit
+    });
+    const partXml = fitted.xml;
+    if (partXml.length > hardLimit) {
+      throw new Error(
+        `RepoMix continuation part ${partIndex} serialized to ${partXml.length} characters, exceeding the ${hardLimit}-character limit.`
+      );
+    }
+    if (partXml.length > maxPackBudget) {
+      throw new Error(
+        `RepoMix continuation part ${partIndex} serialized to ${partXml.length} characters, exceeding the ${maxPackBudget}-character budget.`
+      );
+    }
+    coveredFilesCount += bucket.length;
+    continuationParts.push({
+      partIndex,
+      totalParts,
+      fileName: `repo-mix.part${partIndex}.txt`,
+      xmlContent: partXml,
+      stats: {
+        fileCount: bucket.length,
+        estimatedTokens: Math.ceil(partXml.length / 4),
+        charCount: partXml.length
+      }
+    });
+  }
+  return { continuationParts, coveredFilesCount };
+}
+
 // src/modules/mixChunker.ts
 var DEFAULT_MAX_CHUNK_CHARS = 85e3;
 var HARD_GEMINI_CHAR_LIMIT = 1e5;
@@ -2171,7 +2404,7 @@ function buildChunkedMixXml(input) {
   );
   const cappedRecentCommitsText = capRecentCommitsText(input.recentCommitsText, metadataBudget);
   function fitPart(params) {
-    const build = (treeText, metadata2, entries) => buildPartXml({
+    return fitPartXml({
       owner,
       repo,
       branch,
@@ -2180,25 +2413,13 @@ function buildChunkedMixXml(input) {
       totalParts: params.totalParts,
       instructionsText: params.instructionsText,
       truncationNoticeText: params.truncationNoticeText,
-      recentCommitsText: metadata2 || void 0,
-      treeText,
+      metadata: params.metadata,
+      treeText: params.treeText,
       omittedManifestText: params.omittedManifestText,
-      fileXmlList: entries.map((e) => e.fileXml)
+      fileEntries: params.fileEntries,
+      hardLimit: HARD_GEMINI_CHAR_LIMIT,
+      capMetadataFn: capRecentCommitsText
     });
-    let metadata = params.metadata;
-    let xml = build(params.treeText, metadata, params.fileEntries);
-    if (xml.length > HARD_GEMINI_CHAR_LIMIT && metadata) {
-      metadata = capRecentCommitsText(
-        metadata,
-        Math.max(0, metadata.length - (xml.length - HARD_GEMINI_CHAR_LIMIT) - 1)
-      );
-      xml = build(params.treeText, metadata, params.fileEntries);
-    }
-    if (xml.length > HARD_GEMINI_CHAR_LIMIT && metadata) {
-      metadata = "";
-      xml = build(params.treeText, metadata, params.fileEntries);
-    }
-    return { xml, entries: params.fileEntries, metadata };
   }
   const singleRawXml = buildPartXml({
     owner,
@@ -2256,6 +2477,9 @@ function buildChunkedMixXml(input) {
   const initialPack = partitionFiles(maxPackBudget, validFiles);
   const requiredParts = initialPack.buckets.length;
   let keptFiles = validFiles;
+  let continuationParts = [];
+  let continuationFilesCount = 0;
+  let continuationPartsCount = 0;
   if (!initialPack.allWithinBudget || requiredParts > MAX_GEMINI_PARTS || omitted.length > 0) {
     const part1WithMetaChars = part1OverheadChars + (cappedRecentCommitsText ? cappedRecentCommitsText.length + 1 : 0);
     const manifestMaxChars = Math.max(
@@ -2283,22 +2507,41 @@ function buildChunkedMixXml(input) {
       treeEntries.filter((entry) => keptPaths.has(entry)),
       maxTreeChars
     );
+    if (input.enableContinuation === true) {
+      const partLimitOmittedEntries = rankFilesForOmission(
+        validFiles.filter((file) => !keptPaths.has(file.path))
+      );
+      if (partLimitOmittedEntries.length > 0) {
+        const contRes = buildContinuationParts({
+          owner,
+          repo,
+          branch,
+          headOid,
+          basePartCount: MAX_GEMINI_PARTS,
+          omittedEntries: partLimitOmittedEntries,
+          effectiveMaxChars,
+          maxPackBudget,
+          canEscalateBudget,
+          hardLimit: HARD_GEMINI_CHAR_LIMIT
+        });
+        continuationParts = contRes.continuationParts;
+        continuationFilesCount = contRes.coveredFilesCount;
+        continuationPartsCount = continuationParts.length;
+      }
+    }
     part1Extras = {
       notice: buildTruncationNotice({
         includedFiles: keptFiles.length,
         totalFiles: files.length,
         omittedFiles: omitted,
         requiredParts,
-        availableParts: MAX_GEMINI_PARTS
+        availableParts: MAX_GEMINI_PARTS,
+        ...input.enableContinuation === true ? { continuationPartsCount, continuationFilesCount } : {}
       }),
       manifest: buildOmittedManifest(omitted, manifestMaxChars)
     };
   }
-  const budgetLadder = canEscalateBudget ? [
-    effectiveMaxChars,
-    Math.min(95e3, HARD_GEMINI_CHAR_LIMIT),
-    HARD_GEMINI_CHAR_LIMIT
-  ] : [effectiveMaxChars];
+  const budgetLadder = canEscalateBudget ? [effectiveMaxChars, Math.min(95e3, HARD_GEMINI_CHAR_LIMIT), HARD_GEMINI_CHAR_LIMIT] : [effectiveMaxChars];
   const triedBudgets = [];
   let chunkBuckets = [];
   for (const budget of budgetLadder) {
@@ -2373,11 +2616,17 @@ ${bucket.map((b) => b.path).join("\n")}`;
     includedFiles: emittedFileCount,
     totalFiles: files.length,
     omittedFiles: [...omitted].sort((a, b) => a.path.localeCompare(b.path)),
-    omittedChars: omitted.reduce((sum, entry) => sum + (entry.chars ?? 0), 0)
+    omittedChars: omitted.reduce((sum, entry) => sum + (entry.chars ?? 0), 0),
+    ...input.enableContinuation === true ? {
+      continuationPartsCount,
+      continuationFilesCount,
+      unrecoverableFilesCount: Math.max(0, omitted.length - continuationFilesCount)
+    } : {}
   } : void 0;
   return {
     xmlContent: parts[0]?.xmlContent ?? single.xml,
     parts,
+    ...continuationParts.length > 0 ? { continuationParts } : {},
     isChunked: true,
     ...truncation ? { truncation } : {},
     stats: {
@@ -2658,7 +2907,8 @@ async function handleMixRequest(req, githubToken) {
       maxChunkChars: req.maxChunkChars,
       maxChunkBytes: req.maxChunkBytes,
       maxChunkTokens: req.maxChunkTokens,
-      splitOutput: req.splitOutput
+      splitOutput: req.splitOutput,
+      enableContinuation: req.enableContinuation === true
     });
   } catch (err) {
     return {
@@ -2691,6 +2941,7 @@ async function handleMixRequest(req, githubToken) {
         headOid,
         xmlContent: mixResult.xmlContent,
         parts: mixResult.parts,
+        ...mixResult.continuationParts?.length ? { continuationParts: mixResult.continuationParts } : {},
         isChunked: mixResult.isChunked,
         ...mixResult.truncation ? { truncation: mixResult.truncation } : {},
         stats: {
@@ -2708,6 +2959,7 @@ async function handleMixRequest(req, githubToken) {
     headOid,
     xmlContent: mixResult.xmlContent,
     parts: mixResult.parts,
+    ...mixResult.continuationParts?.length ? { continuationParts: mixResult.continuationParts } : {},
     isChunked: mixResult.isChunked,
     ...mixResult.truncation ? { truncation: mixResult.truncation } : {},
     stats: {
@@ -3043,7 +3295,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "2.0.8",
+        version: "2.0.9",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))

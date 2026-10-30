@@ -43,11 +43,15 @@ export interface MixTruncation {
   totalFiles: number;
   omittedFiles: MixOmittedFile[];
   omittedChars: number;
+  continuationPartsCount?: number;
+  continuationFilesCount?: number;
+  unrecoverableFilesCount?: number;
 }
 
 export interface MixRequest {
   repo: string;              // Format: "owner/repository"
   branch: string;            // z.B. "main"
+  targetBranch?: string;     // Optionaler Zielbranch für den Commit (Standard: wie branch)
   includePaths?: string[];   // Optionaler Subpfad-Filter (z.B. ["src/", "shared/"])
   persistToGitHub?: boolean; // Speichert Mix optional nach /_context/repo-mix.xml
   maxChunkChars?: number;    // Maximale Zeichenanzahl pro Part (Standard: 85_000, unterhalb 100k Gemini-Limit)
@@ -56,6 +60,7 @@ export interface MixRequest {
   splitOutput?: boolean;     // Ob Chunking aktiviert werden soll (Standard: true wenn Budget überschritten)
   includeRecentCommits?: boolean; // Opt-in (default: false): fetch & include recent commit metadata and volatile file summaries
   recentCommitsCount?: number;   // Number of recent commits to analyze (default: 3, max: 5)
+  enableContinuation?: boolean;  // Opt-in (default: true): pre-pack continuation parts 11..30 for omitted files
 }
 
 // Tarball-level skips only; chunker omissions are reported via MixOmittedFile in MixTruncation.
@@ -71,6 +76,7 @@ export interface MixResponse {
   headOid: string;           // Voller 40-stelliger Commit-SHA als Basis für Folgebefehle
   xmlContent: string;        // Strukturierter XML-Kontext (Part 1 oder Gesamtmix für Abwärtskompatibilität)
   parts?: MixPart[];         // Aufgeteilte Parts für Multi-File Ingestion bei großen Repos
+  continuationParts?: MixPart[]; // Vorgepackte Continuation-Parts (11..30) für Folgeturns
   isChunked?: boolean;       // Zeigt an, ob der Output in mehrere Parts gesplittet wurde
   truncation?: MixTruncation; // Set when whole files were omitted to satisfy Gemini limits
   stats: {

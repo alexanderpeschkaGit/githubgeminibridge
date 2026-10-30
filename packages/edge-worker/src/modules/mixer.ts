@@ -178,6 +178,7 @@ export async function handleMixRequest(
       maxChunkBytes: req.maxChunkBytes,
       maxChunkTokens: req.maxChunkTokens,
       splitOutput: req.splitOutput,
+      enableContinuation: req.enableContinuation === true,
     });
   } catch (err: any) {
     return {
@@ -213,6 +214,7 @@ export async function handleMixRequest(
         headOid,
         xmlContent: mixResult.xmlContent,
         parts: mixResult.parts,
+        ...(mixResult.continuationParts?.length ? { continuationParts: mixResult.continuationParts } : {}),
         isChunked: mixResult.isChunked,
         ...(mixResult.truncation ? { truncation: mixResult.truncation } : {}),
         stats: {
@@ -232,6 +234,7 @@ export async function handleMixRequest(
     headOid,
     xmlContent: mixResult.xmlContent,
     parts: mixResult.parts,
+    ...(mixResult.continuationParts?.length ? { continuationParts: mixResult.continuationParts } : {}),
     isChunked: mixResult.isChunked,
     ...(mixResult.truncation ? { truncation: mixResult.truncation } : {}),
     stats: {
