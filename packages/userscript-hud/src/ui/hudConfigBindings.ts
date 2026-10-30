@@ -47,6 +47,7 @@ export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
       const sanitized = sanitizeRepo(sanitizeNoGithubPat(dom.repoInput.value.trim(), 'repo'));
       const previousRepo = config.repo;
       config.repo = sanitized;
+      dom.repoInput.value = sanitized;
       saveHudConfig({ repo: sanitized });
       if (sanitized !== previousRepo) resetPatchOidState(`Repository changed to "${sanitized}".`);
       recordCurrentHistory();

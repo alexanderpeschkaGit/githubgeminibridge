@@ -189,6 +189,44 @@ function extractFilePathsFromPartXml(xml) {
   console.log('PASS: file_over_hard_limit (>100k) is never placed in continuationParts');
 }
 
+// 1.5: Priority ranking and file line-budget enforcement
+{
+  const selectionUrl = await bundleModule('packages/edge-worker/src/modules/mixSelection.ts');
+  const { rankFilesForOmission } = await import(selectionUrl);
+
+  const sampleFiles = [
+    { path: 'cf-gemini-git-bridge/src/index.ts', content: 'legacy', fileXml: '<file>legacy</file>' },
+    { path: 'plans/00_MASTER_ROADMAP.md', content: 'plan', fileXml: '<file>plan</file>' },
+    { path: 'scripts/worker-smoke.mjs', content: 'smoke', fileXml: '<file>smoke</file>' },
+    { path: '.agents/rules/test.md', content: 'rule', fileXml: '<file>rule</file>' },
+    { path: 'packages/edge-worker/src/index.ts', content: 'entry', fileXml: '<file>entry</file>' },
+    { path: 'package.json', content: 'config', fileXml: '<file>config</file>' },
+  ];
+
+  const ranked = rankFilesForOmission(sampleFiles);
+  const paths = ranked.map((f) => f.path);
+
+  const ruleIdx = paths.indexOf('.agents/rules/test.md');
+  const scriptIdx = paths.indexOf('scripts/worker-smoke.mjs');
+  const planIdx = paths.indexOf('plans/00_MASTER_ROADMAP.md');
+  const legacyIdx = paths.indexOf('cf-gemini-git-bridge/src/index.ts');
+
+  assert.ok(ruleIdx !== -1 && scriptIdx !== -1 && planIdx !== -1 && legacyIdx !== -1, 'all test files found');
+  assert.ok(ruleIdx < planIdx, '.agents/rules/* must rank ahead of plans/*');
+  assert.ok(ruleIdx < legacyIdx, '.agents/rules/* must rank ahead of cf-gemini-git-bridge/*');
+  assert.ok(scriptIdx < planIdx, 'scripts/* must rank ahead of plans/*');
+  assert.ok(scriptIdx < legacyIdx, 'scripts/* must rank ahead of cf-gemini-git-bridge/*');
+
+  // Line count assertions (< 465 lines)
+  const fs = await import('node:fs');
+  const mixChunkerLines = fs.readFileSync(path.join(ROOT, 'packages/edge-worker/src/modules/mixChunker.ts'), 'utf8').split('\n').length;
+  const hudStylesLines = fs.readFileSync(path.join(ROOT, 'packages/userscript-hud/src/ui/hudStylesAndDom.ts'), 'utf8').split('\n').length;
+
+  assert.ok(mixChunkerLines < 465, `mixChunker.ts has ${mixChunkerLines} lines, expected < 465`);
+  assert.ok(hudStylesLines < 465, `hudStylesAndDom.ts has ${hudStylesLines} lines, expected < 465`);
+  console.log(`PASS: priority tiers rank rules/scripts ahead of plans/legacy; mixChunker.ts (${mixChunkerLines} lines) and hudStylesAndDom.ts (${hudStylesLines} lines) stay < 465`);
+}
+
 // ============================================================================
 // PART 2: Compact 4-Row HUD DOM, History Popover & Continuation Button
 // ============================================================================
@@ -241,8 +279,10 @@ class FakeEvent {
     this.bubbles = !!init.bubbles;
     this.target = null;
     this._stopped = false;
+    this._composedPath = init.composedPath || null;
   }
   stopPropagation() { this._stopped = true; }
+  composedPath() { return typeof this._composedPath === 'function' ? this._composedPath() : (this._composedPath || (this.target ? [this.target] : [])); }
 }
 
 class FakeKeyboardEvent extends FakeEvent {
@@ -278,6 +318,9 @@ const { bindRepoHistoryDropdown } = await import(hudDropdownUrl);
 
 const hudRenderUrl = await bundleModule('packages/userscript-hud/src/ui/hudRender.ts');
 const { renderHudState } = await import(hudRenderUrl);
+
+const hudBindingsUrl = await bundleModule('packages/userscript-hud/src/ui/hudConfigBindings.ts');
+const { bindHudConfigInputs } = await import(hudBindingsUrl);
 
 function findDescendants(root, predicate) {
   const matches = [];
@@ -412,6 +455,26 @@ function findByTag(root, tag) {
   globalThis.document.dispatchEvent(new FakeKeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(dom.repoHistoryMenu.style.display, 'none', 'Escape key closes open repo history menu');
 
+  // Open again, verify container click does not dismiss but outside click does
+  dom.repoHistoryBtn.onclick(new FakeEvent('click', { bubbles: true }));
+  assert.equal(dom.repoHistoryMenu.style.display, 'flex');
+
+  const menuContainerClick = new FakeEvent('click', {
+    bubbles: true,
+    composedPath: [dom.repoHistoryMenu, dom.shadowRoot, dom.host],
+  });
+  menuContainerClick.target = dom.repoHistoryMenu;
+  globalThis.document.dispatchEvent(menuContainerClick);
+  assert.equal(dom.repoHistoryMenu.style.display, 'flex', 'container click inside repoHistoryMenu must not dismiss menu');
+
+  const outsideClick = new FakeEvent('click', {
+    bubbles: true,
+    composedPath: [globalThis.document.body],
+  });
+  outsideClick.target = globalThis.document.body;
+  globalThis.document.dispatchEvent(outsideClick);
+  assert.equal(dom.repoHistoryMenu.style.display, 'none', 'outside click closes repo history menu');
+
   // Open again, select item from menu
   dom.repoHistoryBtn.onclick(new FakeEvent('click', { bubbles: true }));
   assert.equal(dom.repoHistoryMenu.style.display, 'flex');
@@ -493,6 +556,46 @@ function findByTag(root, tag) {
   renderHudState({ dom, state, config, updateState: () => {}, onApplyPatch: () => {} });
   assert.equal(dom.continueMixBtn.style.display, 'none', 'continueMixBtn hidden when continuationQueue becomes empty');
   console.log('PASS: continueMixBtn displays ⏭️ Parts 11–20, advances to ⏭️ Parts 21–24, and hides when empty');
+}
+
+// 2.4: dom.repoInput.onchange writes sanitized owner/repo back to dom.repoInput.value
+{
+  const config = {
+    owner: 'acme',
+    repo: 'project',
+    branch: 'main',
+    targetBranch: '',
+    workerUrl: 'https://edge.example.com',
+    workerSecret: 'secret',
+    includePaths: [],
+    maxChunkChars: 85000,
+    autoPilot: true,
+    includeRecentCommits: false,
+  };
+  const state = { headOid: HEAD_OID, targetHeadOid: null, targetHeadBranch: null };
+  const dom = createHudDom(config, {
+    status: 'IDLE',
+    statusMessage: 'Ready',
+    headOid: HEAD_OID,
+    retryCount: 0,
+    harvestedPatches: [],
+    continuationQueue: [],
+  });
+
+  bindHudConfigInputs({
+    dom,
+    config,
+    state,
+    resetPatchOidState: () => {},
+    clearTargetOidState: () => {},
+    renderState: () => {},
+  });
+
+  dom.repoInput.value = ' https://github.com/my-org/my-new-repo ';
+  dom.repoInput.onchange();
+  assert.equal(dom.repoInput.value, 'my-org/my-new-repo', 'dom.repoInput.value must be updated with sanitized owner/repo');
+  assert.equal(config.repo, 'my-org/my-new-repo', 'config.repo must be updated with sanitized owner/repo');
+  console.log('PASS: dom.repoInput.onchange writes sanitized owner/repo back to dom.repoInput.value');
 }
 
 console.log('Multi-turn mix continuation & compact HUD layout suite: PASS');

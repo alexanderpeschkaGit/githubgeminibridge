@@ -116,8 +116,16 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
     const last = batch[batch.length - 1].partIndex;
 
     const promptEl = findPromptInputElement();
+    if (!promptEl) {
+      updateState({
+        status: 'ERROR',
+        statusMessage: '❌ Cannot inject continuation parts: chat prompt input element not found in DOM.',
+      });
+      return;
+    }
+
     const promptText =
-      (promptEl && ('value' in promptEl ? (promptEl as HTMLTextAreaElement).value : promptEl.textContent)) || '';
+      ('value' in promptEl ? (promptEl as HTMLTextAreaElement).value : promptEl.textContent) || '';
     if (promptText.trim().length === 0) {
       injectPromptText(
         `[RepoMix Continuation: Parts ${first}–${last} for ${config.repo} (${config.branch})]`,
@@ -136,6 +144,7 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
         ? ` (${remainingQueue.length} continuation part(s) remaining)`
         : '';
       updateState({
+        status: 'IDLE',
         continuationQueue: remainingQueue,
         statusMessage: `✅ Injected continuation Parts ${first}–${last} into chat prompt${remainingNotice}.`,
       });

@@ -45,11 +45,17 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+*.suo
+*.user
+*.userosv
+*.sln.docstates
 
 # Testing / coverage
 coverage/
 .nyc_output/
 *.lcov
+playwright-report/
+test-results/
 
 # Caches
 .cache/
@@ -68,8 +74,19 @@ temp/
 *_v1_backup/
 cf-gemini-git-bridge/
 
-# Large/generated artifacts
+# Agent & IDE State
+.kilo/
+.gemini/
+.cursor/
+
+# Repomix & Context Bundles
+repomix-output/
+repomix_*/
+*bundle*.txt
+*.bundle
 repmixBridge.txt
+
+# Large/generated artifacts
 plans/EXECUTION_LOG.md
 plans/TEST_LOG.md
 plans/STATE.md

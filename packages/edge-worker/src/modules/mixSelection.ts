@@ -1,4 +1,4 @@
-import type { MixOmittedFile } from '../types';
+import type { MixOmittedFile, MixTruncation } from '../types';
 
 export interface OmissionFile {
   path: string;
@@ -40,11 +40,26 @@ function priorityTier(filePath: string): number {
   const segments = filePath.split('/');
   const baseName = segments[segments.length - 1] ?? '';
   if (segments.length === 1 && ROOT_CONFIG_FILES.has(baseName)) return 0;
-  if (ENTRYPOINT_PATTERN.test(baseName)) return 1;
-  if (filePath.startsWith('src/') || filePath.startsWith('shared/') || filePath.startsWith('packages/')) {
+  if (
+    ENTRYPOINT_PATTERN.test(baseName) &&
+    (segments.length === 1 ||
+      filePath.startsWith('src/') ||
+      filePath.startsWith('shared/') ||
+      filePath.startsWith('packages/'))
+  ) {
+    return 1;
+  }
+  if (
+    filePath.startsWith('src/') ||
+    filePath.startsWith('shared/') ||
+    filePath.startsWith('packages/')
+  ) {
     return 2;
   }
-  return 3;
+  if (filePath.startsWith('.agents/') || filePath.startsWith('scripts/')) {
+    return 3;
+  }
+  return 4;
 }
 
 /**
@@ -130,6 +145,7 @@ export interface TruncationSummary {
   omittedFiles: MixOmittedFile[];
   requiredParts: number;
   availableParts: number;
+  firstContinuationPart?: number;
   continuationPartsCount?: number;
   continuationFilesCount?: number;
 }
@@ -143,9 +159,11 @@ export function buildTruncationNotice(summary: TruncationSummary): string {
   const sample = rawSample.length > 480 ? `${rawSample.slice(0, 477)}...` : rawSample;
   const suffix = rawSample.length <= 480 && summary.omittedFiles.length > 5 ? ' ...' : '';
   const reasons = [...new Set(summary.omittedFiles.map((entry) => entry.reason))].join(', ');
+  const firstCont = summary.firstContinuationPart ?? 11;
+  const lastCont = firstCont + (summary.continuationPartsCount ?? 0) - 1;
   const continuationNotice =
     summary.continuationFilesCount && summary.continuationFilesCount > 0
-      ? `${summary.continuationFilesCount} omitted file(s) are pre-packed into ${summary.continuationPartsCount ?? 0} continuation part(s) (Parts 11-${10 + (summary.continuationPartsCount ?? 0)}) for follow-up prompt attachment.`
+      ? `${summary.continuationFilesCount} omitted file(s) are pre-packed into ${summary.continuationPartsCount ?? 0} continuation part(s) (Parts ${firstCont}-${lastCont}) for follow-up prompt attachment.`
       : '';
   return [
     '<truncation_notice>',
@@ -159,4 +177,51 @@ export function buildTruncationNotice(summary: TruncationSummary): string {
   ]
     .filter((line) => line.length > 0)
     .join('\n');
+}
+
+export interface BuildMixTruncationParams {
+  omitted: MixOmittedFile[];
+  requiredParts: number;
+  maxParts: number;
+  includedFiles: number;
+  totalFiles: number;
+  enableContinuation?: boolean;
+  continuationPartsCount?: number;
+  continuationFilesCount?: number;
+}
+
+export function buildMixTruncation(params: BuildMixTruncationParams): MixTruncation | undefined {
+  const {
+    omitted,
+    requiredParts,
+    maxParts,
+    includedFiles,
+    totalFiles,
+    enableContinuation,
+    continuationPartsCount = 0,
+    continuationFilesCount = 0,
+  } = params;
+  if (omitted.length === 0) return undefined;
+
+  const hasPartLimit = omitted.some((entry) => entry.reason === 'part_limit_exceeded');
+  const hasHardLimit = omitted.some((entry) => entry.reason === 'file_over_hard_limit');
+  const truncationReason: MixTruncation['reason'] =
+    hasPartLimit && hasHardLimit ? 'mixed' : hasPartLimit ? 'part_limit_exceeded' : 'file_over_hard_limit';
+
+  return {
+    reason: truncationReason,
+    requiredParts,
+    availableParts: maxParts,
+    includedFiles,
+    totalFiles,
+    omittedFiles: [...omitted].sort((a, b) => a.path.localeCompare(b.path)),
+    omittedChars: omitted.reduce((sum, entry) => sum + (entry.chars ?? 0), 0),
+    ...(enableContinuation === true
+      ? {
+          continuationPartsCount,
+          continuationFilesCount,
+          unrecoverableFilesCount: Math.max(0, omitted.length - continuationFilesCount),
+        }
+      : {}),
+  };
 }

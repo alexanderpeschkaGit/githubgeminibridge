@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-30T19:12:46.553Z",
+  "timestamp": "2026-10-30T19:51:56.586Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -42,7 +42,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "2.0.8",
+      "version": "2.0.9",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },
@@ -108,16 +108,16 @@
       "name": "File-Size Modularity Audit (<500 lines) & End-to-End Artifact Completeness",
       "pass": true,
       "totalTsFilesAudited": 53,
-      "warningZoneFilesCount": 10,
+      "warningZoneFilesCount": 9,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 122454,
+      "bundleSize": 122640,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
-          "lines": 491
+          "lines": 428
         },
         {
           "file": "packages/edge-worker/src/modules/mixerTarScan.ts",
@@ -148,10 +148,6 @@
           "lines": 318
         },
         {
-          "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 473
-        },
-        {
           "file": "packages/local-cli/src/localRunner.ts",
           "lines": 341
         }
@@ -168,7 +164,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
-          "lines": 491
+          "lines": 428
         },
         {
           "file": "packages/edge-worker/src/modules/mixContinuation.ts",
@@ -184,7 +180,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixSelection.ts",
-          "lines": 163
+          "lines": 228
         },
         {
           "file": "packages/edge-worker/src/modules/mixSerializer.ts",
@@ -328,7 +324,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudConfigBindings.ts",
-          "lines": 159
+          "lines": 160
         },
         {
           "file": "packages/userscript-hud/src/ui/hudDomTree.ts",
@@ -336,7 +332,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudMixAction.ts",
-          "lines": 158
+          "lines": 167
         },
         {
           "file": "packages/userscript-hud/src/ui/hudRender.ts",
@@ -344,11 +340,11 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudRepoHistoryDropdown.ts",
-          "lines": 151
+          "lines": 177
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 473
+          "lines": 233
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",

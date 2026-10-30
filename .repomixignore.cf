@@ -1,1 +1,5 @@
+# ==============================================================================
+# .repomixignore.cf — Cloudflare Worker-specific overrides
+# ==============================================================================
 gemini-bridge.user.js
+cf-gemini-git-bridge/

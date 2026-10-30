@@ -13,7 +13,13 @@ export interface RepoHistoryDropdownDeps {
   renderState: () => void;
 }
 
-export type RepoHistoryDropdownRefresher = (() => void) & { refresh: () => void };
+export type RepoHistoryDropdownRefresher = (() => void) & {
+  refresh: () => void;
+  closeMenu: () => void;
+};
+
+let activeDocumentClickHandler: ((event: Event) => void) | null = null;
+let activeDocumentKeydownHandler: ((event: Event) => void) | null = null;
 
 function formatRepoHistoryLabel(entry: RepoHistoryEntry): string {
   const repoLabel = entry.repo.includes('/') ? entry.repo : `${entry.owner}/${entry.repo}`;
@@ -23,6 +29,15 @@ function formatRepoHistoryLabel(entry: RepoHistoryEntry): string {
 
 export function bindRepoHistoryDropdown(deps: RepoHistoryDropdownDeps): RepoHistoryDropdownRefresher {
   const { dom, config, state, resetPatchOidState, clearTargetOidState, refreshAccountHint, renderState } = deps;
+
+  if (activeDocumentClickHandler) {
+    document.removeEventListener('click', activeDocumentClickHandler);
+    activeDocumentClickHandler = null;
+  }
+  if (activeDocumentKeydownHandler) {
+    document.removeEventListener('keydown', activeDocumentKeydownHandler);
+    activeDocumentKeydownHandler = null;
+  }
 
   const closeMenu = () => {
     dom.repoHistoryMenu.style.display = 'none';
@@ -97,6 +112,8 @@ export function bindRepoHistoryDropdown(deps: RepoHistoryDropdownDeps): RepoHist
     });
   };
 
+  dom.repoHistoryMenu.onclick = (e) => e.stopPropagation();
+
   dom.repoHistoryBtn.onclick = (e) => {
     e.stopPropagation();
     if (dom.repoHistoryMenu.style.display === 'none') {
@@ -112,6 +129,10 @@ export function bindRepoHistoryDropdown(deps: RepoHistoryDropdownDeps): RepoHist
 
   const handleOutsideClick = (event: Event) => {
     if (dom.repoHistoryMenu.style.display === 'none') return;
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    if (path.includes(dom.repoHistoryBtn) || path.includes(dom.repoHistoryMenu)) {
+      return;
+    }
     const target = event.target as Node | null;
     if (target) {
       if (dom.repoHistoryBtn.contains(target) || dom.repoHistoryMenu.contains(target)) {
@@ -122,6 +143,7 @@ export function bindRepoHistoryDropdown(deps: RepoHistoryDropdownDeps): RepoHist
   };
 
   dom.shadowRoot.addEventListener('click', handleOutsideClick);
+  activeDocumentClickHandler = handleOutsideClick;
   document.addEventListener('click', handleOutsideClick);
 
   const handleKeydown = (event: Event) => {
@@ -131,6 +153,7 @@ export function bindRepoHistoryDropdown(deps: RepoHistoryDropdownDeps): RepoHist
   };
 
   dom.shadowRoot.addEventListener('keydown', handleKeydown);
+  activeDocumentKeydownHandler = handleKeydown;
   document.addEventListener('keydown', handleKeydown);
 
   refresh();
@@ -142,6 +165,9 @@ export function bindRepoHistoryDropdown(deps: RepoHistoryDropdownDeps): RepoHist
     {
       refresh: () => {
         refresh();
+      },
+      closeMenu: () => {
+        closeMenu();
       },
     }
   );
