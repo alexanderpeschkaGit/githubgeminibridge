@@ -41,6 +41,7 @@ export interface ShadowHudController {
   closePanel: () => void;
   handleApplyPatch: (patch: HarvestedPatch) => Promise<boolean>;
   addHarvestedPatch: (patch: HarvestedPatch) => void;
+  updateHarvestedPatch: (prevId: string, patch: HarvestedPatch) => void;
 }
 
 export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => Promise<boolean>): ShadowHudController {
@@ -241,6 +242,25 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       if (next === state.harvestedPatches) return;
       state.harvestedPatches = next;
       renderState();
+    },
+    updateHarvestedPatch: (prevId: string, patch: HarvestedPatch) => {
+      const others = state.harvestedPatches.filter((p) => p.id !== prevId);
+      const duplicateId = findDuplicatePatchId(others, patch);
+      if (duplicateId !== null) {
+        state.harvestedPatches = others;
+        supersededPatchIds.delete(duplicateId);
+        renderState();
+        return;
+      }
+      const existingIdx = state.harvestedPatches.findIndex((p) => p.id === prevId);
+      if (existingIdx >= 0) {
+        const next = [...state.harvestedPatches];
+        next[existingIdx] = patch;
+        state.harvestedPatches = next;
+        renderState();
+      } else {
+        controller.addHarvestedPatch(patch);
+      }
     },
   };
 

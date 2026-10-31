@@ -46,6 +46,9 @@ export function initGeminiEdgeHud(): ShadowHudController | null {
       },
       (patch) => {
         controllerInstance?.handleApplyPatch(patch);
+      },
+      (prevId, patch) => {
+        controllerInstance?.updateHarvestedPatch(prevId, patch);
       }
     );
   } catch (error) {

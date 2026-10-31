@@ -160,6 +160,7 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
       });
     }
 
+    let snippetHasValidOp = false;
     for (const op of operations) {
       const issue = findRepoPathIssue(op.path);
       if (issue !== null) {
@@ -173,6 +174,7 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
         continue;
       }
 
+      snippetHasValidOp = true;
       const normPath = normalizeRepoPath(op.path);
       if (!targetFiles.includes(normPath)) {
         targetFiles.push(normPath);
@@ -223,7 +225,7 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
       requireExports[normExportPath] = merged;
     }
 
-    if (entry.commitMessage) {
+    if (snippetHasValidOp && entry.commitMessage) {
       commitMessages.push(entry.commitMessage);
     }
   }

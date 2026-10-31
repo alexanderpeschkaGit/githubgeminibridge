@@ -758,6 +758,55 @@ const {
   }
   siblingEnv.observer.callback();
   assert.equal(siblingEnv.harvested.length, 2, 'both sibling <pre> blocks in a shared container are harvested');
+
+  // 10. Full-file code with '// =======...' comment banners is not blocked by diff guards
+  const bannerFile = convertLegacyBlocksToV2Payload(
+    '// filepath: src/banner.ts\n// ==========================================\nexport const ok = true;\n',
+    'src/banner.ts'
+  );
+  assert.ok(bannerFile, 'comment banner with ======= is allowed in full-file blocks');
+  assert.equal(bannerFile.payload.patches[0].action, 'create');
+
+  // 11. Emerging '<' or '<<<' after a path comment is held back during streaming
+  assert.equal(
+    convertLegacyBlocksToV2Payload('// filepath: src/stream.ts\n<<<', 'src/stream.ts'),
+    null,
+    'emerging <<< diff marker after filepath comment returns null during streaming'
+  );
+
+  // 12. Streaming multi-block diff growth updates the harvested patch in-place without duplicate emission
+  const streamEnv = mountHarvester(startDomHarvester);
+  const streamPre = streamEnv.document.createElement('pre');
+  const streamCode = streamEnv.document.createElement('code');
+  streamCode.textContent = `// filepath: src/stream.ts\n${blockA}`;
+  streamPre.appendChild(streamCode);
+  streamEnv.document.body.appendChild(streamPre);
+  streamEnv.observer.callback();
+  assert.equal(streamEnv.harvested.length, 1, 'initial completed diff block is harvested once');
+  assert.equal(streamEnv.harvested[0].payload.patches[0].blocks.length, 1, 'starts with 1 diff block');
+
+  // Mid-stream second block (partial marker) is ignored until balanced
+  streamCode.textContent = `// filepath: src/stream.ts\n${blockA}\n<<<<`;
+  assert.equal(
+    convertLegacyBlocksToV2Payload(streamCode.textContent, 'src/stream.ts'),
+    null,
+    'trailing partial diff marker returns null while second block is streaming'
+  );
+  assert.equal(
+    convertLegacyBlocksToV2Payload('// filepath: src/stream.ts', 'src/stream.ts'),
+    null,
+    'header-only comment without body lines returns null during streaming'
+  );
+
+  // Second diff block finishes streaming into the same <pre>
+  streamCode.textContent = `// filepath: src/stream.ts\n${blockA}\n\n${blockB}`;
+  streamEnv.observer.callback();
+  assert.equal(streamEnv.harvested.length, 1, 'streaming growth does not emit a duplicate queue entry');
+  assert.equal(
+    streamEnv.harvested[0].payload.patches[0].blocks.length,
+    2,
+    'existing harvested patch is updated in-place with the second diff block'
+  );
 }
 
 console.log(

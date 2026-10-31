@@ -108,6 +108,8 @@ export function parseV2PatchPayloadFromCode(codeText: string): GeminiPatchPayloa
   const innerFenceOpen = textToParse.match(/```(?:json)?\s*\{/i);
   if (innerFenceOpen && innerFenceOpen.index !== undefined) {
     const fromBrace = textToParse.slice(innerFenceOpen.index + innerFenceOpen[0].length - 1);
+    const directInner = tryParseGeminiPayload(fromBrace);
+    if (directInner) return directInner;
     const lastFenceIdx = fromBrace.lastIndexOf('```');
     const innerCandidate = lastFenceIdx !== -1 ? fromBrace.slice(0, lastFenceIdx) : fromBrace;
     const innerParsed = tryParseGeminiPayload(innerCandidate);
@@ -164,15 +166,44 @@ export function convertLegacyBlocksToV2Payload(
   if (!codeText || codeText.trim().length === 0) return null;
 
   // Never convert an incomplete/streaming V2 JSON payload into a raw file creation
-  if (/^\s*(?:```(?:json|md|markdown)?\s*)?\{\s*"(?:commitMessage|patches)"/.test(codeText)) {
+  const strippedFence = codeText.trim().replace(/^```(?:json|md|markdown)?\s*/i, '');
+  if (
+    /^\{\s*(?:"(?:commit|patch|preflight)[a-zA-Z]*"|\s*$)/.test(strippedFence) ||
+    /```(?:json)?\s*\{\s*(?:"(?:commit|patch|preflight)|$)/i.test(codeText)
+  ) {
     return null;
   }
 
-  // If diff open markers are present, require balanced open/close markers (prevents premature harvest during streaming)
-  if (codeText.includes('<<<<<<<')) {
-    const openCount = (codeText.match(/^<{7}/gm) || []).length;
+  const nonEmptyLines = codeText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const firstLine = nonEmptyLines[0] || '';
+  const lastLine = nonEmptyLines[nonEmptyLines.length - 1] || '';
+  const startsWithPathComment =
+    /^(?:\/\/|#|\/\*)\s*(?:filepath|file|path):/i.test(firstLine) ||
+    /^(?:\/\/|#|\/\*+)\s*[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+\s*\*?\/?$/.test(firstLine);
+
+  // Do not harvest a header-only path comment or a path comment followed by an emerging '<' diff marker
+  if (
+    startsWithPathComment &&
+    (nonEmptyLines.length === 1 ||
+      (nonEmptyLines.length === 2 && /^<{1,7}(?:\s*(?:SEARCH|ORIGINAL|HEAD)?)?\s*$/i.test(lastLine)))
+  ) {
+    return null;
+  }
+  if (nonEmptyLines.length === 1 && /^<{1,7}(?:\s*(?:SEARCH|ORIGINAL|HEAD)?)?\s*$/i.test(firstLine)) {
+    return null;
+  }
+
+  // Line-anchored diff marker balance check (ignores '// =======' comment banners in full-file code)
+  const openCount = (codeText.match(/^<{7}/gm) || []).length;
+  if (openCount > 0) {
+    const sepCount = (codeText.match(/^={7}\s*$/gm) || []).length;
     const closeCount = (codeText.match(/^>{7}/gm) || []).length;
-    if (openCount === 0 || openCount !== closeCount) {
+    const hasTrailingPartialMarker =
+      /^(?:<{1,7}(?:\s*(?:SEARCH|ORIGINAL|HEAD)?)?|={1,7}|>{1,6})\s*$/i.test(lastLine);
+    if (openCount !== sepCount || openCount !== closeCount || hasTrailingPartialMarker) {
       return null;
     }
   }
@@ -188,6 +219,7 @@ export function convertLegacyBlocksToV2Payload(
     let match: RegExpExecArray | null;
     let lastIndex = 0;
     let currentPath = detectedPath;
+    let extractedBlocks = 0;
 
     while ((match = regex.exec(codeText)) !== null) {
       const preceding = codeText.substring(lastIndex, match.index);
@@ -205,7 +237,12 @@ export function convertLegacyBlocksToV2Payload(
         search: match[1],
         replace: match[2],
       });
+      extractedBlocks++;
       lastIndex = regex.lastIndex;
+    }
+
+    if (extractedBlocks !== openCount || fileOrder.length === 0) {
+      return null;
     }
 
     if (fileOrder.length > 0) {

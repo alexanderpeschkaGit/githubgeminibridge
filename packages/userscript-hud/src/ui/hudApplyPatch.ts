@@ -177,6 +177,7 @@ export async function applyHudPatch(
       const res = await requestWorkerPatch(config, patchReq);
       if (res.status === 'COMMITTED') {
         state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
+        onMarkQueueSuperseded?.([]);
         applyPatchResponseOids(config, state, res);
         const branchLabel = res.targetBranch || config.branch;
         const prMsg = res.pullRequestUrl ? ` | 🔗 PR: ${res.pullRequestUrl}` : '';
@@ -210,6 +211,7 @@ export async function applyHudPatch(
 
       if (res.status === 'NO_CHANGES_NEEDED') {
         state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
+        onMarkQueueSuperseded?.([]);
         applyPatchResponseOids(config, state, res);
         updateState({
           status: 'IDLE',
@@ -315,6 +317,7 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
     }
 
     if (deps.dryRun || workerRes?.status === 'VALIDATED') {
+      deps.onMarkQueueSuperseded?.([]);
       deps.updateState({
         status: 'IDLE',
         statusMessage: `✅ All ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) passed preflight & syntax validation! Click "⚡ Apply All" to commit.`,
@@ -326,6 +329,7 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
 
     if (workerRes?.status === 'COMMITTED' || workerRes?.status === 'NO_CHANGES_NEEDED') {
       deps.state.harvestedPatches = [];
+      deps.onMarkQueueSuperseded?.([]);
       applyPatchResponseOids(deps.config, deps.state, workerRes);
       const branchLabel = workerRes.targetBranch || deps.config.targetBranch?.trim() || deps.config.branch;
       const prMsg = workerRes.pullRequestUrl ? ` | 🔗 PR: ${workerRes.pullRequestUrl}` : '';
