@@ -368,10 +368,11 @@ var LLM_PLACEHOLDER_PATTERNS = [
   /\/\/\s*\.{3,}\s*$/m
 ];
 function validateNoPlaceholders(content, filePath) {
+  const examplePlaceholder = "// ... existing code ...";
   for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
     if (pattern.test(content)) {
       throw new Error(
-        `Hard Guardrail Rejection: File "${filePath}" contains forbidden LLM placeholder text (e.g. "// ... existing code ..."). Commit rejected to prevent accidental code truncation.`
+        `Hard Guardrail Rejection: File "${filePath}" contains forbidden LLM placeholder text (e.g. "${examplePlaceholder}"). Commit rejected to prevent accidental code truncation.`
       );
     }
   }
@@ -381,8 +382,9 @@ function checkPlaceholderErrors(content, filePath) {
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const unquotedLine = line.replace(/(["'`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
     for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
-      if (pattern.test(line)) {
+      if (pattern.test(unquotedLine)) {
         errors.push({
           file: filePath,
           stage: "CUSTOM_RULE",
@@ -766,6 +768,8 @@ async function validateSyntaxInWorker(filePath, content) {
   let stringStartCol = 1;
   let lastNonWhitespaceChar = "";
   let inRegexCharClass = false;
+  let lastTokenWasString = false;
+  let lastStringLine = 0;
   const len = content.length;
   let i = 0;
   while (i < len) {
@@ -822,6 +826,8 @@ async function validateSyntaxInWorker(filePath, content) {
       if (ch === quoteChar) {
         state = "CODE";
         lastNonWhitespaceChar = quoteChar;
+        lastTokenWasString = true;
+        lastStringLine = currentLine;
         i++;
         currentCol++;
         continue;
@@ -939,6 +945,7 @@ async function validateSyntaxInWorker(filePath, content) {
     if (ch === "/") {
       if (allowsJsx && lastNonWhitespaceChar === "<") {
         lastNonWhitespaceChar = ch;
+        lastTokenWasString = false;
         i++;
         currentCol++;
         continue;
@@ -959,21 +966,25 @@ async function validateSyntaxInWorker(filePath, content) {
       const prevChar = i > 0 ? content[i - 1] : "";
       if (/[A-Za-z0-9]/.test(prevChar) && /[A-Za-z0-9]/.test(nextCh)) {
         lastNonWhitespaceChar = ch;
+        lastTokenWasString = false;
         i++;
         currentCol++;
         continue;
       }
     }
-    if (ch === "'") {
-      state = "SINGLE_QUOTE";
-      stringStartLine = currentLine;
-      stringStartCol = currentCol;
-      i++;
-      currentCol++;
-      continue;
-    }
-    if (ch === '"') {
-      state = "DOUBLE_QUOTE";
+    if (ch === "'" || ch === '"') {
+      if (lastTokenWasString && lastStringLine === currentLine) {
+        errors.push({
+          file: filePath,
+          stage: "OXC_SYNTAX",
+          line: currentLine,
+          column: currentCol,
+          message: 'Unexpected adjacent string literal without operator or separator (missing "|" or ",").',
+          codeSnippet: getSnippet(currentLine)
+        });
+      }
+      lastTokenWasString = false;
+      state = ch === "'" ? "SINGLE_QUOTE" : "DOUBLE_QUOTE";
       stringStartLine = currentLine;
       stringStartCol = currentCol;
       i++;
@@ -981,6 +992,7 @@ async function validateSyntaxInWorker(filePath, content) {
       continue;
     }
     if (ch === "`") {
+      lastTokenWasString = false;
       state = "TEMPLATE";
       stringStartLine = currentLine;
       stringStartCol = currentCol;
@@ -988,8 +1000,19 @@ async function validateSyntaxInWorker(filePath, content) {
       currentCol++;
       continue;
     }
+    if ((ch === ">" || ch === ")" || ch === "]" || ch === "," || ch === ";") && lastNonWhitespaceChar === "|") {
+      errors.push({
+        file: filePath,
+        stage: "OXC_SYNTAX",
+        line: currentLine,
+        column: currentCol,
+        message: `Unexpected trailing "|" operator before "${ch}".`,
+        codeSnippet: getSnippet(currentLine)
+      });
+    }
     if (ch === "(" || ch === "[" || ch === "{") {
       bracketStack.push({ char: ch, line: currentLine, col: currentCol });
+      lastTokenWasString = false;
       lastNonWhitespaceChar = ch;
       i++;
       currentCol++;
@@ -1017,6 +1040,7 @@ async function validateSyntaxInWorker(filePath, content) {
         });
       }
       lastNonWhitespaceChar = ch;
+      lastTokenWasString = false;
       i++;
       currentCol++;
       continue;
@@ -1043,6 +1067,7 @@ async function validateSyntaxInWorker(filePath, content) {
         });
       }
       lastNonWhitespaceChar = ch;
+      lastTokenWasString = false;
       i++;
       currentCol++;
       continue;
@@ -1071,6 +1096,7 @@ async function validateSyntaxInWorker(filePath, content) {
         });
       }
       lastNonWhitespaceChar = ch;
+      lastTokenWasString = false;
       i++;
       currentCol++;
       continue;
@@ -1083,6 +1109,7 @@ async function validateSyntaxInWorker(filePath, content) {
     }
     if (!/\s/.test(ch)) {
       lastNonWhitespaceChar = ch;
+      lastTokenWasString = false;
     }
     currentCol++;
     i++;
@@ -1430,7 +1457,12 @@ var ROOT_CONFIG_FILES = /* @__PURE__ */ new Set([
   "wrangler.toml",
   "wrangler.jsonc",
   "pnpm-workspace.yaml",
-  "turbo.json"
+  "turbo.json",
+  "agents.md",
+  "AGENTS.md",
+  "GEMINI.md",
+  ".repomixignore.cf",
+  ".repomixignore"
 ]);
 var ENTRYPOINT_PATTERN = /^(index|main|worker|app)\.(ts|tsx|js|jsx|mjs)$/;
 function capFileTree(entries, maxChars) {

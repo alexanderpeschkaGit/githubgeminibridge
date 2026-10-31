@@ -45,6 +45,7 @@ const validJsx = {
   'quoted text': 'export const A = () => <p>He said "hi"</p>;',
   'regex after greater-than': 'const ok = a > /x/.test(s);',
   'escaped regex slash': 'const r = /a\\/b/;',
+  'ts pick union': "export type Cfg = Pick<HudConfig, 'repo' | 'branch' | 'targetBranch' | 'includePaths'>;",
 };
 for (const [name, code] of Object.entries(validJsx)) {
   const found = await errors(TSX, code);
@@ -70,6 +71,19 @@ assert.ok(badRegex.some((e) => /Unterminated regular expression/.test(e.message)
 
 const badJson = await errors('config.json', '{"a": 1,}');
 assert.ok(badJson.some((e) => /JSON SyntaxError/.test(e.message)), JSON.stringify(badJson));
+
+const brokenPickUnion = await errors(
+  TS,
+  "export function f(config: Pick<HudConfig, 'branch' 'includePaths' 'repo' 'targetBranch' |>) { return config; }"
+);
+assert.ok(
+  brokenPickUnion.some((e) => /adjacent string literal/i.test(e.message)),
+  `must catch adjacent string literals in broken union: ${JSON.stringify(brokenPickUnion)}`
+);
+assert.ok(
+  brokenPickUnion.some((e) => /trailing "\|"/i.test(e.message)),
+  `must catch trailing pipe before ">": ${JSON.stringify(brokenPickUnion)}`
+);
 console.log('PASS: unbalanced brackets, conflict markers, bad strings/regex and bad JSON are still reported');
 
 console.log('\nAll syntax-scan checks passed.');

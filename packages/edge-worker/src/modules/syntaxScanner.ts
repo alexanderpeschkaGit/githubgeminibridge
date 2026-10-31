@@ -133,6 +133,8 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
   let stringStartCol = 1;
   let lastNonWhitespaceChar = '';
   let inRegexCharClass = false;
+  let lastTokenWasString = false;
+  let lastStringLine = 0;
 
   const len = content.length;
   let i = 0;
@@ -173,7 +175,15 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
     if (state === 'SINGLE_QUOTE' || state === 'DOUBLE_QUOTE') {
       const quoteChar = state === 'SINGLE_QUOTE' ? "'" : '"';
       if (ch === '\\') { i += 2; currentCol += 2; continue; }
-      if (ch === quoteChar) { state = 'CODE'; lastNonWhitespaceChar = quoteChar; i++; currentCol++; continue; }
+      if (ch === quoteChar) {
+        state = 'CODE';
+        lastNonWhitespaceChar = quoteChar;
+        lastTokenWasString = true;
+        lastStringLine = currentLine;
+        i++;
+        currentCol++;
+        continue;
+      }
       if (ch === '\n') {
         errors.push({
           file: filePath, stage: 'OXC_SYNTAX', line: stringStartLine, column: stringStartCol,
@@ -229,7 +239,7 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
       // In JSX the sequence "</tag" closes an element; treating that slash as a
       // regex start made every .tsx/.jsx file report "Unterminated regular expression".
       if (allowsJsx && lastNonWhitespaceChar === '<') {
-        lastNonWhitespaceChar = ch; i++; currentCol++; continue;
+        lastNonWhitespaceChar = ch; lastTokenWasString = false; i++; currentCol++; continue;
       }
       const regexPreceders = '=([{:;,?!&|+-*^~<%';
       const isRegex = lastNonWhitespaceChar === '' || regexPreceders.includes(lastNonWhitespaceChar);
@@ -244,16 +254,54 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
     if (allowsJsx && (ch === "'" || ch === '"')) {
       const prevChar = i > 0 ? content[i - 1] : '';
       if (/[A-Za-z0-9]/.test(prevChar) && /[A-Za-z0-9]/.test(nextCh)) {
-        lastNonWhitespaceChar = ch; i++; currentCol++; continue;
+        lastNonWhitespaceChar = ch; lastTokenWasString = false; i++; currentCol++; continue;
       }
     }
 
-    if (ch === "'") { state = 'SINGLE_QUOTE'; stringStartLine = currentLine; stringStartCol = currentCol; i++; currentCol++; continue; }
-    if (ch === '"') { state = 'DOUBLE_QUOTE'; stringStartLine = currentLine; stringStartCol = currentCol; i++; currentCol++; continue; }
-    if (ch === '`') { state = 'TEMPLATE'; stringStartLine = currentLine; stringStartCol = currentCol; i++; currentCol++; continue; }
+    if (ch === "'" || ch === '"') {
+      if (lastTokenWasString && lastStringLine === currentLine) {
+        errors.push({
+          file: filePath,
+          stage: 'OXC_SYNTAX',
+          line: currentLine,
+          column: currentCol,
+          message: 'Unexpected adjacent string literal without operator or separator (missing "|" or ",").',
+          codeSnippet: getSnippet(currentLine)
+        });
+      }
+      lastTokenWasString = false;
+      state = ch === "'" ? 'SINGLE_QUOTE' : 'DOUBLE_QUOTE';
+      stringStartLine = currentLine;
+      stringStartCol = currentCol;
+      i++;
+      currentCol++;
+      continue;
+    }
+
+    if (ch === '`') {
+      lastTokenWasString = false;
+      state = 'TEMPLATE';
+      stringStartLine = currentLine;
+      stringStartCol = currentCol;
+      i++;
+      currentCol++;
+      continue;
+    }
+
+    if ((ch === '>' || ch === ')' || ch === ']' || ch === ',' || ch === ';') && lastNonWhitespaceChar === '|') {
+      errors.push({
+        file: filePath,
+        stage: 'OXC_SYNTAX',
+        line: currentLine,
+        column: currentCol,
+        message: `Unexpected trailing "|" operator before "${ch}".`,
+        codeSnippet: getSnippet(currentLine)
+      });
+    }
 
     if (ch === '(' || ch === '[' || ch === '{') {
       bracketStack.push({ char: ch, line: currentLine, col: currentCol });
+      lastTokenWasString = false;
       lastNonWhitespaceChar = ch;
       i++; currentCol++;
       continue;
@@ -273,7 +321,7 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
           codeSnippet: getSnippet(currentLine)
         });
       }
-      lastNonWhitespaceChar = ch; i++; currentCol++; continue;
+      lastNonWhitespaceChar = ch; lastTokenWasString = false; i++; currentCol++; continue;
     }
 
     if (ch === ']') {
@@ -290,7 +338,7 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
           codeSnippet: getSnippet(currentLine)
         });
       }
-      lastNonWhitespaceChar = ch; i++; currentCol++; continue;
+      lastNonWhitespaceChar = ch; lastTokenWasString = false; i++; currentCol++; continue;
     }
 
     if (ch === '}') {
@@ -309,11 +357,11 @@ export async function validateSyntaxInWorker(filePath: string, content: string):
           codeSnippet: getSnippet(currentLine)
         });
       }
-      lastNonWhitespaceChar = ch; i++; currentCol++; continue;
+      lastNonWhitespaceChar = ch; lastTokenWasString = false; i++; currentCol++; continue;
     }
 
     if (ch === '\n') { currentLine++; currentCol = 1; i++; continue; }
-    if (!/\s/.test(ch)) { lastNonWhitespaceChar = ch; }
+    if (!/\s/.test(ch)) { lastNonWhitespaceChar = ch; lastTokenWasString = false; }
     currentCol++; i++;
   }
 

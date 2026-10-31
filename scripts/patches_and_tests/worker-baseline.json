@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-30T19:51:56.586Z",
+  "timestamp": "2026-10-31T01:32:17.698Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -42,7 +42,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "2.0.9",
+      "version": "0.80.0",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },
@@ -111,7 +111,7 @@
       "warningZoneFilesCount": 9,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 122640,
+      "bundleSize": 123650,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
@@ -133,7 +133,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/syntaxScanner.ts",
-          "lines": 350
+          "lines": 398
         },
         {
           "file": "packages/edge-worker/src/modules/webhookHandler.ts",
@@ -180,7 +180,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixSelection.ts",
-          "lines": 228
+          "lines": 233
         },
         {
           "file": "packages/edge-worker/src/modules/mixSerializer.ts",
@@ -200,11 +200,11 @@
         },
         {
           "file": "packages/edge-worker/src/modules/searchReplace.ts",
-          "lines": 127
+          "lines": 129
         },
         {
           "file": "packages/edge-worker/src/modules/syntaxScanner.ts",
-          "lines": 350
+          "lines": 398
         },
         {
           "file": "packages/edge-worker/src/modules/webhookHandler.ts",
@@ -248,7 +248,7 @@
         },
         {
           "file": "packages/userscript-hud/src/dom/injector.ts",
-          "lines": 144
+          "lines": 151
         },
         {
           "file": "packages/userscript-hud/src/dom/pathHints.ts",
@@ -264,7 +264,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/batchFormula.ts",
-          "lines": 30
+          "lines": 34
         },
         {
           "file": "packages/userscript-hud/src/services/patchIdentity.ts",

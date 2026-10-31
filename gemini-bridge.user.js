@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.22
+// @version      2.0.25
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -1656,9 +1656,14 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       return false;
     }
     inputEl.focus();
+    const existingText = inputEl instanceof HTMLTextAreaElement || "value" in inputEl ? inputEl.value : inputEl.textContent || "";
+    const needsLeadingNewline = existingText.length > 0 && !/\r?\n$/.test(existingText);
+    const cleanPromptText = (needsLeadingNewline ? `
+
+${promptText}` : promptText).replace(/\u200B/g, "");
     let inserted = false;
     try {
-      inserted = document.execCommand("insertText", false, promptText);
+      inserted = document.execCommand("insertText", false, cleanPromptText);
     } catch (e) {
       inserted = false;
     }
@@ -1667,12 +1672,12 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
         const textarea = inputEl;
         const start = textarea.selectionStart ?? textarea.value.length;
         const end = textarea.selectionEnd ?? textarea.value.length;
-        textarea.value = textarea.value.slice(0, start) + promptText + textarea.value.slice(end);
+        textarea.value = textarea.value.slice(0, start) + cleanPromptText + textarea.value.slice(end);
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
         textarea.dispatchEvent(new Event("change", { bubbles: true }));
       } else {
-        inputEl.textContent = (inputEl.textContent || "") + promptText;
-        inputEl.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: promptText }));
+        inputEl.textContent = (inputEl.textContent || "") + cleanPromptText;
+        inputEl.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: cleanPromptText }));
       }
     }
     if (autoSubmit) {
@@ -2078,20 +2083,24 @@ Fix Instructions:
 
   // src/services/batchFormula.ts
   function buildBatchFormulaPrompt(config, state) {
-    const branchLabel = config.targetBranch?.trim() || config.branch || "main";
-    const headLabel = state.headOid ? ` (base headOid: ${state.headOid.slice(0, 7)})` : "";
+    const sourceBranch = config.branch?.trim() || "main";
+    const branchLabel = config.targetBranch?.trim() || sourceBranch;
+    const sourceHint = branchLabel !== sourceBranch ? `, source branch: ${sourceBranch}` : "";
+    const headLabel = state.headOid ? ` (base headOid: ${state.headOid.slice(0, 7)}${sourceHint})` : "";
     const scopeLabel = config.includePaths?.length ? `
 - Active path scope: ${config.includePaths.join(", ")}` : "";
+    const placeholderExample = "// ... existing code ...";
     return [
       `Output all code changes for this batch as a SINGLE atomic V2 GeminiPatchPayload JSON code block targeting ${config.repo}@${branchLabel}${headLabel}.${scopeLabel}`,
       "Batch Integration Rules:",
-      '1. Emit exactly ONE ```json block with top-level keys "commitMessage" and "patches" (do NOT include worker request fields like branch or expectedHeadOid).',
+      '1. Emit exactly ONE ```json block with top-level keys "commitMessage" and "patches" (do NOT include worker request fields like branch or expectedHeadOid, and do NOT emit any other fenced code blocks in your response).',
       '2. Consolidate edits so each file path appears at most ONCE in "patches":',
       '   - Existing files: { "path": "repo/relative/path.ts", "action": "modify", "blocks": [{ "search": "...", "replace": "..." }] }',
       '   - New files: { "path": "repo/relative/new.ts", "action": "create", "fullContent": "..." }',
       '   - Deleted files: { "path": "repo/relative/old.ts", "action": "delete" }',
-      '3. Every "search" string MUST include 2-4 lines of unique verbatim surrounding context from the RepoMix snapshot.',
-      '4. NEVER use placeholders ("// ... existing code ...", "/* rest unchanged */") or unclosed brackets/JSX tags.'
+      '3. Every "search" string MUST include 2-4 lines of unique verbatim surrounding context from the RepoMix snapshot (order multiple blocks top-to-bottom; start "search" anchors BELOW unchanged function/type signatures or copy unchanged lines 1:1 without reordering union types).',
+      `4. NEVER use placeholders ("${placeholderExample}", "/* rest unchanged */") or unclosed brackets/JSX tags.`,
+      "5. NEVER patch paths listed in <omitted_files>, read-only legacy trees (_v1_backup/, cf-gemini-git-bridge/), or generated bundles (gemini-bridge.user.js, dist/)."
     ].join("\n");
   }
 
@@ -2789,7 +2798,7 @@ Fix Instructions:
       } else {
         const detectedPath = extractPathFromCode(codeText, pre);
         const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || void 0);
-        if (converted) {
+        if (converted && (isSearchReplace(codeText) || Boolean(detectedPath))) {
           const legacyMode = isSearchReplace(codeText) ? "v1_search_replace" : "v2_json";
           harvested = {
             id: createStablePatchId(legacyMode, converted.payload),

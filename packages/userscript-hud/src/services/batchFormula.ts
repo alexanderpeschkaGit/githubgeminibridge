@@ -6,7 +6,7 @@ import type { HudConfig, HudState } from '../types';
  * the active RepoMix snapshot.
  */
 export function buildBatchFormulaPrompt(
-  config: Pick<HudConfig, 'branch' 'includePaths' 'repo' 'targetBranch' |>,
+  config: Pick<HudConfig, 'repo' | 'branch' | 'targetBranch' | 'includePaths'>,
   state: Pick<HudState, 'headOid'>
 ): string {
   const sourceBranch = config.branch?.trim() || 'main';
@@ -26,7 +26,7 @@ export function buildBatchFormulaPrompt(
     '   - Existing files: { "path": "repo/relative/path.ts", "action": "modify", "blocks": [{ "search": "...", "replace": "..." }] }',
     '   - New files: { "path": "repo/relative/new.ts", "action": "create", "fullContent": "..." }',
     '   - Deleted files: { "path": "repo/relative/old.ts", "action": "delete" }',
-    '3. Every "search" string MUST include 2-4 lines of unique verbatim surrounding context from the RepoMix snapshot (order multiple blocks within a file top-to-bottom).',
+    '3. Every "search" string MUST include 2-4 lines of unique verbatim surrounding context from the RepoMix snapshot (order multiple blocks top-to-bottom; start "search" anchors BELOW unchanged function/type signatures or copy unchanged lines 1:1 without reordering union types).',
     `4. NEVER use placeholders ("${placeholderExample}", "/* rest unchanged */") or unclosed brackets/JSX tags.`,
     '5. NEVER patch paths listed in <omitted_files>, read-only legacy trees (_v1_backup/, cf-gemini-git-bridge/), or generated bundles (gemini-bridge.user.js, dist/).',
   ].join('\n');

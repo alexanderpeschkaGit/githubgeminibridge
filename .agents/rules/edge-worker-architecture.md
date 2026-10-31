@@ -114,7 +114,7 @@ Alle Routen in `packages/edge-worker/src/index.ts` müssen CORS-Header (`Access-
    - Brich niemals beim ersten fehlgeschlagenen Search-Block oder Syntaxfehler ab. Sammle alle Fehler aus allen Dateien im Array `errors: LinterError[]` (`SEARCH_REPLACE`, `OXC_SYNTAX`, `CUSTOM_RULE`), damit Gemini alle Probleme in einem einzigen Korrektur-Turn beheben kann.
 2. **Syntax- & AST-Prüfung (`validateSyntaxInWorker`):**
    - Deterministischer Lexer & Klammer-/Struktur-Verifier (< 5 ms Laufzeit im Worker-RAM) für `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` sowie `JSON.parse` für `.json` (gekapselt in `src/modules/syntaxScanner.ts`).
-   - Erkennt nicht geschlossene Strings/Comments/Templates, Bracket-Mismatches und verbliebene Git-Merge-Conflict-Marker (`<<<<<<<`, `=======`, `>>>>>>>`).
+   - Erkennt nicht geschlossene Strings/Comments/Templates, Bracket-Mismatches und verbliebene Git-Merge-Conflict-Marker (`<<<<<<<`, `=======`, `>>>>>>>`) sowie direkt aufeinanderfolgende String-Literale ohne Operator/Trennzeichen und hängende Pipe-Operatoren (`|>`, `|)`, `|]`, `|,`, `|;`) in TypeScript-Union-/Generic-Signaturen.
    - **JSX-Sicherheit (`.tsx`, `.jsx`, `.js`, `.mjs`, `.cjs`):** `</tag>` darf nicht als Regex-Start und eine Kontraktion im JSX-Text (`Don't`, `it's`) nicht als String-Delimiter gelten. Ohne diese beiden Ausnahmen meldete der Lexer für jede valide React-Datei `Unterminated regular expression literal` bzw. `Unterminated string literal` und blockierte damit jeden Patch an `.tsx`-Dateien.
    - Unterstützt optionalen pluggbaren `registerOxcWasmParser` Hook.
 3. **Automatischer Hook (`runPreflightLinter`):**

@@ -605,6 +605,10 @@ const {
   assert.ok(formula.includes('exactly ONE ```json block'), 'the formula caps output to one JSON block');
   assert.ok(formula.includes('at most ONCE'), 'the formula forbids duplicate file entries');
   assert.ok(formula.includes('NEVER use placeholders'), 'the formula repeats the placeholder ban');
+  assert.ok(
+    formula.includes('without reordering union types'),
+    'the formula protects unchanged function and union type signatures'
+  );
 }
 
 console.log(
