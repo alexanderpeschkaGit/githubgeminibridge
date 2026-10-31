@@ -30,6 +30,7 @@ const RELATIVE_MODULES = [
 const HARVESTER_SOURCE = 'packages/userscript-hud/src/dom/harvester.ts';
 const PATCH_QUEUE_SOURCE = 'packages/userscript-hud/src/services/patchQueue.ts';
 const BATCH_FORMULA_SOURCE = 'packages/userscript-hud/src/services/batchFormula.ts';
+const SELF_HEALING_SOURCE = 'packages/userscript-hud/src/services/selfHealing.ts';
 
 export function loadTypeScript(rootDir) {
   const require = createRequire(import.meta.url);
@@ -124,4 +125,12 @@ export async function loadPatchQueueModules(rootDir) {
 export async function loadBatchFormulaModule(rootDir) {
   const ts = loadTypeScript(rootDir);
   return import(buildEntryUrl(ts, rootDir, BATCH_FORMULA_SOURCE, new Map()));
+}
+
+/** Loads the self-healing prompt builder with injector stubbed. */
+export async function loadSelfHealingModule(rootDir) {
+  const ts = loadTypeScript(rootDir);
+  const inlined = buildInlinedModules(ts, rootDir);
+  inlined.set('../dom/injector', toDataUrl('export function injectPromptText() {} export function injectRepoMixParts() {}'));
+  return import(buildEntryUrl(ts, rootDir, SELF_HEALING_SOURCE, inlined));
 }

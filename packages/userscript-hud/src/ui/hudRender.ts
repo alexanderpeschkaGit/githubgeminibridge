@@ -52,12 +52,22 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
       'margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;';
     healBtn.onclick = () => {
       const nextRetry = (state.retryCount || 0) + 1;
+      const targetFiles: string[] = [];
+      for (const p of state.harvestedPatches) {
+        for (const op of p.payload?.patches || []) {
+          if (op.path && !targetFiles.includes(op.path)) targetFiles.push(op.path);
+        }
+      }
       const prompt = buildSelfHealingPrompt(
         state.lastErrors,
         config.repo,
         config.branch,
         state.headOid,
-        nextRetry
+        nextRetry,
+        {
+          targetFiles,
+          targetBranch: config.targetBranch?.trim() || undefined
+        }
       );
       injectPromptText(prompt, false);
       updateState({
@@ -86,6 +96,8 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
     dom.continueMixBtn.style.display = 'none';
   }
 
+  dom.checkAllBtn.disabled = patchCount === 0 || isBusy;
+  dom.checkAllBtn.textContent = patchCount > 0 ? `🔍 Check (${patchCount})` : '🔍 Check All';
   dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
   dom.applyAllBtn.textContent = patchCount > 0 ? `⚡ Apply All (${patchCount})` : '⚡ Apply All';
   dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;

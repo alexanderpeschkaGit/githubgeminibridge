@@ -251,12 +251,17 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   const queueActions = createHudElement('div');
   queueActions.style.cssText = 'display: flex; gap: 6px;';
 
+  const checkAllBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🔍 Check All');
+  checkAllBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
+  checkAllBtn.title = 'Dry-run preflight & syntax check across all harvested snippets without committing';
+
   const applyAllBtn = createHudElement('button', 'hud-btn hud-btn-primary', '⚡ Apply All');
   applyAllBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
 
   const clearQueueBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🗑️ Clear');
   clearQueueBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
 
+  queueActions.appendChild(checkAllBtn);
   queueActions.appendChild(applyAllBtn);
   queueActions.appendChild(clearQueueBtn);
   queueHeaderRow.appendChild(queueLabel);
@@ -308,6 +313,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
     autoPilotCheck,
     recentCommitsCheck,
     retryIndicator,
+    checkAllBtn,
     applyAllBtn,
     clearQueueBtn,
     patchQueueEl,

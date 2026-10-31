@@ -1,4 +1,4 @@
-import type { HarvestedPatch, HudConfig, HudState } from '../types';
+import type { HarvestedPatch, HudConfig, HudState, LinterError, WorkerPatchResponse } from '../types';
 import {
   requestBranchHead,
   requestWorkerPatch,
@@ -19,7 +19,7 @@ import {
   clearTargetOidState,
   setSourceHeadOid,
 } from '../services/patchOidStore';
-import { removeHarvestedPatch } from '../services/patchQueue';
+import { removeHarvestedPatch, partitionQueueForHolisticCheck } from '../services/patchQueue';
 import { resolvePatchPaths } from '../services/patchPaths';
 import { classifyRepoOwner, ownerOfRepo } from '../services/accountProfiles';
 
@@ -188,6 +188,164 @@ export async function applyHudPatch(
     updateState({
       status: 'ERROR',
       statusMessage: `❌ Patch error: ${err.message || String(err)}`,
+    });
+    return false;
+  }
+}
+
+
+export interface HolisticQueuePatchDeps extends HudApplyPatchDeps {
+  dryRun: boolean;
+  onMarkQueueSuperseded?: (ids: string[]) => void;
+}
+
+/**
+ * Runs a holistic validation across all snippets in the queue:
+ * combines missing-path and syntax/linter errors non-fail-fast without prompt popups.
+ */
+export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promise<boolean> {
+  deps.openPanel();
+
+  if (!deps.dryRun) {
+    const ownerMatch = classifyRepoOwner(deps.config);
+    if (ownerMatch === 'foreign') {
+      deps.updateState({
+        status: 'ERROR',
+        statusMessage: `❌ Patch blockiert: "${ownerOfRepo(deps.config.repo)}" ist keiner der registrierten GitHub-Accounts. Öffentliche Repos können weiterhin gemischt werden, aber Commits brauchen einen PAT für diesen Owner.`,
+      });
+      return false;
+    }
+  }
+
+  if (deps.state.harvestedPatches.length === 0) {
+    return false;
+  }
+
+  const partition = partitionQueueForHolisticCheck(deps.state.harvestedPatches);
+  const totalSnippets = partition.totalSnippets;
+  const targetFiles = partition.targetFiles;
+
+  deps.updateState({
+    status: 'PATCHING',
+    statusMessage: deps.dryRun
+      ? `⏳ Checking ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) (Dry-Run)...`
+      : `⏳ Validating and applying ${totalSnippets} snippet(s) across ${targetFiles.length} file(s)...`,
+  });
+
+  try {
+    if (!isPatchSnapshotReady(deps.state)) {
+      deps.updateState({
+        status: 'PATCHING',
+        statusMessage: `🔄 No snapshot OID — resolving current HEAD of ${deps.config.repo}@${deps.config.branch}...`,
+      });
+      try {
+        const resolvedOid = await requestBranchHead(deps.config, deps.config.repo, deps.config.branch);
+        setSourceHeadOid(deps.config, deps.state, resolvedOid);
+      } catch (resolveErr: any) {
+        deps.updateState({
+          status: 'ERROR',
+          statusMessage: `❌ HEAD lookup failed: ${resolveErr.message || String(resolveErr)}`,
+        });
+        return false;
+      }
+    }
+
+    let workerRes: WorkerPatchResponse | undefined;
+    if (partition.validBatch && deps.state.headOid) {
+      const effectiveDryRun = deps.dryRun || partition.localErrors.length > 0;
+      const patchReq = buildWorkerPatchRequest(
+        deps.config,
+        deps.state,
+        partition.validBatch.payload,
+        effectiveDryRun
+      );
+      workerRes = await requestWorkerPatch(deps.config, patchReq);
+
+      if (workerRes.status === 'GIT_CONFLICT' || workerRes.status === 'ERROR') {
+        const scopeHint = workerRes.status === 'GIT_CONFLICT'
+          ? ` [validated ${deps.config.repo}@${deps.config.branch}]`
+          : '';
+        const resetScope = resolveConflictOidReset(workerRes);
+        if (resetScope === 'source') {
+          clearPatchOidState(deps.state);
+        } else if (resetScope === 'target') {
+          clearTargetOidState(deps.state);
+        }
+        deps.updateState({
+          status: workerRes.status,
+          statusMessage: `❌ ${workerRes.status}: ${workerRes.errorMessage || 'Preflight / Concurrency check failed'}${scopeHint}`,
+          lastErrors: workerRes.errors || [],
+        });
+        return false;
+      }
+    }
+
+    const allErrors: LinterError[] = [
+      ...partition.localErrors,
+      ...(workerRes?.errors || [])
+    ];
+
+    if (allErrors.length > 0) {
+      deps.onMarkQueueSuperseded?.(deps.state.harvestedPatches.map((p) => p.id));
+      const syntheticRes: WorkerPatchResponse = {
+        status: 'PREFLIGHT_FAILED',
+        errors: allErrors
+      };
+      const selfHealingResult = executeSelfHealingTurn(syntheticRes, deps.config, deps.state, true, targetFiles);
+      if (selfHealingResult.triggered) {
+        deps.updateState({
+          status: 'PREFLIGHT_FAILED',
+          statusMessage: `⚠️ Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). 🤖 Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
+          retryCount: selfHealingResult.nextRetryCount,
+          lastErrors: allErrors,
+        });
+      } else {
+        const reasonMsg = selfHealingResult.reason === 'MAX_RETRIES_EXCEEDED'
+          ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.`
+          : 'Auto-pilot disabled.';
+        deps.updateState({
+          status: 'PREFLIGHT_FAILED',
+          statusMessage: `❌ Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). ${reasonMsg} Review errors below or trigger manual retry.`,
+          retryCount: selfHealingResult.nextRetryCount,
+          lastErrors: allErrors,
+        });
+      }
+      return false;
+    }
+
+    if (deps.dryRun || workerRes?.status === 'VALIDATED') {
+      deps.updateState({
+        status: 'IDLE',
+        statusMessage: `✅ All ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) passed preflight & syntax validation! Click "⚡ Apply All" to commit.`,
+        lastErrors: [],
+        retryCount: 0,
+      });
+      return true;
+    }
+
+    if (workerRes?.status === 'COMMITTED' || workerRes?.status === 'NO_CHANGES_NEEDED') {
+      deps.state.harvestedPatches = [];
+      applyPatchResponseOids(deps.config, deps.state, workerRes);
+      const branchLabel = workerRes.targetBranch || deps.config.targetBranch?.trim() || deps.config.branch;
+      const prMsg = workerRes.pullRequestUrl ? ` | 🔗 PR: ${workerRes.pullRequestUrl}` : '';
+      const commitMsg = workerRes.status === 'NO_CHANGES_NEEDED'
+        ? 'ℹ️ All snippets already up-to-date (no changes needed).'
+        : `✅ Committed ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) to ${branchLabel}: ${workerRes.newHeadOid ? workerRes.newHeadOid.slice(0, 7) : 'OK'}${prMsg}`;
+
+      deps.updateState({
+        status: workerRes.status === 'NO_CHANGES_NEEDED' ? 'IDLE' : 'COMMITTED',
+        statusMessage: commitMsg,
+        lastErrors: [],
+        retryCount: 0,
+      });
+      return true;
+    }
+
+    return false;
+  } catch (err: any) {
+    deps.updateState({
+      status: 'ERROR',
+      statusMessage: `❌ Holistic queue error: ${err.message || String(err)}`,
     });
     return false;
   }

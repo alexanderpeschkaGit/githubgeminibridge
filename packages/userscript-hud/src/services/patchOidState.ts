@@ -48,7 +48,8 @@ export function resolvePatchOidState(
 export function buildWorkerPatchRequest(
   config: HudConfig,
   state: Pick<HudState, 'headOid' | 'targetHeadOid' | 'targetHeadBranch'>,
-  payload: GeminiPatchPayload
+  payload: GeminiPatchPayload,
+  dryRun?: boolean
 ): WorkerPatchRequest {
   const targetBranch = config.targetBranch?.trim() || undefined;
   const isDistinctTarget = !!targetBranch &&
@@ -63,6 +64,7 @@ export function buildWorkerPatchRequest(
     payload,
     targetBranch,
     expectedTargetHeadOid: targetOidIsCurrent ? state.targetHeadOid || undefined : undefined,
+    ...(dryRun ? { dryRun: true } : {}),
   };
 }
 

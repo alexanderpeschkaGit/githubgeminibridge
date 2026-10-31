@@ -14,12 +14,18 @@ export const MAX_SELF_HEALING_RETRIES = 3;
 /**
  * Builds a structured #solve self-healing prompt targeting all collected preflight & syntax errors.
  */
+export interface SelfHealingPromptOptions {
+  targetFiles?: string[];
+  targetBranch?: string;
+}
+
 export function buildSelfHealingPrompt(
   errors: LinterError[],
   repo: string,
   branch: string,
   headOid: string,
-  retryAttempt: number
+  retryAttempt: number,
+  options?: SelfHealingPromptOptions
 ): string {
   const formattedErrors = errors
     .map((err, idx) => {
@@ -29,18 +35,25 @@ export function buildSelfHealingPrompt(
     })
     .join('\n');
 
+  const targetBranch = options?.targetBranch?.trim() || branch;
+  const targetFilesStr = options?.targetFiles && options.targetFiles.length > 0
+    ? options.targetFiles.join(', ')
+    : '(resolve all affected files from errors below)';
+
   return `#solve Linter & Preflight Self-Healing Loop (Retry ${retryAttempt}/${MAX_SELF_HEALING_RETRIES})
 
-The previous patch for repository "${repo}" on branch "${branch}" was rejected during Edge-Worker preflight validation.
+The previous patch for repository "${repo}" on branch "${targetBranch}" was rejected during preflight validation.
 Expected HEAD commit: "${headOid}".
+Target Files in Scope: ${targetFilesStr}
 
-Aggregated Preflight Errors (${errors.length}):
+Aggregated Preflight & Snippet Errors (${errors.length}):
 ${formattedErrors}
 
 Fix Instructions:
-1. Fix ALL listed syntax and rule errors in a single cohesive response.
+1. Fix ALL listed syntax, missing-path, and rule errors across all affected files in a single cohesive response.
 2. Hard Guardrail: NEVER use placeholder comments like "// ... existing code ...", "/* remaining code */", or "# ... existing code ...". Always provide complete search/replace blocks or full file content.
-3. Provide your correction as a single valid JSON codeblock matching the GeminiPatchPayload schema:
+3. Anchor Context: Provide 2–4 lines of verbatim surrounding context in each search block so patches match unambiguously. Never reorder or alter union types in unmodified signature anchors.
+4. Output Format: Emit exactly ONE directly importable Markdown/JSON patch block (\`\`\`json or \`\`\`md) containing a single valid GeminiPatchPayload JSON object. Every patch in "patches" MUST include an exact repo-relative "path" (e.g. "src/App.tsx") and at most one entry per file:
 \`\`\`json
 {
   "commitMessage": "fix: resolve preflight linter errors (retry ${retryAttempt})",
@@ -124,7 +137,8 @@ export function executeSelfHealingTurn(
   response: WorkerPatchResponse,
   cfg: HudConfig,
   state: HudState,
-  autoSubmit = true
+  autoSubmit = true,
+  targetFiles?: string[]
 ): { triggered: boolean; nextRetryCount: number; prompt?: string; reason: string } {
   const evalResult = shouldTriggerSelfHealing(response, cfg.autoPilot, state.retryCount);
 
@@ -141,7 +155,11 @@ export function executeSelfHealingTurn(
     cfg.repo,
     cfg.branch,
     state.headOid,
-    evalResult.nextRetryCount
+    evalResult.nextRetryCount,
+    {
+      targetFiles,
+      targetBranch: cfg.targetBranch?.trim() || undefined
+    }
   );
 
   injectPromptText(prompt, autoSubmit);

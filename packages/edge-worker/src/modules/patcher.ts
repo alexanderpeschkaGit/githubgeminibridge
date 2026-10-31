@@ -191,39 +191,44 @@ export async function handlePatchRequest(
       if (!(err instanceof BranchNotFoundError)) {
         return { status: 'ERROR', errorMessage: `Failed to resolve target branch "${effectiveTargetBranch}": ${err.message}` };
       }
-      if (req.expectedTargetHeadOid) {
+      if (req.dryRun) {
+        targetInfo = {
+          headOid: req.expectedHeadOid,
+          resolvedBranch: normalizeBranch(effectiveTargetBranch),
+          repositoryId: sourceInfo.repositoryId
+        };
+      } else if (req.expectedTargetHeadOid) {
         return {
           status: 'GIT_CONFLICT',
           errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${req.expectedTargetHeadOid}".`
         };
-      }
-      if (req.createBranchIfNeeded === false) {
+      } else if (req.createBranchIfNeeded === false) {
         return {
           status: 'ERROR',
           errorMessage: `Target branch "${effectiveTargetBranch}" does not exist and createBranchIfNeeded is false.`
         };
-      }
-
-      try {
-        const createdRef = await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
-        createdBranch = true;
-        // The new ref points at the validated source OID, so its initial tree
-        // is exactly that commit — no second resolution roundtrip is needed.
-        targetInfo = {
-          headOid: createdRef.oid || req.expectedHeadOid,
-          resolvedBranch: normalizeBranch(effectiveTargetBranch),
-          repositoryId: sourceInfo.repositoryId
-        };
-      } catch (createErr: any) {
-        // A concurrent creator may win after the initial not-found lookup. Only
-        // continue if a fresh lookup confirms that the branch now exists.
+      } else {
         try {
-          targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
-        } catch (resolveErr: any) {
-          return {
-            status: 'ERROR',
-            errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
+          const createdRef = await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
+          createdBranch = true;
+          // The new ref points at the validated source OID, so its initial tree
+          // is exactly that commit — no second resolution roundtrip is needed.
+          targetInfo = {
+            headOid: createdRef.oid || req.expectedHeadOid,
+            resolvedBranch: normalizeBranch(effectiveTargetBranch),
+            repositoryId: sourceInfo.repositoryId
           };
+        } catch (createErr: any) {
+          // A concurrent creator may win after the initial not-found lookup. Only
+          // continue if a fresh lookup confirms that the branch now exists.
+          try {
+            targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+          } catch (resolveErr: any) {
+            return {
+              status: 'ERROR',
+              errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
+            };
+          }
         }
       }
     }
@@ -273,7 +278,16 @@ export async function handlePatchRequest(
       status: 'NO_CHANGES_NEEDED',
       newHeadOid: commitExpectedHeadOid,
       targetBranch: commitBranch,
-      createdBranch
+      createdBranch: req.dryRun ? false : createdBranch
+    };
+  }
+
+  if (req.dryRun) {
+    return {
+      status: 'VALIDATED',
+      newHeadOid: commitExpectedHeadOid,
+      targetBranch: commitBranch,
+      createdBranch: false
     };
   }
 

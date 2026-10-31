@@ -213,6 +213,7 @@ export interface HudDomElements {
   autoPilotCheck: HTMLInputElement;
   recentCommitsCheck: HTMLInputElement;
   retryIndicator: HTMLSpanElement;
+  checkAllBtn: HTMLButtonElement;
   applyAllBtn: HTMLButtonElement;
   clearQueueBtn: HTMLButtonElement;
   patchQueueEl: HTMLDivElement;

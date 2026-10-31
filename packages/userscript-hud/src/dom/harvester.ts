@@ -30,9 +30,15 @@ export function parseV2PatchPayloadFromCode(codeText: string): GeminiPatchPayloa
   let textToParse = codeText.trim();
 
   // Strip markdown ```json code fences if present
-  const fenceMatch = textToParse.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const fenceMatch = textToParse.match(/^```(?:json|md|markdown)?\s*([\s\S]*?)\s*```$/i);
   if (fenceMatch) {
     textToParse = fenceMatch[1].trim();
+  }
+
+  // If a markdown block wraps an inner ```json fenced block, extract the inner block first
+  const innerJsonFence = textToParse.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
+  if (innerJsonFence) {
+    textToParse = innerJsonFence[1].trim();
   }
 
   // Quick check: does it look like JSON?
@@ -74,6 +80,24 @@ export function parseV2PatchPayloadFromCode(codeText: string): GeminiPatchPayloa
   return null;
 }
 
+function extractSectionPath(sectionText: string): string {
+  if (!sectionText || !sectionText.trim()) return '';
+  const fromCode = extractPathFromCode(sectionText);
+  if (fromCode) return normalizeRepoPath(fromCode);
+
+  const headerMatch = sectionText.match(/(?:^|\r?\n)\s*#{1,6}\s*([^\r\n]+)/);
+  if (headerMatch && headerMatch[1]) {
+    const cleaned = headerMatch[1].replace(/[`*]/g, '').trim();
+    const labeled = cleaned.match(/(?:filepath|file|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i);
+    if (labeled && labeled[1]) return normalizeRepoPath(labeled[1]);
+    const candidate = cleaned.replace(/[:;,]+$/, '').trim();
+    if (/^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/.test(candidate)) {
+      return normalizeRepoPath(candidate);
+    }
+  }
+  return '';
+}
+
 /**
  * Parses search/replace blocks or raw file content into both V2 GeminiPatchPayload and V1 CommitRequest.
  */
@@ -88,39 +112,56 @@ export function convertLegacyBlocksToV2Payload(
   const describePath = detectedPath || 'no path detected';
 
   if (hasDiffBlocks) {
-    const blocks: PatchBlock[] = [];
+    const fileOpsMap = new Map<string, PatchBlock[]>();
+    const fileOrder: string[] = [];
     const regex = /<{7}[^\r\n]*\r?\n([\s\S]*?)\r?\n={7}\r?\n([\s\S]*?)\r?\n>{7}[^\r\n]*/g;
     let match: RegExpExecArray | null;
+    let lastIndex = 0;
+    let currentPath = detectedPath;
 
     while ((match = regex.exec(codeText)) !== null) {
-      blocks.push({
+      const preceding = codeText.substring(lastIndex, match.index);
+      const sectionPath = extractSectionPath(preceding);
+      if (sectionPath) {
+        currentPath = sectionPath;
+      }
+
+      const activePath = currentPath;
+      if (!fileOpsMap.has(activePath)) {
+        fileOpsMap.set(activePath, []);
+        fileOrder.push(activePath);
+      }
+      fileOpsMap.get(activePath)!.push({
         search: match[1],
         replace: match[2],
       });
+      lastIndex = regex.lastIndex;
     }
 
-    if (blocks.length > 0) {
-      const fileOp: FilePatchOperation = {
-        path: detectedPath,
+    if (fileOrder.length > 0) {
+      const patches: FilePatchOperation[] = fileOrder.map((path) => ({
+        path,
         action: 'modify',
-        blocks,
-      };
+        blocks: fileOpsMap.get(path)!,
+      }));
+
+      const commitMessage = patches.length === 1
+        ? `refactor(${patches[0].path || 'no path detected'}): apply search/replace patch`
+        : `refactor(multi-file): apply search/replace across ${patches.length} files`;
 
       const payload: GeminiPatchPayload = {
-        commitMessage: `refactor(${describePath}): apply search/replace patch`,
-        patches: [fileOp],
+        commitMessage,
+        patches,
       };
 
       const legacyPayload: CommitRequest = {
         repo: '',
         message: payload.commitMessage,
-        files: [
-          {
-            path: detectedPath,
-            diff: codeText,
-            patches: blocks,
-          },
-        ],
+        files: patches.map((p) => ({
+          path: p.path,
+          diff: codeText,
+          patches: p.blocks || [],
+        })),
       };
 
       return { payload, legacyPayload };

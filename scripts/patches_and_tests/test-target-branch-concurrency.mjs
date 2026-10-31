@@ -268,6 +268,29 @@ function request(overrides = {}) {
 }
 
 {
+  const creationSource = { headOid: OID_SOURCE, files: { 'src/file.txt': 'target\nsource base\n' } };
+  reset({ main: creationSource });
+  const result = await handlePatchRequest(request({ dryRun: true }), 'token', async () => []);
+  assert.equal(result.status, 'VALIDATED');
+  assert.equal(result.createdBranch, false);
+  assert.equal(result.newHeadOid, OID_SOURCE);
+  assert.equal(result.targetBranch, 'feature');
+  assert.equal(calls.some((call) => call.kind === 'create' || call.kind === 'commit'), false, 'dry run never creates refs or commits');
+  console.log('PASS: dryRun skips branch ref creation and commit, returning VALIDATED');
+}
+
+{
+  reset({ main: sourceEntry, feature: targetEntry });
+  const failingResult = await handlePatchRequest(request({ dryRun: true }), 'token', async () => [
+    { file: 'src/file.txt', stage: 'CUSTOM_RULE', message: 'Forbidden rule' }
+  ]);
+  assert.equal(failingResult.status, 'PREFLIGHT_FAILED');
+  assert.equal(failingResult.errors.length, 1);
+  assert.equal(calls.some((call) => call.kind === 'commit'), false);
+  console.log('PASS: dryRun reports preflight failures without committing');
+}
+
+{
   const state = {
     headOid: OID_SOURCE,
     targetHeadOid: OID_TARGET,

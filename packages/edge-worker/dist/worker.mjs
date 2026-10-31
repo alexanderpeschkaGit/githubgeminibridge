@@ -1299,34 +1299,40 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
       if (!(err instanceof BranchNotFoundError)) {
         return { status: "ERROR", errorMessage: `Failed to resolve target branch "${effectiveTargetBranch}": ${err.message}` };
       }
-      if (req.expectedTargetHeadOid) {
+      if (req.dryRun) {
+        targetInfo = {
+          headOid: req.expectedHeadOid,
+          resolvedBranch: normalizeBranch(effectiveTargetBranch),
+          repositoryId: sourceInfo.repositoryId
+        };
+      } else if (req.expectedTargetHeadOid) {
         return {
           status: "GIT_CONFLICT",
           errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${req.expectedTargetHeadOid}".`
         };
-      }
-      if (req.createBranchIfNeeded === false) {
+      } else if (req.createBranchIfNeeded === false) {
         return {
           status: "ERROR",
           errorMessage: `Target branch "${effectiveTargetBranch}" does not exist and createBranchIfNeeded is false.`
         };
-      }
-      try {
-        const createdRef = await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
-        createdBranch = true;
-        targetInfo = {
-          headOid: createdRef.oid || req.expectedHeadOid,
-          resolvedBranch: normalizeBranch(effectiveTargetBranch),
-          repositoryId: sourceInfo.repositoryId
-        };
-      } catch (createErr) {
+      } else {
         try {
-          targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
-        } catch (resolveErr) {
-          return {
-            status: "ERROR",
-            errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
+          const createdRef = await createBranchRef(owner, repo, effectiveTargetBranch, req.expectedHeadOid, githubToken, sourceInfo.repositoryId);
+          createdBranch = true;
+          targetInfo = {
+            headOid: createdRef.oid || req.expectedHeadOid,
+            resolvedBranch: normalizeBranch(effectiveTargetBranch),
+            repositoryId: sourceInfo.repositoryId
           };
+        } catch (createErr) {
+          try {
+            targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+          } catch (resolveErr) {
+            return {
+              status: "ERROR",
+              errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
+            };
+          }
         }
       }
     }
@@ -1371,7 +1377,15 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
       status: "NO_CHANGES_NEEDED",
       newHeadOid: commitExpectedHeadOid,
       targetBranch: commitBranch,
-      createdBranch
+      createdBranch: req.dryRun ? false : createdBranch
+    };
+  }
+  if (req.dryRun) {
+    return {
+      status: "VALIDATED",
+      newHeadOid: commitExpectedHeadOid,
+      targetBranch: commitBranch,
+      createdBranch: false
     };
   }
   const encodedAdditions = patchResult.additions.map((a) => ({
@@ -3340,7 +3354,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "0.80.1",
+        version: "0.80.2",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))

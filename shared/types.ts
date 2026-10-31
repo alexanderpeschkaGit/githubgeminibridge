@@ -124,6 +124,7 @@ export interface WorkerPatchRequest {
   targetBranch?: string;          // Optional: abweichender Zielbranch (z.B. "feature/xyz" oder "gemini/patch-1")
   expectedTargetHeadOid?: string; // Optionaler, vom Source-OID getrennter Target-Branch Concurrency-Token
   createBranchIfNeeded?: boolean; // Default true: legt targetBranch an, falls nicht vorhanden
+  dryRun?: boolean;               // Optional: prüft Search/Replace & AST/Linter komplett ohne GitHub-Commit
 }
 
 export interface LinterError {
@@ -136,7 +137,7 @@ export interface LinterError {
 }
 
 export interface WorkerPatchResponse {
-  status: "COMMITTED" | "PREFLIGHT_FAILED" | "GIT_CONFLICT" | "NO_CHANGES_NEEDED" | "ERROR";
+  status: "COMMITTED" | "VALIDATED" | "PREFLIGHT_FAILED" | "GIT_CONFLICT" | "NO_CHANGES_NEEDED" | "ERROR";
   newHeadOid?: string;         // Effektiver Branch-HEAD nach Commit/No-op; Fehler-OIDs dienen nur Diagnose
   commitUrl?: string;
   errors?: LinterError[];      // Aggregierte Fehlerliste für Auto-Retry in Gemini

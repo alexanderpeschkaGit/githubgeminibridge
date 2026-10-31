@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.1
+// @version      0.80.2
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -41,7 +41,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
-  // packages/userscript-hud/src/services/storage.ts
+  // src/services/storage.ts
   var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
@@ -250,7 +250,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // packages/userscript-hud/src/services/runtimeInfo.ts
+  // src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
   function getRunningScriptVersion() {
     if (typeof GM_info === "undefined" || !GM_info || !GM_info.script) {
@@ -284,7 +284,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     document.body.appendChild(box);
   }
 
-  // packages/userscript-hud/src/services/patchOidState.ts
+  // src/services/patchOidState.ts
   var OID_REGEX = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
@@ -305,7 +305,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       targetHeadBranch: targetIsCurrent ? storedTarget : ""
     };
   }
-  function buildWorkerPatchRequest(config, state, payload) {
+  function buildWorkerPatchRequest(config, state, payload, dryRun) {
     const targetBranch = config.targetBranch?.trim() || void 0;
     const isDistinctTarget = !!targetBranch && normalizeBranch(targetBranch) !== normalizeBranch(config.branch);
     const targetOidIsCurrent = isDistinctTarget && normalizeBranch(state.targetHeadBranch) === normalizeBranch(targetBranch) && OID_REGEX.test(state.targetHeadOid);
@@ -315,7 +315,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       expectedHeadOid: state.headOid,
       payload,
       targetBranch,
-      expectedTargetHeadOid: targetOidIsCurrent ? state.targetHeadOid || void 0 : void 0
+      expectedTargetHeadOid: targetOidIsCurrent ? state.targetHeadOid || void 0 : void 0,
+      ...dryRun ? { dryRun: true } : {}
     };
   }
   function isPatchSnapshotReady(state) {
@@ -345,7 +346,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/services/patchOidStore.ts
+  // src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
       headOidScope: getStoredValue("head_oid_scope", ""),
@@ -385,7 +386,29 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
   }
 
-  // packages/userscript-hud/src/services/patchIdentity.ts
+  // ../../shared/repoPaths.ts
+  function normalizeRepoPath(input) {
+    return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+  }
+  function findRepoPathIssue(input) {
+    const raw = (input || "").trim();
+    if (!raw) {
+      return 'Patch has no file path. Add a "// filepath: <repo/relative/path>" hint above the code block.';
+    }
+    const normalized = normalizeRepoPath(raw);
+    if (!normalized) {
+      return `Patch path "${raw}" does not point to a file inside the repository.`;
+    }
+    if (/^[a-zA-Z]:\//.test(normalized)) {
+      return `Patch path "${raw}" must be repo-relative (absolute drive paths are not allowed).`;
+    }
+    if (normalized.split("/").some((segment) => segment === ".." || segment === ".")) {
+      return `Patch path "${raw}" must be repo-relative and must not contain "." or ".." segments.`;
+    }
+    return null;
+  }
+
+  // src/services/patchIdentity.ts
   function canonicalize(value) {
     if (Array.isArray(value)) {
       return value.map((entry) => canonicalize(entry));
@@ -416,7 +439,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
   }
 
-  // packages/userscript-hud/src/services/patchQueue.ts
+  // src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
   function isDuplicatePatch(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
@@ -434,50 +457,6 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   function fifoQueue(queue) {
     return [...queue].reverse();
   }
-  function coalescePatchesIntoBatch(queue) {
-    const ordered = fifoQueue(queue);
-    if (ordered.length < 2) return null;
-    const patches = [];
-    const forbidPatterns = [];
-    const requireExports = {};
-    const commitMessages = [];
-    for (const entry of ordered) {
-      const operations = entry.payload?.patches ?? [];
-      if (operations.length === 0) return null;
-      for (const operation of operations) {
-        if (!operation.path || !operation.path.trim()) return null;
-        patches.push(operation);
-      }
-      for (const pattern of entry.payload.preflight?.forbidPatterns ?? []) {
-        if (!forbidPatterns.includes(pattern)) forbidPatterns.push(pattern);
-      }
-      for (const [filePath, symbols] of Object.entries(entry.payload.preflight?.requireExports ?? {})) {
-        const merged = requireExports[filePath] ?? [];
-        for (const symbol of symbols) {
-          if (!merged.includes(symbol)) merged.push(symbol);
-        }
-        requireExports[filePath] = merged;
-      }
-      if (entry.commitMessage) commitMessages.push(entry.commitMessage);
-    }
-    if (patches.length === 0) return null;
-    const payload = {
-      commitMessage: `batch: ${commitMessages.join(" | ") || `${ordered.length} harvested patches`}`,
-      patches
-    };
-    if (forbidPatterns.length > 0 || Object.keys(requireExports).length > 0) {
-      payload.preflight = {};
-      if (forbidPatterns.length > 0) payload.preflight.forbidPatterns = forbidPatterns;
-      if (Object.keys(requireExports).length > 0) payload.preflight.requireExports = requireExports;
-    }
-    return {
-      id: createStablePatchId("v2_json", payload),
-      mode: "v2_json",
-      commitMessage: payload.commitMessage,
-      payload,
-      timestamp: (/* @__PURE__ */ new Date()).toISOString()
-    };
-  }
   async function runPatchQueue(queue, apply, onProgress) {
     const ordered = fifoQueue(queue);
     const total = ordered.length;
@@ -490,8 +469,100 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
     return { applied, total };
   }
+  function partitionQueueForHolisticCheck(queue) {
+    const ordered = fifoQueue(queue);
+    const totalSnippets = ordered.length;
+    const localErrors = [];
+    const targetFiles = [];
+    const validOperations = [];
+    const forbidPatterns = [];
+    const requireExports = {};
+    const commitMessages = [];
+    for (let snippetIndex = 0; snippetIndex < ordered.length; snippetIndex++) {
+      const entry = ordered[snippetIndex];
+      const operations = entry.payload?.patches ?? [];
+      if (operations.length === 0) {
+        localErrors.push({
+          file: `(empty snippet #${snippetIndex + 1})`,
+          stage: "SEARCH_REPLACE",
+          message: "Code snippet contains no valid patch operations."
+        });
+      }
+      for (const op of operations) {
+        const issue = findRepoPathIssue(op.path);
+        if (issue !== null) {
+          const preview = (op.blocks?.[0]?.search || op.fullContent || entry.commitMessage || "").slice(0, 120);
+          localErrors.push({
+            file: op.path?.trim() || `(missing path in snippet #${snippetIndex + 1})`,
+            stage: "SEARCH_REPLACE",
+            message: `${issue} Provide a repo-relative path (e.g. "src/App.tsx") in the consolidated patch.`,
+            codeSnippet: preview || void 0
+          });
+          continue;
+        }
+        const normPath = normalizeRepoPath(op.path);
+        if (!targetFiles.includes(normPath)) {
+          targetFiles.push(normPath);
+        }
+        const existingOp = validOperations.find((o) => o.path === normPath);
+        if (existingOp) {
+          if (existingOp.action === "modify" && op.action === "modify" && existingOp.blocks && op.blocks) {
+            existingOp.blocks.push(...op.blocks);
+          } else {
+            const existingIdx = validOperations.indexOf(existingOp);
+            validOperations[existingIdx] = { ...op, path: normPath };
+          }
+        } else {
+          const clonedOp = {
+            ...op,
+            path: normPath,
+            ...op.blocks ? { blocks: op.blocks.map((b) => ({ ...b })) } : {}
+          };
+          validOperations.push(clonedOp);
+        }
+      }
+      for (const pattern of entry.payload?.preflight?.forbidPatterns ?? []) {
+        if (!forbidPatterns.includes(pattern)) forbidPatterns.push(pattern);
+      }
+      for (const [filePath, symbols] of Object.entries(entry.payload?.preflight?.requireExports ?? {})) {
+        const merged = requireExports[filePath] ?? [];
+        for (const symbol of symbols) {
+          if (!merged.includes(symbol)) merged.push(symbol);
+        }
+        requireExports[filePath] = merged;
+      }
+      if (entry.commitMessage) {
+        commitMessages.push(entry.commitMessage);
+      }
+    }
+    let validBatch = null;
+    if (validOperations.length > 0) {
+      const payload = {
+        commitMessage: `batch: ${commitMessages.join(" | ") || `${ordered.length} harvested patches`}`,
+        patches: validOperations
+      };
+      if (forbidPatterns.length > 0 || Object.keys(requireExports).length > 0) {
+        payload.preflight = {};
+        if (forbidPatterns.length > 0) payload.preflight.forbidPatterns = forbidPatterns;
+        if (Object.keys(requireExports).length > 0) payload.preflight.requireExports = requireExports;
+      }
+      validBatch = {
+        id: createStablePatchId("v2_json", payload),
+        mode: "v2_json",
+        commitMessage: payload.commitMessage,
+        payload,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    return {
+      validBatch,
+      localErrors,
+      targetFiles,
+      totalSnippets
+    };
+  }
 
-  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
+  // src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -680,7 +751,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return el;
   }
 
-  // packages/userscript-hud/src/ui/hudDomTree.ts
+  // src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -874,10 +945,14 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     const queueLabel = createHudElement("span", "hud-label", "Harvested Patches");
     const queueActions = createHudElement("div");
     queueActions.style.cssText = "display: flex; gap: 6px;";
+    const checkAllBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F50D} Check All");
+    checkAllBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
+    checkAllBtn.title = "Dry-run preflight & syntax check across all harvested snippets without committing";
     const applyAllBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u26A1 Apply All");
     applyAllBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
     const clearQueueBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F5D1}\uFE0F Clear");
     clearQueueBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
+    queueActions.appendChild(checkAllBtn);
     queueActions.appendChild(applyAllBtn);
     queueActions.appendChild(clearQueueBtn);
     queueHeaderRow.appendChild(queueLabel);
@@ -924,6 +999,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       autoPilotCheck,
       recentCommitsCheck,
       retryIndicator,
+      checkAllBtn,
       applyAllBtn,
       clearQueueBtn,
       patchQueueEl,
@@ -932,7 +1008,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/services/updateChecker.ts
+  // src/services/updateChecker.ts
   var SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js";
   var LAST_CHECK_KEY = "script_update_last_check";
   var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
@@ -1031,7 +1107,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return evaluateUpdateState(getRunningScriptVersion(), latestVersion);
   }
 
-  // packages/userscript-hud/src/ui/updateBanner.ts
+  // src/ui/updateBanner.ts
   var TRANSIENT_MESSAGE_MS = 6e3;
   function initHudUpdateBanner(dom, deps = {}) {
     const check = deps.check ?? checkForScriptUpdate;
@@ -1126,7 +1202,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     void runCheck(false);
   }
 
-  // packages/userscript-hud/src/services/repoHistory.ts
+  // src/services/repoHistory.ts
   var HISTORY_KEY = "repo_history_v1";
   var MAX_ENTRIES = 4;
   function historyKey() {
@@ -1196,7 +1272,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     });
   }
 
-  // packages/userscript-hud/src/ui/hudConfigBindings.ts
+  // src/ui/hudConfigBindings.ts
   var refreshRepoHistorySelect = null;
   function setRepoHistorySelectRefresher(fn) {
     refreshRepoHistorySelect = fn;
@@ -1325,7 +1401,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/ui/hudRepoHistoryDropdown.ts
+  // src/ui/hudRepoHistoryDropdown.ts
   var activeDocumentClickHandler = null;
   var activeDocumentKeydownHandler = null;
   function formatRepoHistoryLabel(entry) {
@@ -1459,7 +1535,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return refresher;
   }
 
-  // packages/userscript-hud/src/services/accountProfiles.ts
+  // src/services/accountProfiles.ts
   var ACCOUNT_PROFILES = [
     { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
     { id: "account2", label: "Account 2", workerName: "gemini-git-bridge-account2" }
@@ -1492,7 +1568,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return "foreign";
   }
 
-  // packages/userscript-hud/src/ui/hudAccountSwitch.ts
+  // src/ui/hudAccountSwitch.ts
   var activeDeps = null;
   function profileInfo(id) {
     return ACCOUNT_PROFILES.find((p) => p.id === id) ?? ACCOUNT_PROFILES[0];
@@ -1596,7 +1672,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/dom/injector.ts
+  // src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
     const geminiSelectors = [
@@ -1706,27 +1782,31 @@ ${promptText}` : promptText).replace(/\u200B/g, "");
     return true;
   }
 
-  // packages/userscript-hud/src/services/selfHealing.ts
+  // src/services/selfHealing.ts
   var MAX_SELF_HEALING_RETRIES = 3;
-  function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt) {
+  function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt, options) {
     const formattedErrors = errors.map((err, idx) => {
       const loc = err.line ? err.column ? `:${err.line}:${err.column}` : `:${err.line}` : "";
       const snippet = err.codeSnippet ? `
    > ${err.codeSnippet}` : "";
       return `${idx + 1}. [Stage: ${err.stage}] ${err.file}${loc} \u2014 ${err.message}${snippet}`;
     }).join("\n");
+    const targetBranch = options?.targetBranch?.trim() || branch;
+    const targetFilesStr = options?.targetFiles && options.targetFiles.length > 0 ? options.targetFiles.join(", ") : "(resolve all affected files from errors below)";
     return `#solve Linter & Preflight Self-Healing Loop (Retry ${retryAttempt}/${MAX_SELF_HEALING_RETRIES})
 
-The previous patch for repository "${repo}" on branch "${branch}" was rejected during Edge-Worker preflight validation.
+The previous patch for repository "${repo}" on branch "${targetBranch}" was rejected during preflight validation.
 Expected HEAD commit: "${headOid}".
+Target Files in Scope: ${targetFilesStr}
 
-Aggregated Preflight Errors (${errors.length}):
+Aggregated Preflight & Snippet Errors (${errors.length}):
 ${formattedErrors}
 
 Fix Instructions:
-1. Fix ALL listed syntax and rule errors in a single cohesive response.
+1. Fix ALL listed syntax, missing-path, and rule errors across all affected files in a single cohesive response.
 2. Hard Guardrail: NEVER use placeholder comments like "// ... existing code ...", "/* remaining code */", or "# ... existing code ...". Always provide complete search/replace blocks or full file content.
-3. Provide your correction as a single valid JSON codeblock matching the GeminiPatchPayload schema:
+3. Anchor Context: Provide 2\u20134 lines of verbatim surrounding context in each search block so patches match unambiguously. Never reorder or alter union types in unmodified signature anchors.
+4. Output Format: Emit exactly ONE directly importable Markdown/JSON patch block (\`\`\`json or \`\`\`md) containing a single valid GeminiPatchPayload JSON object. Every patch in "patches" MUST include an exact repo-relative "path" (e.g. "src/App.tsx") and at most one entry per file:
 \`\`\`json
 {
   "commitMessage": "fix: resolve preflight linter errors (retry ${retryAttempt})",
@@ -1788,7 +1868,7 @@ Fix Instructions:
       reason: "PREFLIGHT_FAILED_AUTO_RETRY"
     };
   }
-  function executeSelfHealingTurn(response, cfg, state, autoSubmit = true) {
+  function executeSelfHealingTurn(response, cfg, state, autoSubmit = true, targetFiles) {
     const evalResult = shouldTriggerSelfHealing(response, cfg.autoPilot, state.retryCount);
     if (!evalResult.trigger) {
       return {
@@ -1802,7 +1882,11 @@ Fix Instructions:
       cfg.repo,
       cfg.branch,
       state.headOid,
-      evalResult.nextRetryCount
+      evalResult.nextRetryCount,
+      {
+        targetFiles,
+        targetBranch: cfg.targetBranch?.trim() || void 0
+      }
     );
     injectPromptText(prompt, autoSubmit);
     return {
@@ -1813,7 +1897,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/hudRender.ts
+  // src/ui/hudRender.ts
   function renderHudState({ dom, state, config, updateState, onApplyPatch }) {
     dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
     dom.triggerBadge.textContent = state.status;
@@ -1850,12 +1934,22 @@ Fix Instructions:
       healBtn.style.cssText = "margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;";
       healBtn.onclick = () => {
         const nextRetry = (state.retryCount || 0) + 1;
+        const targetFiles = [];
+        for (const p of state.harvestedPatches) {
+          for (const op of p.payload?.patches || []) {
+            if (op.path && !targetFiles.includes(op.path)) targetFiles.push(op.path);
+          }
+        }
         const prompt = buildSelfHealingPrompt(
           state.lastErrors,
           config.repo,
           config.branch,
           state.headOid,
-          nextRetry
+          nextRetry,
+          {
+            targetFiles,
+            targetBranch: config.targetBranch?.trim() || void 0
+          }
         );
         injectPromptText(prompt, false);
         updateState({
@@ -1880,6 +1974,8 @@ Fix Instructions:
     } else {
       dom.continueMixBtn.style.display = "none";
     }
+    dom.checkAllBtn.disabled = patchCount === 0 || isBusy;
+    dom.checkAllBtn.textContent = patchCount > 0 ? `\u{1F50D} Check (${patchCount})` : "\u{1F50D} Check All";
     dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
     dom.applyAllBtn.textContent = patchCount > 0 ? `\u26A1 Apply All (${patchCount})` : "\u26A1 Apply All";
     dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
@@ -1915,7 +2011,7 @@ Fix Instructions:
     }
   }
 
-  // packages/userscript-hud/src/services/workerClient.ts
+  // src/services/workerClient.ts
   function isV2ErrorPayload(data) {
     if (!data || typeof data !== "object") {
       return false;
@@ -2085,7 +2181,7 @@ Fix Instructions:
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
 
-  // packages/userscript-hud/src/services/batchFormula.ts
+  // src/services/batchFormula.ts
   function buildBatchFormulaPrompt(config, state) {
     const sourceBranch = config.branch?.trim() || "main";
     const branchLabel = config.targetBranch?.trim() || sourceBranch;
@@ -2108,7 +2204,7 @@ Fix Instructions:
     ].join("\n");
   }
 
-  // packages/userscript-hud/src/ui/hudMixAction.ts
+  // src/ui/hudMixAction.ts
   function bindMixAction({ dom, config, state, updateState }) {
     dom.mixBtn.onclick = async () => {
       try {
@@ -2221,29 +2317,7 @@ Fix Instructions:
     };
   }
 
-  // shared/repoPaths.ts
-  function normalizeRepoPath(input) {
-    return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
-  }
-  function findRepoPathIssue(input) {
-    const raw = (input || "").trim();
-    if (!raw) {
-      return 'Patch has no file path. Add a "// filepath: <repo/relative/path>" hint above the code block.';
-    }
-    const normalized = normalizeRepoPath(raw);
-    if (!normalized) {
-      return `Patch path "${raw}" does not point to a file inside the repository.`;
-    }
-    if (/^[a-zA-Z]:\//.test(normalized)) {
-      return `Patch path "${raw}" must be repo-relative (absolute drive paths are not allowed).`;
-    }
-    if (normalized.split("/").some((segment) => segment === ".." || segment === ".")) {
-      return `Patch path "${raw}" must be repo-relative and must not contain "." or ".." segments.`;
-    }
-    return null;
-  }
-
-  // packages/userscript-hud/src/services/patchPaths.ts
+  // src/services/patchPaths.ts
   function resolvePatchPaths(payload, prompt) {
     const patches = (payload.patches || []).map((patch) => ({
       ...patch,
@@ -2269,7 +2343,7 @@ Fix Instructions:
     return { payload: { ...payload, patches }, cancelled: false };
   }
 
-  // packages/userscript-hud/src/ui/hudApplyPatch.ts
+  // src/ui/hudApplyPatch.ts
   async function applyHudPatch(patch, { config, state, openPanel, updateState, onApplyPatchCustom }) {
     if (onApplyPatchCustom) {
       return onApplyPatchCustom(patch);
@@ -2397,8 +2471,134 @@ Fix Instructions:
       return false;
     }
   }
+  async function runHolisticQueuePatch(deps) {
+    deps.openPanel();
+    if (!deps.dryRun) {
+      const ownerMatch = classifyRepoOwner(deps.config);
+      if (ownerMatch === "foreign") {
+        deps.updateState({
+          status: "ERROR",
+          statusMessage: `\u274C Patch blockiert: "${ownerOfRepo(deps.config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden, aber Commits brauchen einen PAT f\xFCr diesen Owner.`
+        });
+        return false;
+      }
+    }
+    if (deps.state.harvestedPatches.length === 0) {
+      return false;
+    }
+    const partition = partitionQueueForHolisticCheck(deps.state.harvestedPatches);
+    const totalSnippets = partition.totalSnippets;
+    const targetFiles = partition.targetFiles;
+    deps.updateState({
+      status: "PATCHING",
+      statusMessage: deps.dryRun ? `\u23F3 Checking ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) (Dry-Run)...` : `\u23F3 Validating and applying ${totalSnippets} snippet(s) across ${targetFiles.length} file(s)...`
+    });
+    try {
+      if (!isPatchSnapshotReady(deps.state)) {
+        deps.updateState({
+          status: "PATCHING",
+          statusMessage: `\u{1F504} No snapshot OID \u2014 resolving current HEAD of ${deps.config.repo}@${deps.config.branch}...`
+        });
+        try {
+          const resolvedOid = await requestBranchHead(deps.config, deps.config.repo, deps.config.branch);
+          setSourceHeadOid(deps.config, deps.state, resolvedOid);
+        } catch (resolveErr) {
+          deps.updateState({
+            status: "ERROR",
+            statusMessage: `\u274C HEAD lookup failed: ${resolveErr.message || String(resolveErr)}`
+          });
+          return false;
+        }
+      }
+      let workerRes;
+      if (partition.validBatch && deps.state.headOid) {
+        const effectiveDryRun = deps.dryRun || partition.localErrors.length > 0;
+        const patchReq = buildWorkerPatchRequest(
+          deps.config,
+          deps.state,
+          partition.validBatch.payload,
+          effectiveDryRun
+        );
+        workerRes = await requestWorkerPatch(deps.config, patchReq);
+        if (workerRes.status === "GIT_CONFLICT" || workerRes.status === "ERROR") {
+          const scopeHint = workerRes.status === "GIT_CONFLICT" ? ` [validated ${deps.config.repo}@${deps.config.branch}]` : "";
+          const resetScope = resolveConflictOidReset(workerRes);
+          if (resetScope === "source") {
+            clearPatchOidState(deps.state);
+          } else if (resetScope === "target") {
+            clearTargetOidState(deps.state);
+          }
+          deps.updateState({
+            status: workerRes.status,
+            statusMessage: `\u274C ${workerRes.status}: ${workerRes.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}`,
+            lastErrors: workerRes.errors || []
+          });
+          return false;
+        }
+      }
+      const allErrors = [
+        ...partition.localErrors,
+        ...workerRes?.errors || []
+      ];
+      if (allErrors.length > 0) {
+        deps.onMarkQueueSuperseded?.(deps.state.harvestedPatches.map((p) => p.id));
+        const syntheticRes = {
+          status: "PREFLIGHT_FAILED",
+          errors: allErrors
+        };
+        const selfHealingResult = executeSelfHealingTurn(syntheticRes, deps.config, deps.state, true, targetFiles);
+        if (selfHealingResult.triggered) {
+          deps.updateState({
+            status: "PREFLIGHT_FAILED",
+            statusMessage: `\u26A0\uFE0F Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). \u{1F916} Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
+            retryCount: selfHealingResult.nextRetryCount,
+            lastErrors: allErrors
+          });
+        } else {
+          const reasonMsg = selfHealingResult.reason === "MAX_RETRIES_EXCEEDED" ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.` : "Auto-pilot disabled.";
+          deps.updateState({
+            status: "PREFLIGHT_FAILED",
+            statusMessage: `\u274C Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). ${reasonMsg} Review errors below or trigger manual retry.`,
+            retryCount: selfHealingResult.nextRetryCount,
+            lastErrors: allErrors
+          });
+        }
+        return false;
+      }
+      if (deps.dryRun || workerRes?.status === "VALIDATED") {
+        deps.updateState({
+          status: "IDLE",
+          statusMessage: `\u2705 All ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) passed preflight & syntax validation! Click "\u26A1 Apply All" to commit.`,
+          lastErrors: [],
+          retryCount: 0
+        });
+        return true;
+      }
+      if (workerRes?.status === "COMMITTED" || workerRes?.status === "NO_CHANGES_NEEDED") {
+        deps.state.harvestedPatches = [];
+        applyPatchResponseOids(deps.config, deps.state, workerRes);
+        const branchLabel = workerRes.targetBranch || deps.config.targetBranch?.trim() || deps.config.branch;
+        const prMsg = workerRes.pullRequestUrl ? ` | \u{1F517} PR: ${workerRes.pullRequestUrl}` : "";
+        const commitMsg = workerRes.status === "NO_CHANGES_NEEDED" ? "\u2139\uFE0F All snippets already up-to-date (no changes needed)." : `\u2705 Committed ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) to ${branchLabel}: ${workerRes.newHeadOid ? workerRes.newHeadOid.slice(0, 7) : "OK"}${prMsg}`;
+        deps.updateState({
+          status: workerRes.status === "NO_CHANGES_NEEDED" ? "IDLE" : "COMMITTED",
+          statusMessage: commitMsg,
+          lastErrors: [],
+          retryCount: 0
+        });
+        return true;
+      }
+      return false;
+    } catch (err) {
+      deps.updateState({
+        status: "ERROR",
+        statusMessage: `\u274C Holistic queue error: ${err.message || String(err)}`
+      });
+      return false;
+    }
+  }
 
-  // packages/userscript-hud/src/ui/shadowHud.ts
+  // src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -2493,46 +2693,55 @@ Fix Instructions:
       updateState: (partial) => updateState(partial),
       onApplyPatchCustom
     });
+    let supersededPatchIds = /* @__PURE__ */ new Set();
     dom.clearQueueBtn.onclick = () => {
       state.harvestedPatches = [];
+      supersededPatchIds.clear();
       renderState();
+    };
+    dom.checkAllBtn.onclick = async () => {
+      if (state.harvestedPatches.length === 0 || state.status === "PATCHING" || state.status === "MIXING") return;
+      await runHolisticQueuePatch({
+        config,
+        state,
+        openPanel,
+        updateState: (partial) => updateState(partial),
+        dryRun: true,
+        onMarkQueueSuperseded: (ids) => {
+          supersededPatchIds = new Set(ids);
+        }
+      });
     };
     dom.applyAllBtn.onclick = async () => {
       if (state.harvestedPatches.length === 0 || state.status === "PATCHING" || state.status === "MIXING") return;
-      if (state.harvestedPatches.length > 1) {
-        const batch = coalescePatchesIntoBatch(state.harvestedPatches);
-        if (batch) {
-          const total2 = state.harvestedPatches.length;
-          const fileCount = new Set(batch.payload.patches.map((entry) => entry.path)).size;
-          updateState({
-            status: "PATCHING",
-            statusMessage: `\u23F3 Applying atomic batch of ${total2} patches across ${fileCount} file(s) in 1 commit...`
-          });
-          const committed = await handleApplyPatch(batch);
-          if (committed) {
-            state.harvestedPatches = [];
+      if (onApplyPatchCustom) {
+        const { applied, total } = await runPatchQueue(
+          state.harvestedPatches,
+          handleApplyPatch,
+          (patch, index, totalCount) => {
             updateState({
-              status: "COMMITTED",
-              statusMessage: `\u{1F389} Atomic batch (${total2} patches across ${fileCount} files) committed in 1 commit!`
+              status: "PATCHING",
+              statusMessage: `\u23F3 [${index + 1}/${totalCount}] Applying patch: "${patch.commitMessage}"...`
             });
           }
-          return;
-        }
-      }
-      const { applied, total } = await runPatchQueue(
-        state.harvestedPatches,
-        handleApplyPatch,
-        (patch, index, totalCount) => {
+        );
+        if (applied === total) {
           updateState({
-            status: "PATCHING",
-            statusMessage: `\u23F3 [${index + 1}/${totalCount}] Applying patch: "${patch.commitMessage}"...`
+            status: "COMMITTED",
+            statusMessage: `\u{1F389} All ${applied} patches successfully applied and committed!`
           });
         }
-      );
-      if (applied < total) return;
-      updateState({
-        status: "COMMITTED",
-        statusMessage: `\u{1F389} All ${applied} patches successfully applied and committed!`
+        return;
+      }
+      await runHolisticQueuePatch({
+        config,
+        state,
+        openPanel,
+        updateState: (partial) => updateState(partial),
+        dryRun: false,
+        onMarkQueueSuperseded: (ids) => {
+          supersededPatchIds = new Set(ids);
+        }
       });
     };
     const controller = {
@@ -2544,6 +2753,10 @@ Fix Instructions:
       closePanel,
       handleApplyPatch,
       addHarvestedPatch: (patch) => {
+        if (supersededPatchIds.size > 0) {
+          state.harvestedPatches = state.harvestedPatches.filter((p) => !supersededPatchIds.has(p.id));
+          supersededPatchIds.clear();
+        }
         const next = enqueueHarvestedPatch(state.harvestedPatches, patch);
         if (next === state.harvestedPatches) return;
         state.harvestedPatches = next;
@@ -2554,7 +2767,7 @@ Fix Instructions:
     return controller;
   }
 
-  // packages/userscript-hud/src/dom/pathHints.ts
+  // src/dom/pathHints.ts
   var FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
   var LABELED_HEADER_PATH = /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
   var PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
@@ -2669,16 +2882,20 @@ Fix Instructions:
     fillMissingPatchPaths(patch, extractPathFromCode(codeText, element));
   }
 
-  // packages/userscript-hud/src/dom/harvester.ts
+  // src/dom/harvester.ts
   function isSearchReplace(text) {
     return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
   }
   function parseV2PatchPayloadFromCode(codeText) {
     if (!codeText || codeText.trim().length === 0) return null;
     let textToParse = codeText.trim();
-    const fenceMatch = textToParse.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    const fenceMatch = textToParse.match(/^```(?:json|md|markdown)?\s*([\s\S]*?)\s*```$/i);
     if (fenceMatch) {
       textToParse = fenceMatch[1].trim();
+    }
+    const innerJsonFence = textToParse.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
+    if (innerJsonFence) {
+      textToParse = innerJsonFence[1].trim();
     }
     if (!textToParse.startsWith("{") || !textToParse.endsWith("}")) {
       const startIdx = textToParse.indexOf("{");
@@ -2703,41 +2920,70 @@ Fix Instructions:
     }
     return null;
   }
+  function extractSectionPath(sectionText) {
+    if (!sectionText || !sectionText.trim()) return "";
+    const fromCode = extractPathFromCode(sectionText);
+    if (fromCode) return normalizeRepoPath(fromCode);
+    const headerMatch = sectionText.match(/(?:^|\r?\n)\s*#{1,6}\s*([^\r\n]+)/);
+    if (headerMatch && headerMatch[1]) {
+      const cleaned = headerMatch[1].replace(/[`*]/g, "").trim();
+      const labeled = cleaned.match(/(?:filepath|file|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i);
+      if (labeled && labeled[1]) return normalizeRepoPath(labeled[1]);
+      const candidate = cleaned.replace(/[:;,]+$/, "").trim();
+      if (/^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/.test(candidate)) {
+        return normalizeRepoPath(candidate);
+      }
+    }
+    return "";
+  }
   function convertLegacyBlocksToV2Payload(codeText, defaultPath) {
     if (!codeText || codeText.trim().length === 0) return null;
     const detectedPath = normalizeRepoPath(extractPathFromCode(codeText) || defaultPath || "");
     const hasDiffBlocks = isSearchReplace(codeText);
     const describePath = detectedPath || "no path detected";
     if (hasDiffBlocks) {
-      const blocks = [];
+      const fileOpsMap = /* @__PURE__ */ new Map();
+      const fileOrder = [];
       const regex = /<{7}[^\r\n]*\r?\n([\s\S]*?)\r?\n={7}\r?\n([\s\S]*?)\r?\n>{7}[^\r\n]*/g;
       let match;
+      let lastIndex = 0;
+      let currentPath = detectedPath;
       while ((match = regex.exec(codeText)) !== null) {
-        blocks.push({
+        const preceding = codeText.substring(lastIndex, match.index);
+        const sectionPath = extractSectionPath(preceding);
+        if (sectionPath) {
+          currentPath = sectionPath;
+        }
+        const activePath = currentPath;
+        if (!fileOpsMap.has(activePath)) {
+          fileOpsMap.set(activePath, []);
+          fileOrder.push(activePath);
+        }
+        fileOpsMap.get(activePath).push({
           search: match[1],
           replace: match[2]
         });
+        lastIndex = regex.lastIndex;
       }
-      if (blocks.length > 0) {
-        const fileOp2 = {
-          path: detectedPath,
+      if (fileOrder.length > 0) {
+        const patches = fileOrder.map((path) => ({
+          path,
           action: "modify",
-          blocks
-        };
+          blocks: fileOpsMap.get(path)
+        }));
+        const commitMessage = patches.length === 1 ? `refactor(${patches[0].path || "no path detected"}): apply search/replace patch` : `refactor(multi-file): apply search/replace across ${patches.length} files`;
         const payload2 = {
-          commitMessage: `refactor(${describePath}): apply search/replace patch`,
-          patches: [fileOp2]
+          commitMessage,
+          patches
         };
         const legacyPayload2 = {
           repo: "",
           message: payload2.commitMessage,
-          files: [
-            {
-              path: detectedPath,
-              diff: codeText,
-              patches: blocks
-            }
-          ]
+          files: patches.map((p) => ({
+            path: p.path,
+            diff: codeText,
+            patches: p.blocks || []
+          }))
         };
         return { payload: payload2, legacyPayload: legacyPayload2 };
       }
@@ -2956,7 +3202,7 @@ Fix Instructions:
     return observer;
   }
 
-  // packages/userscript-hud/src/index.ts
+  // src/index.ts
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {

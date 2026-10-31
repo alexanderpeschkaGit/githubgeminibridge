@@ -12,7 +12,7 @@ import {
   loadPatchOidState,
 } from '../services/patchOidStore';
 import {
-  coalescePatchesIntoBatch,
+
   enqueueHarvestedPatch,
   runPatchQueue,
 } from '../services/patchQueue';
@@ -24,7 +24,7 @@ import { bindRepoHistoryDropdown } from './hudRepoHistoryDropdown';
 import { bindAccountSwitch, refreshAccountHint } from './hudAccountSwitch';
 import { renderHudState } from './hudRender';
 import { bindMixAction } from './hudMixAction';
-import { applyHudPatch } from './hudApplyPatch';
+import { applyHudPatch, runHolisticQueuePatch } from './hudApplyPatch';
 
 export {
   HUD_STYLES,
@@ -158,55 +158,60 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       onApplyPatchCustom,
     });
 
+  let supersededPatchIds = new Set<string>();
+
   dom.clearQueueBtn.onclick = () => {
     state.harvestedPatches = [];
+    supersededPatchIds.clear();
     renderState();
+  };
+
+  dom.checkAllBtn.onclick = async () => {
+    if (state.harvestedPatches.length === 0 || state.status === 'PATCHING' || state.status === 'MIXING') return;
+    await runHolisticQueuePatch({
+      config,
+      state,
+      openPanel,
+      updateState: (partial) => updateState(partial),
+      dryRun: true,
+      onMarkQueueSuperseded: (ids) => {
+        supersededPatchIds = new Set(ids);
+      },
+    });
   };
 
   dom.applyAllBtn.onclick = async () => {
     if (state.harvestedPatches.length === 0 || state.status === 'PATCHING' || state.status === 'MIXING') return;
 
-    // One atomic commit for the whole queue: all patches are linted together and
-    // a preflight failure leaves the individual queue entries untouched.
-    if (state.harvestedPatches.length > 1) {
-      const batch = coalescePatchesIntoBatch(state.harvestedPatches);
-      if (batch) {
-        const total = state.harvestedPatches.length;
-        const fileCount = new Set(batch.payload.patches.map((entry) => entry.path)).size;
-        updateState({
-          status: 'PATCHING',
-          statusMessage: `⏳ Applying atomic batch of ${total} patches across ${fileCount} file(s) in 1 commit...`,
-        });
-
-        const committed = await handleApplyPatch(batch);
-        if (committed) {
-          state.harvestedPatches = [];
+    if (onApplyPatchCustom) {
+      const { applied, total } = await runPatchQueue(
+        state.harvestedPatches,
+        handleApplyPatch,
+        (patch, index, totalCount) => {
           updateState({
-            status: 'COMMITTED',
-            statusMessage: `🎉 Atomic batch (${total} patches across ${fileCount} files) committed in 1 commit!`,
+            status: 'PATCHING',
+            statusMessage: `⏳ [${index + 1}/${totalCount}] Applying patch: "${patch.commitMessage}"...`,
           });
         }
-        return;
-      }
-    }
-
-    const { applied, total } = await runPatchQueue(
-      state.harvestedPatches,
-      handleApplyPatch,
-      (patch, index, totalCount) => {
+      );
+      if (applied === total) {
         updateState({
-          status: 'PATCHING',
-          statusMessage: `⏳ [${index + 1}/${totalCount}] Applying patch: "${patch.commitMessage}"...`,
+          status: 'COMMITTED',
+          statusMessage: `🎉 All ${applied} patches successfully applied and committed!`,
         });
       }
-    );
+      return;
+    }
 
-    // Fail-fast: the failing patch already published its own error status.
-    if (applied < total) return;
-
-    updateState({
-      status: 'COMMITTED',
-      statusMessage: `🎉 All ${applied} patches successfully applied and committed!`,
+    await runHolisticQueuePatch({
+      config,
+      state,
+      openPanel,
+      updateState: (partial) => updateState(partial),
+      dryRun: false,
+      onMarkQueueSuperseded: (ids) => {
+        supersededPatchIds = new Set(ids);
+      },
     });
   };
 
@@ -219,6 +224,10 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     closePanel,
     handleApplyPatch,
     addHarvestedPatch: (patch: HarvestedPatch) => {
+      if (supersededPatchIds.size > 0) {
+        state.harvestedPatches = state.harvestedPatches.filter((p) => !supersededPatchIds.has(p.id));
+        supersededPatchIds.clear();
+      }
       const next = enqueueHarvestedPatch(state.harvestedPatches, patch);
       if (next === state.harvestedPatches) return;
       state.harvestedPatches = next;
