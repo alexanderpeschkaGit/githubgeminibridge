@@ -1,6 +1,6 @@
 {
   "name": "gemini-edge-hud",
-  "version": "2.0.25",
+  "version": "2.0.26",
   "private": true,
   "type": "module",
   "description": "Tampermonkey Shadow-DOM HUD for Google Gemini & AI Studio (Stage 3)",
@@ -9,6 +9,6 @@
     "release:patch": "node scripts/build-userscript.mjs --bump=patch",
     "release:minor": "node scripts/build-userscript.mjs --bump=minor",
     "release:major": "node scripts/build-userscript.mjs --bump=major",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node ../edge-worker/node_modules/typescript/bin/tsc --noEmit"
   }
 }
