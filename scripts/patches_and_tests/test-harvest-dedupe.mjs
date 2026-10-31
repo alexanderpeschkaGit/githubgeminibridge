@@ -118,6 +118,7 @@ class FakeElement {
     this.className = '';
     this.onclick = null;
     this._text = '';
+    this.shadowRoot = null;
   }
 
   get textContent() {
@@ -191,6 +192,11 @@ class FakeElement {
 
   querySelector(selector) {
     return this.querySelectorAll(selector)[0] || null;
+  }
+
+  attachShadow() {
+    this.shadowRoot = new FakeElement('shadow-root', this.ownerDocument);
+    return this.shadowRoot;
   }
 
   addEventListener() {}
