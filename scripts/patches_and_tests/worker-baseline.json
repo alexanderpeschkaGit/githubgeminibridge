@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-31T01:42:31.790Z",
+  "timestamp": "2026-10-31T02:07:30.681Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -42,7 +42,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "0.80.0",
+      "version": "2.0.9",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },
@@ -111,7 +111,7 @@
       "warningZoneFilesCount": 9,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 123650,
+      "bundleSize": 124476,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
@@ -304,7 +304,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/updateChecker.ts",
-          "lines": 151
+          "lines": 161
         },
         {
           "file": "packages/userscript-hud/src/services/workerClient.ts",

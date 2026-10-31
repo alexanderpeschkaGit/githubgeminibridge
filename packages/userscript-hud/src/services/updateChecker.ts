@@ -115,6 +115,14 @@ export async function fetchLatestScriptVersion(): Promise<string> {
 }
 
 /**
+ * Detects legacy v2.x running versions (used during pre-beta development)
+ * that need migration to the canonical v0.80.x beta release.
+ */
+export function isLegacyV2Running(running: string, latest: string): boolean {
+  return /^2\./.test(running.trim()) && /^0\./.test(latest.trim());
+}
+
+/**
  * An unknown running version (`''`, e.g. no `GM_info`) must never report an
  * update — comparing against an empty string would always look "newer".
  */
@@ -124,10 +132,12 @@ export function evaluateUpdateState(
 ): ScriptUpdateInfo {
   const running = (currentVersion || '').trim();
   const latest = (latestVersion || '').trim();
+  const hasUpdate =
+    Boolean(running) && (isLegacyV2Running(running, latest) || compareVersions(latest, running) > 0);
   return {
     currentVersion: running,
     latestVersion: latest,
-    hasUpdate: Boolean(running) && compareVersions(latest, running) > 0,
+    hasUpdate,
   };
 }
 

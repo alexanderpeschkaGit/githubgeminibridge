@@ -77,6 +77,31 @@ function bumpSemver(version, kind) {
 }
 
 /**
+ * Synchronizes edge-worker package.json and index.ts so versions never drift.
+ */
+function syncEdgeWorkerVersion(version) {
+  const edgePkgPath = path.join(rootDir, 'packages/edge-worker/package.json');
+  if (fs.existsSync(edgePkgPath)) {
+    const edgePkg = fs.readFileSync(edgePkgPath, 'utf8');
+    const updated = edgePkg.replace(/("version"\s*:\s*")([^"]+)(")/, `$1${version}$3`);
+    if (updated !== edgePkg) {
+      fs.writeFileSync(edgePkgPath, updated, 'utf8');
+      console.log(`[Build Userscript] Synced packages/edge-worker/package.json -> v${version}`);
+    }
+  }
+
+  const edgeIndexPath = path.join(rootDir, 'packages/edge-worker/src/index.ts');
+  if (fs.existsSync(edgeIndexPath)) {
+    const edgeIndex = fs.readFileSync(edgeIndexPath, 'utf8');
+    const updated = edgeIndex.replace(/(version:\s*')([^']+)(',)/, `$1${version}$3`);
+    if (updated !== edgeIndex) {
+      fs.writeFileSync(edgeIndexPath, updated, 'utf8');
+      console.log(`[Build Userscript] Synced packages/edge-worker/src/index.ts -> v${version}`);
+    }
+  }
+}
+
+/**
  * package.json is the single source of truth for the userscript version.
  * Tampermonkey only re-downloads when @version increases, so releases pass
  * --bump=patch|minor|major (or --version=x.y.z); a plain build never bumps.
@@ -100,6 +125,10 @@ function resolveVersion(pkgPath) {
     fs.writeFileSync(pkgPath, raw.replace(/("version"\s*:\s*")([^"]+)(")/, `$1${next}$3`), 'utf8');
     console.log(`[Build Userscript] Version ${current} -> ${next}`);
   }
+
+  // Always keep edge-worker in lockstep with userscript-hud
+  syncEdgeWorkerVersion(next);
+
   return next;
 }
 

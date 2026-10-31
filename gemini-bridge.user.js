@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      2.0.26
+// @version      0.80.1
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -41,7 +41,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
-  // src/services/storage.ts
+  // packages/userscript-hud/src/services/storage.ts
   var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
@@ -250,7 +250,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // src/services/runtimeInfo.ts
+  // packages/userscript-hud/src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
   function getRunningScriptVersion() {
     if (typeof GM_info === "undefined" || !GM_info || !GM_info.script) {
@@ -284,7 +284,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     document.body.appendChild(box);
   }
 
-  // src/services/patchOidState.ts
+  // packages/userscript-hud/src/services/patchOidState.ts
   var OID_REGEX = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
@@ -345,7 +345,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // src/services/patchOidStore.ts
+  // packages/userscript-hud/src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
       headOidScope: getStoredValue("head_oid_scope", ""),
@@ -385,7 +385,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
   }
 
-  // src/services/patchIdentity.ts
+  // packages/userscript-hud/src/services/patchIdentity.ts
   function canonicalize(value) {
     if (Array.isArray(value)) {
       return value.map((entry) => canonicalize(entry));
@@ -416,7 +416,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
   }
 
-  // src/services/patchQueue.ts
+  // packages/userscript-hud/src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
   function isDuplicatePatch(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
@@ -491,7 +491,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return { applied, total };
   }
 
-  // src/ui/hudStylesAndDom.ts
+  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -680,7 +680,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return el;
   }
 
-  // src/ui/hudDomTree.ts
+  // packages/userscript-hud/src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -932,7 +932,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // src/services/updateChecker.ts
+  // packages/userscript-hud/src/services/updateChecker.ts
   var SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js";
   var LAST_CHECK_KEY = "script_update_last_check";
   var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
@@ -1011,13 +1011,17 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     if (!version) throw new Error("Published userscript has no valid @version metadata block");
     return version;
   }
+  function isLegacyV2Running(running, latest) {
+    return /^2\./.test(running.trim()) && /^0\./.test(latest.trim());
+  }
   function evaluateUpdateState(currentVersion, latestVersion) {
     const running = (currentVersion || "").trim();
     const latest = (latestVersion || "").trim();
+    const hasUpdate = Boolean(running) && (isLegacyV2Running(running, latest) || compareVersions(latest, running) > 0);
     return {
       currentVersion: running,
       latestVersion: latest,
-      hasUpdate: Boolean(running) && compareVersions(latest, running) > 0
+      hasUpdate
     };
   }
   async function checkForScriptUpdate(options = {}) {
@@ -1027,7 +1031,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return evaluateUpdateState(getRunningScriptVersion(), latestVersion);
   }
 
-  // src/ui/updateBanner.ts
+  // packages/userscript-hud/src/ui/updateBanner.ts
   var TRANSIENT_MESSAGE_MS = 6e3;
   function initHudUpdateBanner(dom, deps = {}) {
     const check = deps.check ?? checkForScriptUpdate;
@@ -1122,7 +1126,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     void runCheck(false);
   }
 
-  // src/services/repoHistory.ts
+  // packages/userscript-hud/src/services/repoHistory.ts
   var HISTORY_KEY = "repo_history_v1";
   var MAX_ENTRIES = 4;
   function historyKey() {
@@ -1192,7 +1196,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     });
   }
 
-  // src/ui/hudConfigBindings.ts
+  // packages/userscript-hud/src/ui/hudConfigBindings.ts
   var refreshRepoHistorySelect = null;
   function setRepoHistorySelectRefresher(fn) {
     refreshRepoHistorySelect = fn;
@@ -1321,7 +1325,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // src/ui/hudRepoHistoryDropdown.ts
+  // packages/userscript-hud/src/ui/hudRepoHistoryDropdown.ts
   var activeDocumentClickHandler = null;
   var activeDocumentKeydownHandler = null;
   function formatRepoHistoryLabel(entry) {
@@ -1455,7 +1459,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return refresher;
   }
 
-  // src/services/accountProfiles.ts
+  // packages/userscript-hud/src/services/accountProfiles.ts
   var ACCOUNT_PROFILES = [
     { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
     { id: "account2", label: "Account 2", workerName: "gemini-git-bridge-account2" }
@@ -1488,7 +1492,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return "foreign";
   }
 
-  // src/ui/hudAccountSwitch.ts
+  // packages/userscript-hud/src/ui/hudAccountSwitch.ts
   var activeDeps = null;
   function profileInfo(id) {
     return ACCOUNT_PROFILES.find((p) => p.id === id) ?? ACCOUNT_PROFILES[0];
@@ -1592,7 +1596,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // src/dom/injector.ts
+  // packages/userscript-hud/src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
     const geminiSelectors = [
@@ -1702,7 +1706,7 @@ ${promptText}` : promptText).replace(/\u200B/g, "");
     return true;
   }
 
-  // src/services/selfHealing.ts
+  // packages/userscript-hud/src/services/selfHealing.ts
   var MAX_SELF_HEALING_RETRIES = 3;
   function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt) {
     const formattedErrors = errors.map((err, idx) => {
@@ -1809,7 +1813,7 @@ Fix Instructions:
     };
   }
 
-  // src/ui/hudRender.ts
+  // packages/userscript-hud/src/ui/hudRender.ts
   function renderHudState({ dom, state, config, updateState, onApplyPatch }) {
     dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
     dom.triggerBadge.textContent = state.status;
@@ -1911,7 +1915,7 @@ Fix Instructions:
     }
   }
 
-  // src/services/workerClient.ts
+  // packages/userscript-hud/src/services/workerClient.ts
   function isV2ErrorPayload(data) {
     if (!data || typeof data !== "object") {
       return false;
@@ -2081,7 +2085,7 @@ Fix Instructions:
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
 
-  // src/services/batchFormula.ts
+  // packages/userscript-hud/src/services/batchFormula.ts
   function buildBatchFormulaPrompt(config, state) {
     const sourceBranch = config.branch?.trim() || "main";
     const branchLabel = config.targetBranch?.trim() || sourceBranch;
@@ -2104,7 +2108,7 @@ Fix Instructions:
     ].join("\n");
   }
 
-  // src/ui/hudMixAction.ts
+  // packages/userscript-hud/src/ui/hudMixAction.ts
   function bindMixAction({ dom, config, state, updateState }) {
     dom.mixBtn.onclick = async () => {
       try {
@@ -2217,7 +2221,7 @@ Fix Instructions:
     };
   }
 
-  // ../../shared/repoPaths.ts
+  // shared/repoPaths.ts
   function normalizeRepoPath(input) {
     return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
   }
@@ -2239,7 +2243,7 @@ Fix Instructions:
     return null;
   }
 
-  // src/services/patchPaths.ts
+  // packages/userscript-hud/src/services/patchPaths.ts
   function resolvePatchPaths(payload, prompt) {
     const patches = (payload.patches || []).map((patch) => ({
       ...patch,
@@ -2265,7 +2269,7 @@ Fix Instructions:
     return { payload: { ...payload, patches }, cancelled: false };
   }
 
-  // src/ui/hudApplyPatch.ts
+  // packages/userscript-hud/src/ui/hudApplyPatch.ts
   async function applyHudPatch(patch, { config, state, openPanel, updateState, onApplyPatchCustom }) {
     if (onApplyPatchCustom) {
       return onApplyPatchCustom(patch);
@@ -2394,7 +2398,7 @@ Fix Instructions:
     }
   }
 
-  // src/ui/shadowHud.ts
+  // packages/userscript-hud/src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -2550,7 +2554,7 @@ Fix Instructions:
     return controller;
   }
 
-  // src/dom/pathHints.ts
+  // packages/userscript-hud/src/dom/pathHints.ts
   var FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
   var LABELED_HEADER_PATH = /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
   var PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
@@ -2665,7 +2669,7 @@ Fix Instructions:
     fillMissingPatchPaths(patch, extractPathFromCode(codeText, element));
   }
 
-  // src/dom/harvester.ts
+  // packages/userscript-hud/src/dom/harvester.ts
   function isSearchReplace(text) {
     return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
   }
@@ -2952,7 +2956,7 @@ Fix Instructions:
     return observer;
   }
 
-  // src/index.ts
+  // packages/userscript-hud/src/index.ts
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {

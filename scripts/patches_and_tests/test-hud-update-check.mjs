@@ -4,7 +4,7 @@
  * Tampermonkey's own `@updateURL` check runs on a ~24h schedule that the script
  * cannot influence, so a released version can stay invisible for a whole day.
  * The HUD therefore parses the published `@version` itself; a wrong comparison
- * (2.0.10 vs 2.0.9) or a drifting update URL would silently defeat that.
+ * (e.g. 0.80.1 vs 0.80.0) or a drifting update URL would silently defeat that.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -33,41 +33,53 @@ const { parseUserscriptVersion, compareVersions, buildUpdateUrl, evaluateUpdateS
 // ---------------------------------------------------------------------------
 const sample = `// ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
-// @version      2.0.10
+// @version      0.80.1
 // @updateURL    https://example.test/gemini-bridge.user.js
 // ==/UserScript==
 console.log('body');`;
 
-assert.equal(parseUserscriptVersion(sample), '2.0.10');
-assert.equal(parseUserscriptVersion(sample.replace(/\r?\n/g, '\r\n')), '2.0.10');
+assert.equal(parseUserscriptVersion(sample), '0.80.1');
+assert.equal(parseUserscriptVersion(sample.replace(/\r?\n/g, '\r\n')), '0.80.1');
 assert.equal(parseUserscriptVersion('// ==UserScript==\n// @name x\n// ==/UserScript=='), '');
 assert.equal(parseUserscriptVersion('plain text mentioning @version 9.9.9'), '');
 assert.equal(parseUserscriptVersion(''), '');
 
 // ---------------------------------------------------------------------------
-// 2. Numeric ordering (string comparison would order 2.0.9 > 2.0.10)
+// 2. Numeric ordering (string comparison would order 0.80.0 > 0.80.1 incorrectly)
 // ---------------------------------------------------------------------------
-assert.equal(compareVersions('2.0.10', '2.0.9'), 1);
-assert.equal(compareVersions('2.0.9', '2.0.10'), -1);
-assert.equal(compareVersions('2.0.10', '2.0.10'), 0);
-assert.equal(compareVersions('2.1', '2.0.99'), 1);
-assert.equal(compareVersions('2.0', '2.0.0'), 0);
-assert.equal(compareVersions('  2.0.10 ', '2.0.10'), 0);
+assert.equal(compareVersions('0.80.1', '0.80.0'), 1);
+assert.equal(compareVersions('0.80.0', '0.80.1'), -1);
+assert.equal(compareVersions('0.80.1', '0.80.1'), 0);
+assert.equal(compareVersions('0.81.0', '0.80.99'), 1);
+assert.equal(compareVersions('0.80', '0.80.0'), 0);
+assert.equal(compareVersions('  0.80.1 ', '0.80.1'), 0);
 
 // ---------------------------------------------------------------------------
 // 2b. An unknown running version must never fake an update
 // ---------------------------------------------------------------------------
-assert.deepEqual(evaluateUpdateState('2.0.13', '2.0.14'), {
-  currentVersion: '2.0.13',
-  latestVersion: '2.0.14',
+assert.deepEqual(evaluateUpdateState('0.80.0', '0.80.1'), {
+  currentVersion: '0.80.0',
+  latestVersion: '0.80.1',
   hasUpdate: true,
 });
-assert.equal(evaluateUpdateState('2.0.14', '2.0.14').hasUpdate, false);
-assert.equal(evaluateUpdateState('2.0.14', '2.0.13').hasUpdate, false);
-assert.equal(evaluateUpdateState('', '2.0.14').hasUpdate, false, 'unknown version is not an update');
-assert.deepEqual(evaluateUpdateState(' 2.0.13 ', ' 2.0.14 '), {
-  currentVersion: '2.0.13',
-  latestVersion: '2.0.14',
+assert.equal(evaluateUpdateState('0.80.1', '0.80.1').hasUpdate, false);
+assert.equal(evaluateUpdateState('0.80.2', '0.80.1').hasUpdate, false);
+assert.equal(evaluateUpdateState('', '0.80.1').hasUpdate, false, 'unknown version is not an update');
+assert.deepEqual(evaluateUpdateState(' 0.80.0 ', ' 0.80.1 '), {
+  currentVersion: '0.80.0',
+  latestVersion: '0.80.1',
+  hasUpdate: true,
+});
+
+// Legacy v2.x to v0.80.x beta transition must trigger an update
+assert.deepEqual(evaluateUpdateState('2.0.26', '0.80.1'), {
+  currentVersion: '2.0.26',
+  latestVersion: '0.80.1',
+  hasUpdate: true,
+});
+assert.deepEqual(evaluateUpdateState('2.0.0', '0.80.1'), {
+  currentVersion: '2.0.0',
+  latestVersion: '0.80.1',
   hasUpdate: true,
 });
 
@@ -81,7 +93,7 @@ const pkg = JSON.parse(
 const bannerUpdateUrl = (rootBundle.match(/^\/\/ @updateURL\s+(\S+)$/m) || [])[1];
 
 assert.equal(bannerUpdateUrl, SCRIPT_SOURCE_URL);
-assert.equal(buildUpdateUrl('2.0.10'), `${SCRIPT_SOURCE_URL}?v=2.0.10`);
+assert.equal(buildUpdateUrl('0.80.1'), `${SCRIPT_SOURCE_URL}?v=0.80.1`);
 assert.equal(buildUpdateUrl(''), SCRIPT_SOURCE_URL);
 
 // ---------------------------------------------------------------------------
@@ -90,6 +102,6 @@ assert.equal(buildUpdateUrl(''), SCRIPT_SOURCE_URL);
 assert.equal(parseUserscriptVersion(rootBundle), pkg.version);
 assert.match(rootBundle, /^\/\/ @downloadURL\s+https:\/\/raw\.githubusercontent\.com\//m);
 assert.match(rootBundle, /^\/\/ @connect\s+raw\.githubusercontent\.com$/m);
-assert.ok(compareVersions(pkg.version, '2.0.9') > 0, 'release version must advance');
+assert.ok(compareVersions(pkg.version, '0.80.0') > 0, 'release version must advance beyond 0.80.0');
 
 console.log('✅ hud-update-check: metadata parsing, semver ordering and update URL are consistent.');
