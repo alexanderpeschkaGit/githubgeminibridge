@@ -1,156 +1,87 @@
-import type {
-  GeminiPatchPayload,
-  FilePatchOperation,
-  PatchBlock,
-  CommitRequest,
-  HarvestedPatch,
-} from '../types';
+import type { HarvestedPatch } from '../types';
 import { createStablePatchId } from '../services/patchIdentity';
-import { normalizeRepoPath } from '../../../../shared/repoPaths';
-
 import {
   canInheritPathFromHeading,
   extractPathFromCode,
   fillMissingPatchPaths,
   refreshPatchPathFromDom,
 } from './pathHints';
+import {
+  isSearchReplace,
+  parseV2PatchPayloadFromCode,
+  convertLegacyBlocksToV2Payload,
+} from './patchParser';
 
 export { extractPathFromCode } from './pathHints';
+export {
+  isSearchReplace,
+  parseV2PatchPayloadFromCode,
+  convertLegacyBlocksToV2Payload,
+} from './patchParser';
 
-export function isSearchReplace(text: string): boolean {
-  return text.includes('<<<<<<<') && text.includes('=======') && text.includes('>>>>>>>');
+function hasInlineBtn(root: Element | DocumentFragment | null | undefined): boolean {
+  if (!root || typeof root.querySelector !== 'function') return false;
+  return Boolean(root.querySelector('.ggb-inline-btn'));
 }
 
-/**
- * Parses a V2 GeminiPatchPayload from code text (e.g. from ```json code blocks).
- */
-export function parseV2PatchPayloadFromCode(codeText: string): GeminiPatchPayload | null {
-  if (!codeText || codeText.trim().length === 0) return null;
-
-  let textToParse = codeText.trim();
-
-  // Strip markdown ```json code fences if present
-  const fenceMatch = textToParse.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  if (fenceMatch) {
-    textToParse = fenceMatch[1].trim();
-  }
-
-  // Quick check: does it look like JSON?
-  if (!textToParse.startsWith('{') || !textToParse.endsWith('}')) {
-    // Try to find the outermost JSON object
-    const startIdx = textToParse.indexOf('{');
-    const endIdx = textToParse.lastIndexOf('}');
-    if (startIdx !== -1 && endIdx > startIdx) {
-      textToParse = textToParse.substring(startIdx, endIdx + 1);
-    } else {
-      return null;
+function resolveCodeBlockScope(pre: HTMLElement): HTMLElement {
+  const closestBlock = pre.closest('code-block') as HTMLElement | null;
+  if (closestBlock) return closestBlock;
+  const parent = pre.parentElement;
+  if (parent && typeof parent.querySelectorAll === 'function') {
+    const codeBlocksInParent = parent.querySelectorAll('pre, code-block');
+    if (codeBlocksInParent.length <= 1) {
+      return parent;
     }
   }
+  return pre;
+}
 
-  try {
-    const obj = JSON.parse(textToParse);
-    if (
-      obj &&
-      typeof obj === 'object' &&
-      typeof obj.commitMessage === 'string' &&
-      Array.isArray(obj.patches) &&
-      obj.patches.length > 0
-    ) {
-      // Validate patches structure
-      const validPatches = obj.patches.every(
-        (p: any) =>
-          p &&
-          typeof p.path === 'string' &&
-          (p.action === 'modify' || p.action === 'create' || p.action === 'delete')
-      );
-      if (validPatches) {
-        return obj as GeminiPatchPayload;
+function findCopyButton(
+  roots: Array<Element | DocumentFragment | null | undefined>
+): HTMLElement | null {
+  for (const root of roots) {
+    if (!root || typeof root.querySelector !== 'function') continue;
+    const bySelector = root.querySelector<HTMLElement>(
+      'button[aria-label*="Copy"], button[aria-label*="copy"], button[aria-label*="Kopieren"], button[aria-label*="kopieren"], button[data-test-id*="copy"], button.copy-button, copy-button'
+    );
+    if (bySelector && !(bySelector.className || '').includes('ggb-inline-btn')) {
+      return bySelector;
+    }
+    const allButtons = Array.from(root.querySelectorAll<HTMLButtonElement>('button'));
+    for (const btn of allButtons) {
+      const cls = btn.className || '';
+      if (cls.includes('ggb-inline-btn') || cls.includes('ggb-canvas-btn')) {
+        continue;
+      }
+      const label = (btn.getAttribute('aria-label') || btn.textContent || '').toLowerCase();
+      if (label.includes('copy') || label.includes('kopier')) {
+        return btn;
       }
     }
-  } catch {
-    // Not valid JSON
   }
-
   return null;
 }
 
-/**
- * Parses search/replace blocks or raw file content into both V2 GeminiPatchPayload and V1 CommitRequest.
- */
-export function convertLegacyBlocksToV2Payload(
-  codeText: string,
-  defaultPath?: string
-): { payload: GeminiPatchPayload; legacyPayload: CommitRequest } | null {
-  if (!codeText || codeText.trim().length === 0) return null;
-
-  const detectedPath = normalizeRepoPath(extractPathFromCode(codeText) || defaultPath || '');
-  const hasDiffBlocks = isSearchReplace(codeText);
-  const describePath = detectedPath || 'no path detected';
-
-  if (hasDiffBlocks) {
-    const blocks: PatchBlock[] = [];
-    const regex = /<{7}[^\r\n]*\r?\n([\s\S]*?)\r?\n={7}\r?\n([\s\S]*?)\r?\n>{7}[^\r\n]*/g;
-    let match: RegExpExecArray | null;
-
-    while ((match = regex.exec(codeText)) !== null) {
-      blocks.push({
-        search: match[1],
-        replace: match[2],
-      });
-    }
-
-    if (blocks.length > 0) {
-      const fileOp: FilePatchOperation = {
-        path: detectedPath,
-        action: 'modify',
-        blocks,
-      };
-
-      const payload: GeminiPatchPayload = {
-        commitMessage: `refactor(${describePath}): apply search/replace patch`,
-        patches: [fileOp],
-      };
-
-      const legacyPayload: CommitRequest = {
-        repo: '',
-        message: payload.commitMessage,
-        files: [
-          {
-            path: detectedPath,
-            diff: codeText,
-            patches: blocks,
-          },
-        ],
-      };
-
-      return { payload, legacyPayload };
+function findCodeHeader(
+  roots: Array<Element | DocumentFragment | null | undefined>,
+  pre: HTMLElement,
+  codeEl: HTMLElement
+): HTMLElement | null {
+  for (const root of roots) {
+    if (!root || typeof root.querySelectorAll !== 'function') continue;
+    const candidates = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        '.code-block-decoration, .code-header, [class*="header"], header'
+      )
+    );
+    for (const el of candidates) {
+      if (el === pre || el === codeEl || el === codeEl.parentElement) continue;
+      if (typeof el.contains === 'function' && el.contains(codeEl)) continue;
+      return el;
     }
   }
-
-  // Not search/replace: Treat as full file update
-  const fileOp: FilePatchOperation = {
-    path: detectedPath,
-    action: 'create',
-    fullContent: codeText,
-  };
-
-  const payload: GeminiPatchPayload = {
-    commitMessage: `feat(${describePath}): update file via Gemini Git Bridge`,
-    patches: [fileOp],
-  };
-
-  const legacyPayload: CommitRequest = {
-    repo: '',
-    message: payload.commitMessage,
-    files: [
-      {
-        path: detectedPath,
-        content: codeText,
-      },
-    ],
-  };
-
-  return { payload, legacyPayload };
+  return null;
 }
 
 /**
@@ -186,17 +117,26 @@ export function startDomHarvester(
     if (processedSet.has(pre) || pre.getAttribute('data-ggh-processed') === 'true') {
       return;
     }
-    processedSet.add(pre);
-    pre.setAttribute('data-ggh-processed', 'true');
-
-    const codeEl = pre.querySelector('code') || pre;
-    const codeText = (codeEl.textContent || '').trim();
-    if (codeText.length < 15) return;
 
     // Button/header lookups stay inside this code block so a sibling header is never claimed.
-    const scope =
-      (pre.closest('code-block') as HTMLElement | null) || pre.parentElement || pre;
-    if (scope.querySelector('.ggb-inline-btn')) return;
+    const scope = resolveCodeBlockScope(pre);
+    if (
+      hasInlineBtn(scope) ||
+      hasInlineBtn(pre) ||
+      hasInlineBtn(pre.shadowRoot) ||
+      hasInlineBtn(scope.shadowRoot)
+    ) {
+      processedSet.add(pre);
+      pre.setAttribute('data-ggh-processed', 'true');
+      return;
+    }
+
+    const codeEl =
+      (pre.shadowRoot || pre).querySelector('code') ||
+      pre.querySelector('code') ||
+      pre;
+    const codeText = (codeEl.textContent || '').trim();
+    if (codeText.length < 15) return;
 
     let harvested: HarvestedPatch | null = null;
 
@@ -230,6 +170,17 @@ export function startDomHarvester(
     }
 
     if (!harvested) return;
+
+    // Only mark as processed AFTER a successful harvest.
+    // If the JSON is incomplete or streaming, leave the element unflagged so subsequent observer ticks re-try automatically as tokens arrive.
+    processedSet.add(pre);
+    pre.setAttribute('data-ggh-processed', 'true');
+    const innerPre = (pre.shadowRoot || pre).querySelector('pre');
+    if (innerPre) {
+      processedSet.add(innerPre);
+      innerPre.setAttribute('data-ggh-processed', 'true');
+    }
+
     const currentPatch = harvested;
 
     // Create Trusted-Types-safe inline action button
@@ -266,14 +217,35 @@ export function startDomHarvester(
       onInlineApply(currentPatch);
     };
 
-    const codeHeader = Array.from(
-      scope.querySelectorAll('.code-block-decoration, .code-header, [class*="header"]')
-    ).find((el) => !pre.contains(el));
+    const searchRoots: Array<Element | DocumentFragment | null | undefined> = [
+      pre.shadowRoot,
+      scope.shadowRoot,
+      scope,
+      pre,
+    ];
 
-    if (codeHeader) {
-      if (codeHeader.querySelector('.ggb-inline-btn')) return;
-      codeHeader.appendChild(btn);
-    } else {
+    const copyBtn = findCopyButton(searchRoots);
+    let attached = false;
+
+    if (copyBtn && copyBtn.parentElement) {
+      const parent = copyBtn.parentElement;
+      if (!hasInlineBtn(parent)) {
+        parent.insertBefore(btn, copyBtn);
+        attached = true;
+      }
+    }
+
+    if (!attached) {
+      const codeHeader = findCodeHeader(searchRoots, pre, codeEl);
+      if (codeHeader) {
+        if (!hasInlineBtn(codeHeader)) {
+          codeHeader.appendChild(btn);
+          attached = true;
+        }
+      }
+    }
+
+    if (!attached) {
       pre.style.position = 'relative';
       btn.style.position = 'absolute';
       btn.style.top = '8px';
@@ -368,6 +340,7 @@ export function startDomHarvester(
     );
     blocks.forEach((el) => {
       if (el.tagName.toLowerCase() === 'pre' && el.closest('code-block')) {
+        processedSet.add(el);
         el.setAttribute('data-ggh-processed', 'true');
         return;
       }

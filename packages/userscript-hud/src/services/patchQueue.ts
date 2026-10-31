@@ -1,18 +1,27 @@
-import type { HarvestedPatch, FilePatchOperation, GeminiPatchPayload } from '../types';
+import type { HarvestedPatch, FilePatchOperation, GeminiPatchPayload, LinterError } from '../types';
+import { findRepoPathIssue, normalizeRepoPath } from '../../../../shared/repoPaths';
 import { computePatchSignature, createStablePatchId } from './patchIdentity';
 
 export const MAX_QUEUED_PATCHES = 20;
 
 /**
- * A patch is a duplicate when it was already harvested by id or carries an identical payload.
+ * Returns the id of an existing queued patch matching by id or canonical payload signature.
  */
-export function isDuplicatePatch(queue: HarvestedPatch[], candidate: HarvestedPatch): boolean {
+export function findDuplicatePatchId(queue: HarvestedPatch[], candidate: HarvestedPatch): string | null {
   const signature = computePatchSignature(candidate.mode, candidate.payload);
-  return queue.some(
+  const found = queue.find(
     (existing) =>
       existing.id === candidate.id ||
       computePatchSignature(existing.mode, existing.payload) === signature
   );
+  return found ? found.id : null;
+}
+
+/**
+ * A patch is a duplicate when it was already harvested by id or carries an identical payload.
+ */
+export function isDuplicatePatch(queue: HarvestedPatch[], candidate: HarvestedPatch): boolean {
+  return findDuplicatePatchId(queue, candidate) !== null;
 }
 
 export function enqueueHarvestedPatch(
@@ -51,8 +60,11 @@ export function coalescePatchesIntoBatch(queue: HarvestedPatch[]): HarvestedPatc
     if (operations.length === 0) return null;
 
     for (const operation of operations) {
-      if (!operation.path || !operation.path.trim()) return null;
-      patches.push(operation);
+      if (findRepoPathIssue(operation.path) !== null) return null;
+      patches.push({
+        ...operation,
+        path: normalizeRepoPath(operation.path),
+      });
     }
 
     for (const pattern of entry.payload.preflight?.forbidPatterns ?? []) {
@@ -60,11 +72,12 @@ export function coalescePatchesIntoBatch(queue: HarvestedPatch[]): HarvestedPatc
     }
 
     for (const [filePath, symbols] of Object.entries(entry.payload.preflight?.requireExports ?? {})) {
-      const merged = requireExports[filePath] ?? [];
+      const normExportPath = normalizeRepoPath(filePath) || filePath;
+      const merged = requireExports[normExportPath] ?? [];
       for (const symbol of symbols) {
         if (!merged.includes(symbol)) merged.push(symbol);
       }
-      requireExports[filePath] = merged;
+      requireExports[normExportPath] = merged;
     }
 
     if (entry.commitMessage) commitMessages.push(entry.commitMessage);
@@ -113,4 +126,134 @@ export async function runPatchQueue(
   }
 
   return { applied, total };
+}
+
+export interface HolisticQueuePartition {
+  validBatch: HarvestedPatch | null;
+  localErrors: LinterError[];
+  targetFiles: string[];
+  totalSnippets: number;
+}
+
+/**
+ * Aggregates all harvested snippets into a consolidated batch and collects missing-path
+ * errors across all snippets non-fail-fast so the self-healing loop can repair them holistically.
+ */
+export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): HolisticQueuePartition {
+  const ordered = fifoQueue(queue);
+  const totalSnippets = ordered.length;
+  const localErrors: LinterError[] = [];
+  const targetFiles: string[] = [];
+  const validOperations: FilePatchOperation[] = [];
+  const forbidPatterns: string[] = [];
+  const requireExports: Record<string, string[]> = {};
+  const commitMessages: string[] = [];
+
+  for (let snippetIndex = 0; snippetIndex < ordered.length; snippetIndex++) {
+    const entry = ordered[snippetIndex];
+    const operations = entry.payload?.patches ?? [];
+    if (operations.length === 0) {
+      localErrors.push({
+        file: `(empty snippet #${snippetIndex + 1})`,
+        stage: 'SEARCH_REPLACE',
+        message: 'Code snippet contains no valid patch operations.'
+      });
+    }
+
+    for (const op of operations) {
+      const issue = findRepoPathIssue(op.path);
+      if (issue !== null) {
+        const preview = (op.blocks?.[0]?.search || op.fullContent || entry.commitMessage || '').slice(0, 120);
+        localErrors.push({
+          file: op.path?.trim() || `(missing path in snippet #${snippetIndex + 1})`,
+          stage: 'SEARCH_REPLACE',
+          message: `${issue} Provide a repo-relative path (e.g. "src/App.tsx") in the consolidated patch.`,
+          codeSnippet: preview || undefined
+        });
+        continue;
+      }
+
+      const normPath = normalizeRepoPath(op.path);
+      if (!targetFiles.includes(normPath)) {
+        targetFiles.push(normPath);
+      }
+
+      const clonedOp: FilePatchOperation = {
+        ...op,
+        path: normPath,
+        ...(op.blocks ? { blocks: op.blocks.map((b) => ({ ...b })) } : {})
+      };
+
+      let lastIdx = -1;
+      for (let i = validOperations.length - 1; i >= 0; i--) {
+        if (validOperations[i].path === normPath) {
+          lastIdx = i;
+          break;
+        }
+      }
+      const existingOp = lastIdx >= 0 ? validOperations[lastIdx] : undefined;
+
+      if (
+        existingOp &&
+        existingOp.action === 'modify' &&
+        clonedOp.action === 'modify' &&
+        existingOp.blocks &&
+        clonedOp.blocks &&
+        typeof existingOp.fullContent !== 'string' &&
+        typeof clonedOp.fullContent !== 'string'
+      ) {
+        existingOp.blocks.push(...clonedOp.blocks);
+      } else {
+        // Keep sequential operations (e.g. create -> modify, modify(fullContent) -> modify(blocks), modify -> delete)
+        // so applyPatchesInMemory chains them in workingFiles without dropping earlier operations.
+        validOperations.push(clonedOp);
+      }
+    }
+
+    for (const pattern of entry.payload?.preflight?.forbidPatterns ?? []) {
+      if (!forbidPatterns.includes(pattern)) forbidPatterns.push(pattern);
+    }
+
+    for (const [filePath, symbols] of Object.entries(entry.payload?.preflight?.requireExports ?? {})) {
+      const normExportPath = normalizeRepoPath(filePath) || filePath;
+      const merged = requireExports[normExportPath] ?? [];
+      for (const symbol of symbols) {
+        if (!merged.includes(symbol)) merged.push(symbol);
+      }
+      requireExports[normExportPath] = merged;
+    }
+
+    if (entry.commitMessage) {
+      commitMessages.push(entry.commitMessage);
+    }
+  }
+
+  let validBatch: HarvestedPatch | null = null;
+  if (validOperations.length > 0) {
+    const payload: GeminiPatchPayload = {
+      commitMessage: `batch: ${commitMessages.join(' | ') || `${ordered.length} harvested patches`}`,
+      patches: validOperations
+    };
+
+    if (forbidPatterns.length > 0 || Object.keys(requireExports).length > 0) {
+      payload.preflight = {};
+      if (forbidPatterns.length > 0) payload.preflight.forbidPatterns = forbidPatterns;
+      if (Object.keys(requireExports).length > 0) payload.preflight.requireExports = requireExports;
+    }
+
+    validBatch = {
+      id: createStablePatchId('v2_json', payload),
+      mode: 'v2_json',
+      commitMessage: payload.commitMessage,
+      payload,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  return {
+    validBatch,
+    localErrors,
+    targetFiles,
+    totalSnippets
+  };
 }

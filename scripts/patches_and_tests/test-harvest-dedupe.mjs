@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { loadBatchFormulaModule, loadHarvesterModules, loadPatchQueueModules } from './harvester-modules.mjs';
+import { loadBatchFormulaModule, loadHarvesterModules, loadPatchQueueModules, loadSelfHealingModule } from './harvester-modules.mjs';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -9,11 +9,15 @@ async function loadModules() {
   const modules = await loadHarvesterModules(ROOT_DIR);
   const queue = await loadPatchQueueModules(ROOT_DIR);
   const formula = await loadBatchFormulaModule(ROOT_DIR);
+  const selfHealing = await loadSelfHealingModule(ROOT_DIR);
   return {
     canonicalize: modules.canonicalize,
     computePatchSignature: modules.computePatchSignature,
     createStablePatchId: modules.createStablePatchId,
     startDomHarvester: modules.startDomHarvester,
+    parseV2PatchPayloadFromCode: modules.parseV2PatchPayloadFromCode,
+    convertLegacyBlocksToV2Payload: modules.convertLegacyBlocksToV2Payload,
+    ...selfHealing,
     ...queue,
     ...formula,
   };
@@ -114,6 +118,7 @@ class FakeElement {
     this.className = '';
     this.onclick = null;
     this._text = '';
+    this.shadowRoot = null;
   }
 
   get textContent() {
@@ -187,6 +192,11 @@ class FakeElement {
 
   querySelector(selector) {
     return this.querySelectorAll(selector)[0] || null;
+  }
+
+  attachShadow() {
+    this.shadowRoot = new FakeElement('shadow-root', this.ownerDocument);
+    return this.shadowRoot;
   }
 
   addEventListener() {}
@@ -285,6 +295,10 @@ const {
   coalescePatchesIntoBatch,
   buildBatchFormulaPrompt,
   MAX_QUEUED_PATCHES,
+  partitionQueueForHolisticCheck,
+  parseV2PatchPayloadFromCode,
+  convertLegacyBlocksToV2Payload,
+  buildSelfHealingPrompt,
 } = await loadModules();
 
 {
@@ -609,8 +623,143 @@ const {
     formula.includes('without reordering union types'),
     'the formula protects unchanged function and union type signatures'
   );
+
+
+  // 1. Holistic queue partition with mixed valid and invalid snippets
+  const p1 = makeBatchPatch('q-1', 'src/a.ts', 'feat: a');
+  const p2 = {
+    id: 'q-2',
+    mode: 'v2_json',
+    commitMessage: 'broken path snippet',
+    payload: {
+      commitMessage: 'broken',
+      patches: [{ path: '', action: 'modify', blocks: [{ search: 'old', replace: 'new' }] }]
+    },
+    timestamp: new Date().toISOString()
+  };
+  const p3 = makeBatchPatch('q-3', 'src/a.ts', 'feat: a part 2');
+  const p4 = makeBatchPatch('q-4', 'src/b.ts', 'feat: b');
+
+  const partition = partitionQueueForHolisticCheck([p4, p3, p2, p1]);
+  assert.equal(partition.totalSnippets, 4, 'inspects all 4 snippets');
+  assert.equal(partition.localErrors.length, 1, 'aggregates missing path error');
+  assert.match(partition.localErrors[0].file, /snippet #2/, 'identifies snippet #2 as having missing path');
+  assert.equal(partition.localErrors[0].stage, 'SEARCH_REPLACE');
+  assert.ok(partition.validBatch, 'extracts valid batch even when other snippets have local errors');
+  assert.deepEqual(partition.targetFiles, ['src/a.ts', 'src/b.ts'], 'lists all unique valid target files');
+  assert.equal(partition.validBatch.payload.patches.length, 2, 'merges snippets targeting the same file');
+  assert.equal(partition.validBatch.payload.patches[0].blocks.length, 2, 'concatenates modify blocks on same file');
+
+  // 2. parseV2PatchPayloadFromCode with markdown wrappers
+  const wrappedMd = '```md\nHere is your fix:\n```json\n{\n  "commitMessage": "test fix",\n  "patches": [\n    {\n      "path": "src/index.ts",\n      "action": "modify",\n      "blocks": [{ "search": "old", "replace": "new" }]\n    }\n  ]\n}\n```\nHope this helps!\n```';
+  const parsedMd = parseV2PatchPayloadFromCode(wrappedMd);
+  assert.ok(parsedMd, 'extracts inner JSON payload from markdown block');
+  assert.equal(parsedMd.commitMessage, 'test fix');
+  assert.equal(parsedMd.patches[0].path, 'src/index.ts');
+
+  // 3. convertLegacyBlocksToV2Payload with multi-file diff sections
+  const blockA = ['<' + '<<<<<< SEARCH', 'export const A = 1;', '='.repeat(7), 'export const A = 2;', '>'.repeat(7) + ' REPLACE'].join('\n');
+  const blockB = ['<' + '<<<<<< SEARCH', 'export const B = 1;', '='.repeat(7), 'export const B = 2;', '>'.repeat(7) + ' REPLACE'].join('\n');
+  const multiFileDiff = `// filepath: src/header.ts\n${blockA}\n\n### src/footer.ts\n${blockB}`;
+  const legacyParsed = convertLegacyBlocksToV2Payload(multiFileDiff);
+  assert.ok(legacyParsed, 'parses multi-file diff block');
+  assert.equal(legacyParsed.payload.patches.length, 2, 'produces 2 FilePatchOperations');
+  assert.equal(legacyParsed.payload.patches[0].path, 'src/header.ts');
+  assert.equal(legacyParsed.payload.patches[1].path, 'src/footer.ts');
+
+  // 4. buildSelfHealingPrompt with targetFiles & importable instructions
+  const prompt = buildSelfHealingPrompt(
+    partition.localErrors,
+    'owner/repo',
+    'main',
+    '1234567890abcdef1234567890abcdef12345678',
+    1,
+    { targetFiles: ['src/a.ts', 'src/b.ts'], targetBranch: 'preview' }
+  );
+  assert.ok(prompt.includes('Target Files in Scope: src/a.ts, src/b.ts'), 'includes target files');
+  assert.ok(prompt.includes('branch "preview"'), 'includes target branch');
+  assert.ok(prompt.includes('Anchor Context: Provide 2–4 lines of verbatim surrounding context'), 'includes anchor context rule');
+  assert.ok(prompt.includes('directly importable Markdown/JSON patch block'), 'demands importable code block');
+
+  // 5. Same-file create followed by modify is preserved in sequence in partitionQueueForHolisticCheck
+  const createPatch = {
+    id: 'q-create',
+    mode: 'v2_json',
+    commitMessage: 'feat: create c.ts',
+    payload: {
+      commitMessage: 'feat: create c.ts',
+      patches: [{ path: './src/c.ts', action: 'create', fullContent: 'export const c = 1;\n' }],
+      preflight: { requireExports: { './src/c.ts': ['c'] } },
+    },
+    timestamp: '',
+  };
+  const modifyCreatedPatch = makeBatchPatch('q-mod-c', 'src/c.ts', 'feat: update c.ts');
+  const createThenModPartition = partitionQueueForHolisticCheck([modifyCreatedPatch, createPatch]);
+  assert.equal(
+    createThenModPartition.validBatch.payload.patches.length,
+    2,
+    'create followed by modify on the same file stays a 2-step sequence'
+  );
+  assert.equal(createThenModPartition.validBatch.payload.patches[0].action, 'create');
+  assert.equal(createThenModPartition.validBatch.payload.patches[1].action, 'modify');
+  assert.deepEqual(
+    createThenModPartition.validBatch.payload.preflight.requireExports,
+    { 'src/c.ts': ['c'] },
+    'requireExports keys are canonicalized via normalizeRepoPath'
+  );
+
+  // 6. parseV2PatchPayloadFromCode preserves JSON strings containing inner backtick fences and surrounding prose braces
+  const fenceInsideString = '```md\nFix for `function demo() {}`:\n```json\n' + JSON.stringify({
+    commitMessage: 'docs: example fence',
+    patches: [{
+      path: 'src/prompt.ts',
+      action: 'modify',
+      blocks: [{ search: 'old', replace: 'Example:\n```json\n{ "a": 1 }\n```' }],
+    }],
+  }) + '\n```\nNotes: `{ done: true }`\n```';
+  const parsedWithInnerFence = parseV2PatchPayloadFromCode(fenceInsideString);
+  assert.ok(parsedWithInnerFence, 'parses JSON payload even when replace string contains backtick fences and prose has braces');
+  assert.equal(parsedWithInnerFence.patches[0].path, 'src/prompt.ts');
+
+  // 7. Streaming guardrails: incomplete diff or incomplete V2 JSON with a path hint must return null
+  const incompleteDiff = '// filepath: src/streaming.ts\n' + '<' + '<<<<<< SEARCH\nconst x = 1;\n' + '='.repeat(7) + '\nconst x = 2;';
+  assert.equal(
+    convertLegacyBlocksToV2Payload(incompleteDiff, 'src/streaming.ts'),
+    null,
+    'incomplete streaming SEARCH/REPLACE block must not fall through to full-file create'
+  );
+  const incompleteJson = '{\n  "commitMessage": "feat: streaming",\n  "patches": [\n    { "path": "src/a.ts"';
+  assert.equal(
+    convertLegacyBlocksToV2Payload(incompleteJson, 'src/a.ts'),
+    null,
+    'incomplete streaming V2 JSON must not fall through to full-file create'
+  );
+
+  // 8. Bare path comments between multi-file diff sections are resolved
+  const bareMultiFileDiff = `// src/first.ts\n${blockA}\n\n// src/second.ts\n${blockB}`;
+  const bareMultiParsed = convertLegacyBlocksToV2Payload(bareMultiFileDiff);
+  assert.ok(bareMultiParsed, 'parses multi-file diff with bare path comments');
+  assert.deepEqual(
+    bareMultiParsed.payload.patches.map((p) => p.path),
+    ['src/first.ts', 'src/second.ts'],
+    'resolves bare path comment for second diff section'
+  );
+
+  // 9. Multiple sibling <pre> blocks in a shared parent container (no <code-block> wrapper) are all harvested
+  const siblingEnv = mountHarvester(startDomHarvester);
+  const sharedContainer = siblingEnv.document.createElement('div');
+  siblingEnv.document.body.appendChild(sharedContainer);
+  for (const file of ['src/one.ts', 'src/two.ts']) {
+    const pre = siblingEnv.document.createElement('pre');
+    const code = siblingEnv.document.createElement('code');
+    code.textContent = payloadJson({ commitMessage: `feat: ${file}`, pathName: file });
+    pre.appendChild(code);
+    sharedContainer.appendChild(pre);
+  }
+  siblingEnv.observer.callback();
+  assert.equal(siblingEnv.harvested.length, 2, 'both sibling <pre> blocks in a shared container are harvested');
 }
 
 console.log(
-  'Harvest dedupe: PASS (stable content ids, one emission per code block, re-renders and repeated scans produce no duplicate queue entries, FIFO queue dedupes by id and payload, atomic batch coalescing and Batch Formula prompt stay in contract)'
+  'Harvest dedupe: PASS (stable content ids, one emission per code block, re-renders and repeated scans produce no duplicate queue entries, FIFO queue dedupes by id and payload, atomic batch coalescing, holistic queue partitioning, and importable self-healing prompt stay in contract)'
 );
