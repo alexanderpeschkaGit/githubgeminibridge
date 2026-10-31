@@ -15,6 +15,7 @@ interface BannerAction {
 export interface HudUpdateBannerDeps {
   /** Injectable for the Node regression harness; defaults to the real checker. */
   check?: typeof checkForScriptUpdate;
+  onSoftReset?: () => void;
 }
 
 /**
@@ -27,9 +28,9 @@ export function initHudUpdateBanner(dom: HudDomElements, deps: HudUpdateBannerDe
   let installUrl = '';
   let installVersion = '';
   const runningVersion = getRunningScriptVersion();
-  if (runningVersion) {
-    dom.updateCheckBtn.title = `Check published userscript version (running v${runningVersion})`;
-  }
+  dom.updateCheckBtn.title = runningVersion
+    ? `Check published userscript version (running v${runningVersion}) — Shift-Click to soft reset HUD`
+    : 'Check published userscript version — Shift-Click to soft reset HUD';
   // The panel stylesheet starts the banner hidden; keep that state explicit so a
   // silent background check never leaves a visible empty banner behind.
   dom.updateBanner.style.display = 'none';
@@ -130,7 +131,17 @@ export function initHudUpdateBanner(dom: HudDomElements, deps: HudUpdateBannerDe
     }
   };
 
-  dom.updateCheckBtn.addEventListener('click', () => {
+  dom.updateCheckBtn.addEventListener('click', (e?: MouseEvent) => {
+    if (e?.shiftKey) {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      if (typeof deps.onSoftReset === 'function') {
+        deps.onSoftReset();
+      } else if (typeof window !== 'undefined' && typeof (window as any).resetGeminiEdgeHud === 'function') {
+        (window as any).resetGeminiEdgeHud();
+      }
+      return;
+    }
     void runCheck(true);
   });
 

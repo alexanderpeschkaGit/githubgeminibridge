@@ -20,7 +20,7 @@ import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } 
 import { buildHudDomTree } from './hudDomTree';
 import { initHudUpdateBanner } from './updateBanner';
 import { bindHudConfigInputs, setRepoHistorySelectRefresher } from './hudConfigBindings';
-import { bindRepoHistoryDropdown } from './hudRepoHistoryDropdown';
+import { bindRepoHistoryDropdown, unbindRepoHistoryDropdownListeners } from './hudRepoHistoryDropdown';
 import { bindAccountSwitch, refreshAccountHint } from './hudAccountSwitch';
 import { renderHudState } from './hudRender';
 import { bindMixAction } from './hudMixAction';
@@ -41,9 +41,13 @@ export interface ShadowHudController {
   closePanel: () => void;
   handleApplyPatch: (patch: HarvestedPatch) => Promise<boolean>;
   addHarvestedPatch: (patch: HarvestedPatch) => void;
+  destroy: () => void;
 }
 
-export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => Promise<boolean>): ShadowHudController {
+export function mountShadowHud(
+  onApplyPatchCustom?: (patch: HarvestedPatch) => Promise<boolean>,
+  options?: { onSoftReset?: () => void }
+): ShadowHudController {
   if (typeof document === 'undefined') {
     throw new Error('mountShadowHud requires a DOM environment');
   }
@@ -70,7 +74,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   if (runningVersion && dom.title) {
     dom.title.textContent = `⚡ Cloudflare Edge HUD v${runningVersion}`;
   }
-  initHudUpdateBanner(dom);
+  initHudUpdateBanner(dom, { onSoftReset: options?.onSoftReset });
 
   function updateState(partial: Partial<HudState>) {
     Object.assign(state, partial);
@@ -219,6 +223,24 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     });
   };
 
+  const destroy = () => {
+    unbindRepoHistoryDropdownListeners();
+    setRepoHistorySelectRefresher(null);
+    if (dom.host) {
+      if (typeof dom.host.remove === 'function') {
+        dom.host.remove();
+      } else if (dom.host.parentNode) {
+        if (typeof dom.host.parentNode.removeChild === 'function') {
+          dom.host.parentNode.removeChild(dom.host);
+        } else if (Array.isArray((dom.host.parentNode as any).children)) {
+          const children = (dom.host.parentNode as any).children;
+          const idx = children.indexOf(dom.host);
+          if (idx !== -1) children.splice(idx, 1);
+        }
+      }
+    }
+  };
+
   const controller: ShadowHudController = {
     getState: () => ({ ...state }),
     updateState: (partial: Partial<HudState>) => {
@@ -227,6 +249,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     openPanel,
     closePanel,
     handleApplyPatch,
+    destroy,
     addHarvestedPatch: (patch: HarvestedPatch) => {
       const duplicateId = findDuplicatePatchId(state.harvestedPatches, patch);
       if (duplicateId !== null) {

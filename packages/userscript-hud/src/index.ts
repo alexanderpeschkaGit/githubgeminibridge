@@ -1,10 +1,11 @@
 import { mountShadowHud, ShadowHudController } from './ui/shadowHud';
-import { startDomHarvester } from './dom/harvester';
+import { startDomHarvester, stopDomHarvester } from './dom/harvester';
 import { loadHudConfig } from './services/storage';
 import { getRunningScriptVersion, reportHudInitFailure } from './services/runtimeInfo';
 
 export * from './types';
 export * from './services/storage';
+export * from './services/repoHistory';
 export * from './services/workerClient';
 export * from './services/selfHealing';
 export * from './dom/injector';
@@ -12,6 +13,29 @@ export * from './dom/harvester';
 export * from './ui/shadowHud';
 
 let controllerInstance: ShadowHudController | null = null;
+let activeObserver: MutationObserver | null = null;
+
+export function destroyGeminiEdgeHud(): void {
+  if (activeObserver) {
+    stopDomHarvester(activeObserver);
+    activeObserver = null;
+  }
+  if (controllerInstance) {
+    controllerInstance.destroy();
+    controllerInstance = null;
+  }
+}
+
+export function resetGeminiEdgeHud(): ShadowHudController | null {
+  if (controllerInstance) {
+    const { status } = controllerInstance.getState();
+    if (status === 'PATCHING' || status === 'MIXING') {
+      return controllerInstance;
+    }
+  }
+  destroyGeminiEdgeHud();
+  return initGeminiEdgeHud();
+}
 
 export function initGeminiEdgeHud(): ShadowHudController | null {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -38,9 +62,13 @@ export function initGeminiEdgeHud(): ShadowHudController | null {
       branch: cfg.branch,
     });
 
-    controllerInstance = mountShadowHud();
+    controllerInstance = mountShadowHud(undefined, {
+      onSoftReset: () => {
+        resetGeminiEdgeHud();
+      },
+    });
 
-    startDomHarvester(
+    activeObserver = startDomHarvester(
       (patch) => {
         controllerInstance?.addHarvestedPatch(patch);
       },
@@ -48,6 +76,11 @@ export function initGeminiEdgeHud(): ShadowHudController | null {
         controllerInstance?.handleApplyPatch(patch);
       }
     );
+
+    if (typeof window !== 'undefined') {
+      (window as any).resetGeminiEdgeHud = resetGeminiEdgeHud;
+      (window as any).destroyGeminiEdgeHud = destroyGeminiEdgeHud;
+    }
   } catch (error) {
     reportHudInitFailure(error);
     return null;

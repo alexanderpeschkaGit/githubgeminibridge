@@ -33,7 +33,7 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   const header = createHudElement('div', 'hud-header');
   const title = createHudElement('div', 'hud-title', '⚡ Cloudflare Edge HUD');
   const updateCheckBtn = createHudElement('button', 'hud-header-icon', '⟳');
-  updateCheckBtn.title = 'Check published userscript version';
+  updateCheckBtn.title = 'Check published userscript version (Shift-Click to soft reset HUD)';
   const closeBtn = createHudElement('button', 'hud-close-btn', '×');
   closeBtn.title = 'Close Panel';
   header.appendChild(title);

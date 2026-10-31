@@ -368,3 +368,52 @@ export function startDomHarvester(
 
   return observer;
 }
+
+/**
+ * Disconnects the DOM Harvester MutationObserver and strips all inline/canvas buttons
+ * and processed markers so a subsequent startDomHarvester() re-scans existing blocks.
+ */
+export function stopDomHarvester(observer: MutationObserver): void {
+  try {
+    observer.disconnect();
+  } catch {
+    // Ignore if already disconnected
+  }
+  if (typeof document === 'undefined') return;
+
+  const removeNode = (el: any) => {
+    if (typeof el.remove === 'function') {
+      el.remove();
+      return;
+    }
+    const parent = el.parentNode || el.parentElement;
+    if (parent) {
+      if (typeof parent.removeChild === 'function') {
+        parent.removeChild(el);
+      } else if (Array.isArray(parent.children)) {
+        const idx = parent.children.indexOf(el);
+        if (idx !== -1) parent.children.splice(idx, 1);
+      }
+    }
+  };
+
+  const cleanRoot = (root: ParentNode) => {
+    if (typeof root.querySelectorAll !== 'function') return;
+    root.querySelectorAll('.ggb-inline-btn, .ggb-canvas-btn').forEach(removeNode);
+    root.querySelectorAll('[data-ggh-processed]').forEach((el: any) => {
+      if (typeof el.removeAttribute === 'function') el.removeAttribute('data-ggh-processed');
+      else el.attributes?.delete?.('data-ggh-processed');
+    });
+    root.querySelectorAll('[data-ggh-canvas-processed]').forEach((el: any) => {
+      if (typeof el.removeAttribute === 'function') el.removeAttribute('data-ggh-canvas-processed');
+      else el.attributes?.delete?.('data-ggh-canvas-processed');
+    });
+  };
+
+  cleanRoot(document);
+  if (typeof document.querySelectorAll === 'function') {
+    document.querySelectorAll('code-block, pre').forEach((el) => {
+      if (el.shadowRoot) cleanRoot(el.shadowRoot);
+    });
+  }
+}

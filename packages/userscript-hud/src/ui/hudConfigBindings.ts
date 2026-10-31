@@ -5,7 +5,7 @@ import type { HudDomElements } from './hudStylesAndDom';
 
 let refreshRepoHistorySelect: (() => void) | null = null;
 
-export function setRepoHistorySelectRefresher(fn: () => void): void {
+export function setRepoHistorySelectRefresher(fn: (() => void) | null): void {
   refreshRepoHistorySelect = fn;
 }
 

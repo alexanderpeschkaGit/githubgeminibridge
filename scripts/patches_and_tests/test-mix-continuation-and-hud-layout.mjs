@@ -266,6 +266,13 @@ class FakeElement {
     if (this.parentNode && e.bubbles && !e._stopped) this.parentNode.dispatchEvent(e);
   }
   contains(n) { let c = n; while (c) { if (c === this) return true; c = c.parentNode; } return false; }
+  remove() {
+    if (this.parentNode && Array.isArray(this.parentNode.children)) {
+      const idx = this.parentNode.children.indexOf(this);
+      if (idx !== -1) this.parentNode.children.splice(idx, 1);
+      this.parentNode = null;
+    }
+  }
   attachShadow() {
     this.shadowRoot = new FakeElement('shadow-root');
     this.shadowRoot.parentNode = this;
@@ -296,7 +303,9 @@ const docListeners = new Map();
 globalThis.document = {
   body: new FakeElement('body'),
   createElement(tag) { return new FakeElement(tag); },
-  getElementById(id) { return null; },
+  getElementById(id) {
+    return findDescendants(this.body, (n) => n.id === id)[0] || null;
+  },
   addEventListener(t, f) { const a = docListeners.get(t) || []; a.push(f); docListeners.set(t, a); },
   removeEventListener(t, f) { const a = docListeners.get(t) || []; docListeners.set(t, a.filter((x) => x !== f)); },
   dispatchEvent(e) { if (!e.target) e.target = this; for (const f of docListeners.get(e.type) || []) f(e); },
@@ -596,6 +605,68 @@ function findByTag(root, tag) {
   assert.equal(dom.repoInput.value, 'my-org/my-new-repo', 'dom.repoInput.value must be updated with sanitized owner/repo');
   assert.equal(config.repo, 'my-org/my-new-repo', 'config.repo must be updated with sanitized owner/repo');
   console.log('PASS: dom.repoInput.onchange writes sanitized owner/repo back to dom.repoInput.value');
+}
+
+// 2.5: repoHistory deduplicates by canonical repoSlug across branch changes and empty owner edge cases
+{
+  const repoHistoryUrl = await bundleModule('packages/userscript-hud/src/services/repoHistory.ts');
+  const { repoSlug, loadRepoHistory, pushRepoHistory } = await import(repoHistoryUrl);
+
+  gmStore.clear();
+  gmStore.set('active_profile', 'account1');
+
+  assert.equal(repoSlug({ owner: '', repo: 'myrepo', branch: 'main' }), 'myrepo', 'empty owner falls back to repo without leading slash');
+  assert.equal(repoSlug({ owner: '', repo: '/myrepo/', branch: 'main' }), 'myrepo', 'leading/trailing slashes stripped');
+  assert.equal(
+    repoSlug({ owner: 'AlexanderPeschkaGit', repo: 'TestRepo', branch: 'main' }),
+    'alexanderpeschkagit/testrepo',
+    'owner + repo canonicalized to lowercase owner/repo'
+  );
+
+  pushRepoHistory({ owner: 'alexanderpeschkaGit', repo: 'alexanderpeschkaGit/testrepo', branch: 'main' });
+  pushRepoHistory({ owner: 'alexanderpeschkaGit', repo: 'alexanderpeschkaGit/testrepo', branch: 'preview', targetBranch: 'feat-1' });
+  pushRepoHistory({ owner: 'alexanderpeschkaGit', repo: 'testrepo', branch: 'feature-x', targetBranch: 'feat-2' });
+
+  const loaded = loadRepoHistory();
+  assert.equal(loaded.length, 1, '3 branch changes on the same repo must leave exactly 1 entry');
+  assert.equal(loaded[0].branch, 'feature-x', 'latest branch is upserted at position 0');
+  assert.equal(loaded[0].targetBranch, 'feat-2', 'latest targetBranch is preserved');
+  console.log('PASS: repoHistory deduplicates by canonical repoSlug and handles empty owner without leading slash');
+}
+
+// 2.6: HUD lifecycle (initGeminiEdgeHud / destroyGeminiEdgeHud / resetGeminiEdgeHud) & busy guard
+{
+  globalThis.window = globalThis;
+  globalThis.window.top = globalThis.window;
+  globalThis.window.self = globalThis.window;
+  globalThis.MutationObserver = class {
+    constructor(cb) { this.cb = cb; }
+    observe() {}
+    disconnect() {}
+  };
+
+  const indexUrl = await bundleModule('packages/userscript-hud/src/index.ts');
+  const { initGeminiEdgeHud, destroyGeminiEdgeHud, resetGeminiEdgeHud } = await import(indexUrl);
+
+  const ctrl1 = initGeminiEdgeHud();
+  assert.ok(ctrl1, 'initGeminiEdgeHud returns controller');
+  assert.ok(globalThis.document.getElementById('gemini-edge-hud-root'), '#gemini-edge-hud-root is mounted in DOM');
+
+  // Concurrency guard: reset is blocked while MIXING or PATCHING
+  ctrl1.updateState({ status: 'MIXING' });
+  const guardedCtrl = resetGeminiEdgeHud();
+  assert.equal(guardedCtrl, ctrl1, 'resetGeminiEdgeHud is blocked while status === MIXING');
+  assert.ok(globalThis.document.getElementById('gemini-edge-hud-root'), 'host remains mounted during MIXING guard');
+
+  ctrl1.updateState({ status: 'IDLE' });
+  destroyGeminiEdgeHud();
+  assert.equal(globalThis.document.getElementById('gemini-edge-hud-root'), null, 'destroyGeminiEdgeHud removes #gemini-edge-hud-root');
+
+  const ctrl2 = resetGeminiEdgeHud();
+  assert.ok(ctrl2 && ctrl2 !== ctrl1, 'resetGeminiEdgeHud mounts a fresh controller instance');
+  assert.ok(globalThis.document.getElementById('gemini-edge-hud-root'), '#gemini-edge-hud-root is re-mounted after reset');
+  destroyGeminiEdgeHud();
+  console.log('PASS: HUD lifecycle init/destroy/reset and MIXING/PATCHING concurrency guard work as expected');
 }
 
 console.log('Multi-turn mix continuation & compact HUD layout suite: PASS');
