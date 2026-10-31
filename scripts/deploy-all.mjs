@@ -28,27 +28,32 @@ async function main() {
   const version = (pkgRaw.match(/"version"\s*:\s*"([^"]+)"/) || [])[1] || 'unknown';
   console.log(`\n>>> New Release Version: v${version} <<<`);
 
-  // Step 2: Smoke tests
-  console.log('\n[2/5] Running Smoke Tests...');
+  // Step 2: Build Edge Worker & Run Local Regressions
+  console.log('\n[2/6] Building Edge Worker & Running Local Regressions...');
+  run('node scripts/build-worker.mjs', workerDir);
+  run('node scripts/patches_and_tests/run-regressions.mjs', rootDir);
+
+  // Step 3: Deploy Worker 1 (Default: gemini-git-bridge)
+  console.log('\n[3/6] Deploying Cloudflare Worker 1 (Default: gemini-git-bridge)...');
+  run('npx wrangler deploy', workerDir);
+
+  // Step 4: Deploy Worker 2 (Account 2: gemini-git-bridge-account2)
+  console.log('\n[4/6] Deploying Cloudflare Worker 2 (Account 2: gemini-git-bridge-account2)...');
+  run('npx wrangler deploy --env account2', workerDir);
+
+  // Step 5: Run Live Smoke Suite (updates worker-baseline.json with deployed version)
+  console.log('\n[5/6] Running Smoke Tests against Live Worker...');
   run('node scripts/patches_and_tests/worker-smoke.mjs', rootDir);
 
-  // Step 3: Git Commit & Push
-  console.log('\n[3/5] Committing & Pushing to GitHub (main)...');
-  run('git add gemini-bridge.user.js packages/ shared/ scripts/');
+  // Step 6: Git Commit & Push
+  console.log('\n[6/6] Committing & Pushing to GitHub (main)...');
+  run('git add gemini-bridge.user.js packages/userscript-hud/dist/gemini-bridge.user.js packages/userscript-hud/package.json packages/edge-worker/package.json packages/edge-worker/src/index.ts scripts/patches_and_tests/worker-baseline.json');
   try {
     run(`git commit -m "chore(release): bump version to ${version} and lockstep build"`);
   } catch {
     console.log('[INFO] Git commit skipped (no changes to commit).');
   }
   run('git push origin main');
-
-  // Step 4: Deploy Worker 1 (Default: gemini-git-bridge)
-  console.log('\n[4/5] Deploying Cloudflare Worker 1 (Default: gemini-git-bridge)...');
-  run('npx wrangler deploy', workerDir);
-
-  // Step 5: Deploy Worker 2 (Account 2: gemini-git-bridge-account2)
-  console.log('\n[5/5] Deploying Cloudflare Worker 2 (Account 2: gemini-git-bridge-account2)...');
-  run('npx wrangler deploy --env account2', workerDir);
 
   console.log('\n===================================================');
   console.log(`[SUCCESS] Full Release & Deploy complete! (v${version})`);

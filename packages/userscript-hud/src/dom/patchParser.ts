@@ -11,10 +11,15 @@ export function isSearchReplace(text: string): boolean {
   return text.includes('<<<<<<<') && text.includes('=======') && text.includes('>>>>>>>');
 }
 
+function isValidPatchBlock(b: any): b is PatchBlock {
+  return Boolean(b && typeof b === 'object' && typeof b.search === 'string' && typeof b.replace === 'string');
+}
+
 function isValidPatchOperation(p: any): p is FilePatchOperation {
   if (!p || typeof p.path !== 'string') return false;
   if (p.action === 'modify') {
-    return Array.isArray(p.blocks) || typeof p.fullContent === 'string';
+    const hasValidBlocks = Array.isArray(p.blocks) && p.blocks.length > 0 && p.blocks.every(isValidPatchBlock);
+    return hasValidBlocks || typeof p.fullContent === 'string';
   }
   if (p.action === 'create') {
     return typeof p.fullContent === 'string';
@@ -22,26 +27,61 @@ function isValidPatchOperation(p: any): p is FilePatchOperation {
   return p.action === 'delete';
 }
 
+function extractBalancedJsonObject(text: string, startIndex: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = startIndex; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return text.slice(startIndex, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
 function tryParseGeminiPayload(candidate: string): GeminiPatchPayload | null {
   const trimmed = candidate.trim();
-  const startIdx = trimmed.indexOf('{');
-  const endIdx = trimmed.lastIndexOf('}');
-  if (startIdx === -1 || endIdx <= startIdx) return null;
-
-  try {
-    const obj = JSON.parse(trimmed.substring(startIdx, endIdx + 1));
-    if (
-      obj &&
-      typeof obj === 'object' &&
-      typeof obj.commitMessage === 'string' &&
-      Array.isArray(obj.patches) &&
-      obj.patches.length > 0 &&
-      obj.patches.every(isValidPatchOperation)
-    ) {
-      return obj as GeminiPatchPayload;
+  let searchFrom = 0;
+  while (searchFrom < trimmed.length) {
+    const startIdx = trimmed.indexOf('{', searchFrom);
+    if (startIdx === -1) break;
+    const balanced = extractBalancedJsonObject(trimmed, startIdx);
+    if (balanced) {
+      try {
+        const obj = JSON.parse(balanced);
+        if (
+          obj &&
+          typeof obj === 'object' &&
+          typeof obj.commitMessage === 'string' &&
+          Array.isArray(obj.patches) &&
+          obj.patches.length > 0 &&
+          obj.patches.every(isValidPatchOperation)
+        ) {
+          return obj as GeminiPatchPayload;
+        }
+      } catch {
+        // Continue scanning next '{' candidate
+      }
     }
-  } catch {
-    // Not valid JSON
+    searchFrom = startIdx + 1;
   }
   return null;
 }
@@ -79,23 +119,38 @@ export function parseV2PatchPayloadFromCode(codeText: string): GeminiPatchPayloa
 
 export function extractSectionPath(sectionText: string): string {
   if (!sectionText || !sectionText.trim()) return '';
-  const fromCode = extractPathFromCode(sectionText);
-  if (fromCode) return normalizeRepoPath(fromCode);
 
   const lines = sectionText.split(/\r?\n/);
   for (let i = lines.length - 1; i >= 0; i--) {
-    const headerMatch = lines[i].match(/^\s*#{1,6}\s+(.+)$/);
-    if (!headerMatch || !headerMatch[1]) continue;
-    const cleaned = headerMatch[1].replace(/[`*]/g, '').trim();
-    const labeled = cleaned.match(
-      /(?:filepath|file|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i
-    );
-    if (labeled && labeled[1]) return normalizeRepoPath(labeled[1]);
-    const candidate = cleaned.replace(/[:;,]+$/, '').trim();
-    if (/^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/.test(candidate)) {
-      return normalizeRepoPath(candidate);
+    const trimmedLine = lines[i].trim();
+    if (!trimmedLine) continue;
+
+    const inlineMatch = trimmedLine.match(/(?:\/\/|#|\/\*)\s*(?:filepath|file|path):\s*([^\r\n*]+)/i);
+    if (inlineMatch && inlineMatch[1]) {
+      return normalizeRepoPath(inlineMatch[1].trim().replace(/^["']|["']$/g, ''));
+    }
+
+    const bareComment = trimmedLine.match(/^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/);
+    if (bareComment && bareComment[1]) {
+      return normalizeRepoPath(bareComment[1]);
+    }
+
+    const headerMatch = trimmedLine.match(/^#{1,6}\s+(.+)$/);
+    if (headerMatch && headerMatch[1]) {
+      const cleaned = headerMatch[1].replace(/[`*]/g, '').trim();
+      const labeled = cleaned.match(
+        /(?:filepath|file|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i
+      );
+      if (labeled && labeled[1]) return normalizeRepoPath(labeled[1]);
+      const candidate = cleaned.replace(/[:;,]+$/, '').trim();
+      if (/^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/.test(candidate)) {
+        return normalizeRepoPath(candidate);
+      }
     }
   }
+
+  const fromCode = extractPathFromCode(sectionText);
+  if (fromCode) return normalizeRepoPath(fromCode);
   return '';
 }
 
@@ -107,6 +162,20 @@ export function convertLegacyBlocksToV2Payload(
   defaultPath?: string
 ): { payload: GeminiPatchPayload; legacyPayload: CommitRequest } | null {
   if (!codeText || codeText.trim().length === 0) return null;
+
+  // Never convert an incomplete/streaming V2 JSON payload into a raw file creation
+  if (/^\s*(?:```(?:json|md|markdown)?\s*)?\{\s*"(?:commitMessage|patches)"/.test(codeText)) {
+    return null;
+  }
+
+  // If diff open markers are present, require balanced open/close markers (prevents premature harvest during streaming)
+  if (codeText.includes('<<<<<<<')) {
+    const openCount = (codeText.match(/^<{7}/gm) || []).length;
+    const closeCount = (codeText.match(/^>{7}/gm) || []).length;
+    if (openCount === 0 || openCount !== closeCount) {
+      return null;
+    }
+  }
 
   const detectedPath = normalizeRepoPath(extractPathFromCode(codeText) || defaultPath || '');
   const hasDiffBlocks = isSearchReplace(codeText);

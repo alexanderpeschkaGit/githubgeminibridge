@@ -29,6 +29,7 @@ export interface HudApplyPatchDeps {
   openPanel: () => void;
   updateState: (partial: Partial<HudState>) => void;
   onApplyPatchCustom?: (patch: HarvestedPatch) => Promise<boolean>;
+  onMarkQueueSuperseded?: (ids: string[]) => void;
 }
 
 function checkForeignOwnerBlocked(
@@ -105,7 +106,7 @@ function handlePreflightFailure(
 /** Applies one harvested patch through the worker, including OID recovery and self-healing. */
 export async function applyHudPatch(
   patch: HarvestedPatch,
-  { config, state, openPanel, updateState, onApplyPatchCustom }: HudApplyPatchDeps
+  { config, state, openPanel, updateState, onApplyPatchCustom, onMarkQueueSuperseded }: HudApplyPatchDeps
 ): Promise<boolean> {
   if (onApplyPatchCustom) {
     return onApplyPatchCustom(patch);
@@ -189,7 +190,18 @@ export async function applyHudPatch(
       }
 
       if (res.status === 'PREFLIGHT_FAILED') {
-        return handlePreflightFailure(res, config, state, updateState, 'Preflight failed.');
+        onMarkQueueSuperseded?.([patch.id]);
+        const patchTargetFiles = Array.from(
+          new Set(effectivePayload.patches.map((p) => p.path).filter(Boolean))
+        );
+        return handlePreflightFailure(
+          res,
+          config,
+          state,
+          updateState,
+          'Preflight failed.',
+          patchTargetFiles
+        );
       }
 
       if (res.status === 'GIT_CONFLICT' || res.status === 'ERROR') {
@@ -252,7 +264,7 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
   });
 
   try {
-    if (!isPatchSnapshotReady(deps.state)) {
+    if (partition.validBatch && !isPatchSnapshotReady(deps.state)) {
       deps.updateState({
         status: 'PATCHING',
         statusMessage: `🔄 No snapshot OID — resolving current HEAD of ${deps.config.repo}@${deps.config.branch}...`,

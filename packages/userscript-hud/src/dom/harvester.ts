@@ -24,6 +24,19 @@ function hasInlineBtn(root: Element | DocumentFragment | null | undefined): bool
   return Boolean(root.querySelector('.ggb-inline-btn'));
 }
 
+function resolveCodeBlockScope(pre: HTMLElement): HTMLElement {
+  const closestBlock = pre.closest('code-block') as HTMLElement | null;
+  if (closestBlock) return closestBlock;
+  const parent = pre.parentElement;
+  if (parent && typeof parent.querySelectorAll === 'function') {
+    const codeBlocksInParent = parent.querySelectorAll('pre, code-block');
+    if (codeBlocksInParent.length <= 1) {
+      return parent;
+    }
+  }
+  return pre;
+}
+
 function findCopyButton(
   roots: Array<Element | DocumentFragment | null | undefined>
 ): HTMLElement | null {
@@ -106,8 +119,7 @@ export function startDomHarvester(
     }
 
     // Button/header lookups stay inside this code block so a sibling header is never claimed.
-    const scope =
-      (pre.closest('code-block') as HTMLElement | null) || pre.parentElement || pre;
+    const scope = resolveCodeBlockScope(pre);
     if (
       hasInlineBtn(scope) ||
       hasInlineBtn(pre) ||

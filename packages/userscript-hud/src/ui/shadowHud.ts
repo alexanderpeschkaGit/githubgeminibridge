@@ -13,7 +13,7 @@ import {
 } from '../services/patchOidStore';
 import {
   enqueueHarvestedPatch,
-  isDuplicatePatch,
+  findDuplicatePatchId,
   runPatchQueue,
 } from '../services/patchQueue';
 import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } from './hudStylesAndDom';
@@ -159,6 +159,9 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       openPanel,
       updateState: (partial) => updateState(partial),
       onApplyPatchCustom,
+      onMarkQueueSuperseded: (ids) => {
+        supersededPatchIds = new Set(ids);
+      },
     });
 
   dom.clearQueueBtn.onclick = () => {
@@ -225,7 +228,11 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     closePanel,
     handleApplyPatch,
     addHarvestedPatch: (patch: HarvestedPatch) => {
-      if (isDuplicatePatch(state.harvestedPatches, patch)) return;
+      const duplicateId = findDuplicatePatchId(state.harvestedPatches, patch);
+      if (duplicateId !== null) {
+        supersededPatchIds.delete(duplicateId);
+        return;
+      }
       if (supersededPatchIds.size > 0) {
         state.harvestedPatches = state.harvestedPatches.filter((p) => !supersededPatchIds.has(p.id));
         supersededPatchIds.clear();

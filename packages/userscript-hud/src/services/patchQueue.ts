@@ -5,15 +5,23 @@ import { computePatchSignature, createStablePatchId } from './patchIdentity';
 export const MAX_QUEUED_PATCHES = 20;
 
 /**
- * A patch is a duplicate when it was already harvested by id or carries an identical payload.
+ * Returns the id of an existing queued patch matching by id or canonical payload signature.
  */
-export function isDuplicatePatch(queue: HarvestedPatch[], candidate: HarvestedPatch): boolean {
+export function findDuplicatePatchId(queue: HarvestedPatch[], candidate: HarvestedPatch): string | null {
   const signature = computePatchSignature(candidate.mode, candidate.payload);
-  return queue.some(
+  const found = queue.find(
     (existing) =>
       existing.id === candidate.id ||
       computePatchSignature(existing.mode, existing.payload) === signature
   );
+  return found ? found.id : null;
+}
+
+/**
+ * A patch is a duplicate when it was already harvested by id or carries an identical payload.
+ */
+export function isDuplicatePatch(queue: HarvestedPatch[], candidate: HarvestedPatch): boolean {
+  return findDuplicatePatchId(queue, candidate) !== null;
 }
 
 export function enqueueHarvestedPatch(
@@ -52,8 +60,11 @@ export function coalescePatchesIntoBatch(queue: HarvestedPatch[]): HarvestedPatc
     if (operations.length === 0) return null;
 
     for (const operation of operations) {
-      if (!operation.path || !operation.path.trim()) return null;
-      patches.push(operation);
+      if (findRepoPathIssue(operation.path) !== null) return null;
+      patches.push({
+        ...operation,
+        path: normalizeRepoPath(operation.path),
+      });
     }
 
     for (const pattern of entry.payload.preflight?.forbidPatterns ?? []) {
@@ -182,22 +193,19 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
       }
       const existingOp = lastIdx >= 0 ? validOperations[lastIdx] : undefined;
 
-      if (existingOp) {
-        if (existingOp.action === 'modify' && clonedOp.action === 'modify' && existingOp.blocks && clonedOp.blocks) {
-          existingOp.blocks.push(...clonedOp.blocks);
-        } else if (
-          existingOp.action === 'create' &&
-          clonedOp.action === 'modify' &&
-          typeof existingOp.fullContent === 'string' &&
-          clonedOp.blocks &&
-          clonedOp.blocks.length > 0
-        ) {
-          // Keep create followed by modify in sequence so applyPatchesInMemory chains them in workingFiles
-          validOperations.push(clonedOp);
-        } else {
-          validOperations[lastIdx] = clonedOp;
-        }
+      if (
+        existingOp &&
+        existingOp.action === 'modify' &&
+        clonedOp.action === 'modify' &&
+        existingOp.blocks &&
+        clonedOp.blocks &&
+        typeof existingOp.fullContent !== 'string' &&
+        typeof clonedOp.fullContent !== 'string'
+      ) {
+        existingOp.blocks.push(...clonedOp.blocks);
       } else {
+        // Keep sequential operations (e.g. create -> modify, modify(fullContent) -> modify(blocks), modify -> delete)
+        // so applyPatchesInMemory chains them in workingFiles without dropping earlier operations.
         validOperations.push(clonedOp);
       }
     }

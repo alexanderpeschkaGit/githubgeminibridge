@@ -708,18 +708,56 @@ const {
     'requireExports keys are canonicalized via normalizeRepoPath'
   );
 
-  // 6. parseV2PatchPayloadFromCode preserves JSON strings containing inner backtick fences
-  const fenceInsideString = '```md\n```json\n' + JSON.stringify({
+  // 6. parseV2PatchPayloadFromCode preserves JSON strings containing inner backtick fences and surrounding prose braces
+  const fenceInsideString = '```md\nFix for `function demo() {}`:\n```json\n' + JSON.stringify({
     commitMessage: 'docs: example fence',
     patches: [{
       path: 'src/prompt.ts',
       action: 'modify',
       blocks: [{ search: 'old', replace: 'Example:\n```json\n{ "a": 1 }\n```' }],
     }],
-  }) + '\n```\n```';
+  }) + '\n```\nNotes: `{ done: true }`\n```';
   const parsedWithInnerFence = parseV2PatchPayloadFromCode(fenceInsideString);
-  assert.ok(parsedWithInnerFence, 'parses JSON payload even when replace string contains backtick fences');
+  assert.ok(parsedWithInnerFence, 'parses JSON payload even when replace string contains backtick fences and prose has braces');
   assert.equal(parsedWithInnerFence.patches[0].path, 'src/prompt.ts');
+
+  // 7. Streaming guardrails: incomplete diff or incomplete V2 JSON with a path hint must return null
+  const incompleteDiff = '// filepath: src/streaming.ts\n<<<<<<< SEARCH\nconst x = 1;\n=======\nconst x = 2;';
+  assert.equal(
+    convertLegacyBlocksToV2Payload(incompleteDiff, 'src/streaming.ts'),
+    null,
+    'incomplete streaming SEARCH/REPLACE block must not fall through to full-file create'
+  );
+  const incompleteJson = '{\n  "commitMessage": "feat: streaming",\n  "patches": [\n    { "path": "src/a.ts"';
+  assert.equal(
+    convertLegacyBlocksToV2Payload(incompleteJson, 'src/a.ts'),
+    null,
+    'incomplete streaming V2 JSON must not fall through to full-file create'
+  );
+
+  // 8. Bare path comments between multi-file diff sections are resolved
+  const bareMultiFileDiff = `// src/first.ts\n${blockA}\n\n// src/second.ts\n${blockB}`;
+  const bareMultiParsed = convertLegacyBlocksToV2Payload(bareMultiFileDiff);
+  assert.ok(bareMultiParsed, 'parses multi-file diff with bare path comments');
+  assert.deepEqual(
+    bareMultiParsed.payload.patches.map((p) => p.path),
+    ['src/first.ts', 'src/second.ts'],
+    'resolves bare path comment for second diff section'
+  );
+
+  // 9. Multiple sibling <pre> blocks in a shared parent container (no <code-block> wrapper) are all harvested
+  const siblingEnv = mountHarvester(startDomHarvester);
+  const sharedContainer = siblingEnv.document.createElement('div');
+  siblingEnv.document.body.appendChild(sharedContainer);
+  for (const file of ['src/one.ts', 'src/two.ts']) {
+    const pre = siblingEnv.document.createElement('pre');
+    const code = siblingEnv.document.createElement('code');
+    code.textContent = payloadJson({ commitMessage: `feat: ${file}`, pathName: file });
+    pre.appendChild(code);
+    sharedContainer.appendChild(pre);
+  }
+  siblingEnv.observer.callback();
+  assert.equal(siblingEnv.harvested.length, 2, 'both sibling <pre> blocks in a shared container are harvested');
 }
 
 console.log(
