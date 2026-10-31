@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.3
+// @version      0.80.4
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -441,11 +441,15 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
   // src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
-  function isDuplicatePatch(queue, candidate) {
+  function findDuplicatePatchId(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
-    return queue.some(
+    const found = queue.find(
       (existing) => existing.id === candidate.id || computePatchSignature(existing.mode, existing.payload) === signature
     );
+    return found ? found.id : null;
+  }
+  function isDuplicatePatch(queue, candidate) {
+    return findDuplicatePatchId(queue, candidate) !== null;
   }
   function enqueueHarvestedPatch(queue, patch) {
     if (isDuplicatePatch(queue, patch)) return queue;
@@ -517,14 +521,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
           }
         }
         const existingOp = lastIdx >= 0 ? validOperations[lastIdx] : void 0;
-        if (existingOp) {
-          if (existingOp.action === "modify" && clonedOp.action === "modify" && existingOp.blocks && clonedOp.blocks) {
-            existingOp.blocks.push(...clonedOp.blocks);
-          } else if (existingOp.action === "create" && clonedOp.action === "modify" && typeof existingOp.fullContent === "string" && clonedOp.blocks && clonedOp.blocks.length > 0) {
-            validOperations.push(clonedOp);
-          } else {
-            validOperations[lastIdx] = clonedOp;
-          }
+        if (existingOp && existingOp.action === "modify" && clonedOp.action === "modify" && existingOp.blocks && clonedOp.blocks && typeof existingOp.fullContent !== "string" && typeof clonedOp.fullContent !== "string") {
+          existingOp.blocks.push(...clonedOp.blocks);
         } else {
           validOperations.push(clonedOp);
         }
@@ -599,6 +597,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   .hud-trigger-badge.patching { background: #d97706; color: #ffffff; }
   .hud-trigger-badge.committed { background: #059669; color: #ffffff; }
   .hud-trigger-badge.error { background: #dc2626; color: #ffffff; }
+  .hud-trigger-badge.target_branch_stale { background: #d97706; color: #ffffff; }
 
   .hud-panel {
     position: fixed; bottom: 80px; right: 24px; width: 440px;
@@ -723,6 +722,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   .hud-status-box.info { background: #0c4a6e; color: #7dd3fc; border-color: #0284c7; }
   .hud-status-box.success { background: #064e3b; color: #6ee7b7; border-color: #059669; }
   .hud-status-box.error { background: #7f1d1d; color: #fca5a5; border-color: #dc2626; }
+  .hud-status-box.warning { background: #78350f; color: #fde68a; border-color: #d97706; }
   .hud-status-box.idle { background: #1e293b; color: #94a3b8; border-color: #334155; }
   .hud-toggle-label {
     display: flex; align-items: center; gap: 8px; cursor: pointer;
@@ -1925,7 +1925,8 @@ Fix Instructions:
       GIT_CONFLICT: "error",
       COMMITTED: "success",
       MIXING: "info",
-      PATCHING: "info"
+      PATCHING: "info",
+      TARGET_BRANCH_STALE: "warning"
     };
     dom.statusBox.className = `hud-status-box ${statusClasses[state.status] || "idle"}`;
     dom.statusBox.textContent = "";
@@ -2398,7 +2399,7 @@ Fix Instructions:
     }
     return false;
   }
-  async function applyHudPatch(patch, { config, state, openPanel, updateState, onApplyPatchCustom }) {
+  async function applyHudPatch(patch, { config, state, openPanel, updateState, onApplyPatchCustom, onMarkQueueSuperseded }) {
     if (onApplyPatchCustom) {
       return onApplyPatchCustom(patch);
     }
@@ -2452,6 +2453,14 @@ Fix Instructions:
       if (state.headOid) {
         const patchReq = buildWorkerPatchRequest(config, state, effectivePayload);
         const res = await requestWorkerPatch(config, patchReq);
+        if (res.status === "TARGET_BRANCH_STALE") {
+          updateState({
+            status: "TARGET_BRANCH_STALE",
+            statusMessage: `\u26A0\uFE0F ${res.errorMessage || "Target branch is strictly behind base branch."}`,
+            lastErrors: []
+          });
+          return false;
+        }
         if (res.status === "COMMITTED") {
           state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
           applyPatchResponseOids(config, state, res);
@@ -2466,7 +2475,18 @@ Fix Instructions:
           return true;
         }
         if (res.status === "PREFLIGHT_FAILED") {
-          return handlePreflightFailure(res, config, state, updateState, "Preflight failed.");
+          onMarkQueueSuperseded?.([patch.id]);
+          const patchTargetFiles = Array.from(
+            new Set(effectivePayload.patches.map((p) => p.path).filter(Boolean))
+          );
+          return handlePreflightFailure(
+            res,
+            config,
+            state,
+            updateState,
+            "Preflight failed.",
+            patchTargetFiles
+          );
         }
         if (res.status === "GIT_CONFLICT" || res.status === "ERROR") {
           return handleConflictOrError(res, config, state, updateState);
@@ -2506,7 +2526,7 @@ Fix Instructions:
       statusMessage: deps.dryRun ? `\u23F3 Checking ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) (Dry-Run)...` : `\u23F3 Validating and applying ${totalSnippets} snippet(s) across ${targetFiles.length} file(s)...`
     });
     try {
-      if (!isPatchSnapshotReady(deps.state)) {
+      if (partition.validBatch && !isPatchSnapshotReady(deps.state)) {
         deps.updateState({
           status: "PATCHING",
           statusMessage: `\u{1F504} No snapshot OID \u2014 resolving current HEAD of ${deps.config.repo}@${deps.config.branch}...`
@@ -2532,6 +2552,14 @@ Fix Instructions:
           effectiveDryRun
         );
         workerRes = await requestWorkerPatch(deps.config, patchReq);
+        if (workerRes.status === "TARGET_BRANCH_STALE") {
+          deps.updateState({
+            status: "TARGET_BRANCH_STALE",
+            statusMessage: `\u26A0\uFE0F ${workerRes.errorMessage || "Target branch is strictly behind base branch."}`,
+            lastErrors: []
+          });
+          return false;
+        }
         if (workerRes.status === "GIT_CONFLICT" || workerRes.status === "ERROR") {
           return handleConflictOrError(workerRes, deps.config, deps.state, deps.updateState);
         }
@@ -2683,7 +2711,10 @@ Fix Instructions:
       state,
       openPanel,
       updateState: (partial) => updateState(partial),
-      onApplyPatchCustom
+      onApplyPatchCustom,
+      onMarkQueueSuperseded: (ids) => {
+        supersededPatchIds = new Set(ids);
+      }
     });
     dom.clearQueueBtn.onclick = () => {
       state.harvestedPatches = [];
@@ -2744,7 +2775,11 @@ Fix Instructions:
       closePanel,
       handleApplyPatch,
       addHarvestedPatch: (patch) => {
-        if (isDuplicatePatch(state.harvestedPatches, patch)) return;
+        const duplicateId = findDuplicatePatchId(state.harvestedPatches, patch);
+        if (duplicateId !== null) {
+          supersededPatchIds.delete(duplicateId);
+          return;
+        }
         if (supersededPatchIds.size > 0) {
           state.harvestedPatches = state.harvestedPatches.filter((p) => !supersededPatchIds.has(p.id));
           supersededPatchIds.clear();
@@ -2878,27 +2913,66 @@ Fix Instructions:
   function isSearchReplace(text) {
     return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
   }
+  function isValidPatchBlock(b) {
+    return Boolean(b && typeof b === "object" && typeof b.search === "string" && typeof b.replace === "string");
+  }
   function isValidPatchOperation(p) {
     if (!p || typeof p.path !== "string") return false;
     if (p.action === "modify") {
-      return Array.isArray(p.blocks) || typeof p.fullContent === "string";
+      const hasValidBlocks = Array.isArray(p.blocks) && p.blocks.length > 0 && p.blocks.every(isValidPatchBlock);
+      return hasValidBlocks || typeof p.fullContent === "string";
     }
     if (p.action === "create") {
       return typeof p.fullContent === "string";
     }
     return p.action === "delete";
   }
+  function extractBalancedJsonObject(text, startIndex) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = startIndex; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === "\\") {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === "{") {
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          return text.slice(startIndex, i + 1);
+        }
+      }
+    }
+    return null;
+  }
   function tryParseGeminiPayload(candidate) {
     const trimmed = candidate.trim();
-    const startIdx = trimmed.indexOf("{");
-    const endIdx = trimmed.lastIndexOf("}");
-    if (startIdx === -1 || endIdx <= startIdx) return null;
-    try {
-      const obj = JSON.parse(trimmed.substring(startIdx, endIdx + 1));
-      if (obj && typeof obj === "object" && typeof obj.commitMessage === "string" && Array.isArray(obj.patches) && obj.patches.length > 0 && obj.patches.every(isValidPatchOperation)) {
-        return obj;
+    let searchFrom = 0;
+    while (searchFrom < trimmed.length) {
+      const startIdx = trimmed.indexOf("{", searchFrom);
+      if (startIdx === -1) break;
+      const balanced = extractBalancedJsonObject(trimmed, startIdx);
+      if (balanced) {
+        try {
+          const obj = JSON.parse(balanced);
+          if (obj && typeof obj === "object" && typeof obj.commitMessage === "string" && Array.isArray(obj.patches) && obj.patches.length > 0 && obj.patches.every(isValidPatchOperation)) {
+            return obj;
+          }
+        } catch {
+        }
       }
-    } catch {
+      searchFrom = startIdx + 1;
     }
     return null;
   }
@@ -2923,26 +2997,131 @@ Fix Instructions:
   }
   function extractSectionPath(sectionText) {
     if (!sectionText || !sectionText.trim()) return "";
-    const fromCode = extractPathFromCode(sectionText);
-    if (fromCode) return normalizeRepoPath(fromCode);
     const lines = sectionText.split(/\r?\n/);
     for (let i = lines.length - 1; i >= 0; i--) {
-      const headerMatch = lines[i].match(/^\s*#{1,6}\s+(.+)$/);
-      if (!headerMatch || !headerMatch[1]) continue;
-      const cleaned = headerMatch[1].replace(/[`*]/g, "").trim();
-      const labeled = cleaned.match(
-        /(?:filepath|file|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i
-      );
-      if (labeled && labeled[1]) return normalizeRepoPath(labeled[1]);
-      const candidate = cleaned.replace(/[:;,]+$/, "").trim();
-      if (/^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/.test(candidate)) {
-        return normalizeRepoPath(candidate);
+      const trimmedLine = lines[i].trim();
+      if (!trimmedLine) continue;
+      const inlineMatch = trimmedLine.match(/(?:\/\/|#|\/\*)\s*(?:filepath|file|path):\s*([^\r\n*]+)/i);
+      if (inlineMatch && inlineMatch[1]) {
+        return normalizeRepoPath(inlineMatch[1].trim().replace(/^["']|["']$/g, ""));
+      }
+      const bareComment = trimmedLine.match(/^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/);
+      if (bareComment && bareComment[1]) {
+        return normalizeRepoPath(bareComment[1]);
+      }
+      const headerMatch = trimmedLine.match(/^#{1,6}\s+(.+)$/);
+      if (headerMatch && headerMatch[1]) {
+        const cleaned = headerMatch[1].replace(/[`*]/g, "").trim();
+        const labeled = cleaned.match(
+          /(?:filepath|file|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i
+        );
+        if (labeled && labeled[1]) return normalizeRepoPath(labeled[1]);
+        const candidate = cleaned.replace(/[:;,]+$/, "").trim();
+        if (/^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/.test(candidate)) {
+          return normalizeRepoPath(candidate);
+        }
       }
     }
+    const fromCode = extractPathFromCode(sectionText);
+    if (fromCode) return normalizeRepoPath(fromCode);
     return "";
+  }
+  function isV2PayloadEnvelope(text) {
+    if (!text || !text.trim()) return false;
+    let clean = text.trim();
+    const fenceMatch = clean.match(/^```(?:json|md|markdown)?\s*([\s\S]*?)(?:```|$)/i);
+    if (fenceMatch) {
+      clean = fenceMatch[1].trim();
+    }
+    const innerFenceOpen = clean.match(/```(?:json)?\s*\{/i);
+    if (innerFenceOpen && innerFenceOpen.index !== void 0) {
+      clean = clean.slice(innerFenceOpen.index + innerFenceOpen[0].length - 1).trim();
+    }
+    const firstBrace = clean.indexOf("{");
+    if (firstBrace === -1) return false;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let currentKey = "";
+    let collectingKey = false;
+    const topLevelKeys = /* @__PURE__ */ new Set();
+    for (let i = firstBrace; i < clean.length; i++) {
+      const ch = clean[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          if (collectingKey) currentKey += ch;
+        } else if (ch === "\\") {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+          if (collectingKey) {
+            collectingKey = false;
+            let j = i + 1;
+            while (j < clean.length && /\s/.test(clean[j])) j++;
+            if (j < clean.length && clean[j] === ":") {
+              topLevelKeys.add(currentKey);
+              if (currentKey === "commitMessage" || currentKey === "patches") {
+                return true;
+              }
+            }
+            currentKey = "";
+          }
+        } else if (collectingKey) {
+          currentKey += ch;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        if (depth === 1) {
+          collectingKey = true;
+          currentKey = "";
+        }
+      } else if (ch === "{") {
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          break;
+        }
+      }
+    }
+    if (collectingKey && (currentKey === "commitMessage" || currentKey === "patches")) {
+      return true;
+    }
+    return topLevelKeys.has("commitMessage") || topLevelKeys.has("patches");
   }
   function convertLegacyBlocksToV2Payload(codeText, defaultPath) {
     if (!codeText || codeText.trim().length === 0) return null;
+    if (isV2PayloadEnvelope(codeText)) {
+      let isCompleteJson = false;
+      try {
+        let clean = codeText.trim();
+        const fenceMatch = clean.match(/^```(?:json|md|markdown)?\s*([\s\S]*?)\s*```$/i);
+        if (fenceMatch) clean = fenceMatch[1].trim();
+        const firstBrace = clean.indexOf("{");
+        if (firstBrace !== -1) {
+          const balanced = extractBalancedJsonObject(clean, firstBrace);
+          if (balanced) {
+            JSON.parse(balanced);
+            isCompleteJson = true;
+          }
+        }
+      } catch {
+        isCompleteJson = false;
+      }
+      if (!isCompleteJson) {
+        return null;
+      }
+    }
+    if (codeText.includes("<<<<<<<")) {
+      const openCount = (codeText.match(/^<{7}/gm) || []).length;
+      const closeCount = (codeText.match(/^>{7}/gm) || []).length;
+      if (openCount === 0 || openCount !== closeCount) {
+        return null;
+      }
+    }
     const detectedPath = normalizeRepoPath(extractPathFromCode(codeText) || defaultPath || "");
     const hasDiffBlocks = isSearchReplace(codeText);
     const describePath = detectedPath || "no path detected";
@@ -3020,6 +3199,18 @@ Fix Instructions:
     if (!root || typeof root.querySelector !== "function") return false;
     return Boolean(root.querySelector(".ggb-inline-btn"));
   }
+  function resolveCodeBlockScope(pre) {
+    const closestBlock = pre.closest("code-block");
+    if (closestBlock) return closestBlock;
+    const parent = pre.parentElement;
+    if (parent && typeof parent.querySelectorAll === "function") {
+      const codeBlocksInParent = parent.querySelectorAll("pre, code-block");
+      if (codeBlocksInParent.length <= 1) {
+        return parent;
+      }
+    }
+    return pre;
+  }
   function findCopyButton(roots) {
     for (const root of roots) {
       if (!root || typeof root.querySelector !== "function") continue;
@@ -3078,7 +3269,7 @@ Fix Instructions:
       if (processedSet.has(pre) || pre.getAttribute("data-ggh-processed") === "true") {
         return;
       }
-      const scope = pre.closest("code-block") || pre.parentElement || pre;
+      const scope = resolveCodeBlockScope(pre);
       if (hasInlineBtn(scope) || hasInlineBtn(pre) || hasInlineBtn(pre.shadowRoot) || hasInlineBtn(scope.shadowRoot)) {
         processedSet.add(pre);
         pre.setAttribute("data-ggh-processed", "true");
@@ -3098,6 +3289,27 @@ Fix Instructions:
           timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString()
         };
       } else {
+        if (isV2PayloadEnvelope(codeText)) {
+          let isCompleteJson = false;
+          try {
+            let clean = codeText.trim();
+            const fenceMatch = clean.match(/^```(?:json|md|markdown)?\s*([\s\S]*?)\s*```$/i);
+            if (fenceMatch) clean = fenceMatch[1].trim();
+            const firstBrace = clean.indexOf("{");
+            if (firstBrace !== -1) {
+              const balanced = extractBalancedJsonObject(clean, firstBrace);
+              if (balanced) {
+                JSON.parse(balanced);
+                isCompleteJson = true;
+              }
+            }
+          } catch {
+            isCompleteJson = false;
+          }
+          if (!isCompleteJson) {
+            return;
+          }
+        }
         const detectedPath = extractPathFromCode(codeText, pre);
         const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || void 0);
         if (converted && (isSearchReplace(codeText) || Boolean(detectedPath))) {
@@ -3267,11 +3479,11 @@ Fix Instructions:
     });
     if (typeof document !== "undefined") {
       if (document.body) {
-        observer.observe(document.body, { childList: true, subtree: true });
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
       } else {
         document.addEventListener("DOMContentLoaded", () => {
           if (document.body) {
-            observer.observe(document.body, { childList: true, subtree: true });
+            observer.observe(document.body, { childList: true, subtree: true, characterData: true });
           }
         });
       }
