@@ -5,56 +5,80 @@ description: >-
   Triggered when the user uses the #exec tag or /exec command.
 ---
 
-# Exec Workflow
+# Exec Workflow (`#exec <planId> <N|all>`)
 
-- **Plan Binding (Required):** Execute by explicit plan ID: `#exec <planId> <N|all>`. If `<planId>` omitted, lookup `.tmp/plan-registry.json` for a `RUNNING` plan; if exactly one `QUEUED` plan exists, ask via `question` to select it (never guess "most recent"). Load the plan from its artifact path (`.tmp/plans/<planId>.md`). If `git rev-parse HEAD` differs from `baseSha`, warn and require confirmation before proceeding. Lock the plan's `scope.files` via `node scripts/plan-registry.mjs lock <planId> <files...>` before starting; release on completion/abort.
-- Implement step `N` from the bound plan. If `N` is `all`, implement all remaining steps in order without stopping for routine confirmations.
-  1. **Tier 1 — `FLASH_LITE` (Score 1–3, Trivial / Mechanical):** Route isolated copy, config, type, or CSS edits (<300 lines) to `flash_lite` (`invoke_subagent` with `TypeName: 'self'`, `Model: 'flash_lite'`, `Role: 'Step Executor'`) or execute inline under `.agents/skills/flash/SKILL.md` per the Inline vs. Subagent Decision Rule below.
-  2. **Tier 2 — `FLASH` (Score 4–6, Standard Scoped Step):** Default workhorse mode. Route well-bounded component/hook steps (<= 3–4 files, <500 lines) to `flash` (`invoke_subagent` with `TypeName: 'self'`, `Model: 'flash'`, `Role: 'Step Executor'`) or execute inline under `.agents/skills/flash/SKILL.md` per the Inline vs. Subagent Decision Rule below.
-  3. **Tier 3 — `PRO` (Score 7–10, Architectural / Unsliced 500+ Line Files):** Route complex cross-file changes (edge-worker request/commit pipeline, HUD patch-queue and OID state, GitHub GraphQL/tarball contracts) or unsliced files >=500 lines (`AGENTS.md` Mandatory Pro Decomposition) to a `pro` subagent (`invoke_subagent` with `TypeName: 'self'`, `Model: 'pro'`, `Role: 'Step Executor'`). **Flash Override:** If the plan specifies `Flash-Only Viability: YES` or the user explicitly invoked `#flash`, steps touching files >=500 lines may be executed by a `flash` subagent (or inline) provided the step is sliced to Score <= 6 and restricted to scoped Anchor-Snippet edits without whole-file rewrites. When Score >= 8 or `Recommended Execution Model: PRO` applies to a high blast-radius change, enforce **Pro Swarm Execution (Red-Teaming)**: after the Implementer completes the changes, spawn a read-only auditor via `invoke_subagent` with `TypeName: 'research'`, `Model: 'pro'`, `Role: 'Red-Team Auditor'`, immediately output `[🛡️ Watch Red-Team Audit](conversation://<reviewer-conversation-id>; Mode A only, in Kilo report the returned task_id)`, and require a compact 2-point audit report (`1. Verdict: [PASS | BLOCKING_ISSUES]`, `2. Findings: [Concise file:line bullets or "None"]`) _before_ finalizing the turn.
-  4. **Hybrid Plans (`HYBRID`):** Execute `FLASH_LITE` and `FLASH` steps using Flash subagents, and escalate **only** the `PRO`-tagged step(s) to a `pro` subagent.
-  - **Inline vs. Subagent Decision Rule:** Execute a Tier 1 (`FLASH_LITE`) or Tier 2 (`FLASH`) step **inline** under `.agents/skills/flash/SKILL.md` when running a single step (`#exec N`) AND the active session model already matches (or is lighter than) the step's target tier. **Delegate via `invoke_subagent` (`TypeName: 'self'`)** when the active session model differs from the step's target tier (e.g., Coordinator is `Pro` and step is `FLASH`/`FLASH_LITE`, or Coordinator is `Flash` and step is `PRO`), or when executing multi-step plans (`#exec all`) where subagent isolation prevents context bloat.
-  - **Subagent Context & Observability Contract:** Because spawned subagents start with a fresh conversation context and cannot see parent chat history, whenever delegating a step to a subagent, pass the bound `planId`, `batchId`/step, `baseSha`, artifact path, complete step specification, and `scope.files` inside `Prompt`. Forbid subagents from running `git commit`, enforce the standardized 3-point return format (`1. Status: [SUCCESS | BLOCKED | FAILED]`, `2. Files Modified: [Relative paths]`, `3. Summary: [1-2 sentences]`) plus `planId` and `batchId`, and immediately emit `[⚡ Watch Step Stream](conversation://<subagent-conversation-id>; Mode A only, in Kilo report the returned task_id)` in chat before waiting.
-- **Auto-Escalation on Validation Failure (`FLASH` → `PRO`) & Zero-PRO Guard:**
-  - **Standard Auto-Escalation:** If a `flash_lite` or `flash` subagent/step produces a type, lint, or test failure that is not resolved after **one** targeted diagnostic and repair attempt, immediately escalate that step to a `pro` subagent (`TypeName: 'self'`, `Model: 'pro'`) instead of repeating failed Flash retries.
-  - **Budget Mode (Zero-PRO; `--no-pro`, `--no-pro-escalation`, `#dflash`, or explicit user instruction):** When budget mode is active, automatic escalation to `pro` is strictly disabled. After **one** failed Flash repair attempt, immediately halt execution and enter **Graceful Pause (Dirty Inspection)**: preserve all modified intermediate files on disk (never run destructive `git checkout` or `git reset`), output targeted diagnostic diffs (`git diff`) and compiler errors, and alert the user: `[Graceful Pause (Dirty Inspection): Step halted without PRO escalation. Modified files preserved on disk for manual inspection.]`.
-- **Pro Quota-Exhaustion & Graceful Fallback (`PRO` Quota / Rate-Limit Exceeded):** If a step requires `PRO` (or auto-escalates to `PRO`) but the Pro model quota is exhausted (Rate Limit / 429 / ResourceExhausted):
-  1. Fall back to `FLASH` with strictly enforced Single-Action Protocol from `flash/SKILL.md`, targeted diagnostic logging, and micro-batched search/replace edits.
-  2. If `FLASH` also cannot resolve the step after 2 attempts due to deep architectural limits (e.g., file > 500 lines or complex cross-domain state rewrites), execute a **Graceful Pause (Dirty Inspection)**: preserve all modified intermediate files on disk without destructive rollbacks (`git checkout` or `git reset`), run diagnostic commands (`git diff`, compiler output) to pinpoint exact failing lines, and alert the user: `[Graceful Pause: Step halted. Modified files preserved on disk for manual inspection. Please inspect diagnostics, switch model, or resolve blocker.]`. Never enter an infinite retry loop.
-- **Acceptance & Invariant Checklist Gate:** In addition to compilers and linters, the Executor must verify all items in the plan's `Acceptance & Invariant Checklist` point by point before finalizing the batch or turn.
-- **Tiered Testing Strategy (Targeted vs. Full Suite):** This repository has no root `package.json`; validation runs per package.
-  - **Intermediate Steps (`#exec N`):** Run only the targeted gate for the touched package (`npm run typecheck` inside `packages/edge-worker`, `packages/userscript-hud`, or `packages/local-cli`). Avoid the full regression suite on every micro-step to minimize latency.
-  - **Plan Completion (`#exec all` or Final Step):** Run the complete gate before staging and committing: `npm run typecheck` in every touched package, then `node scripts/patches_and_tests/worker-smoke.mjs`, then `node scripts/patches_and_tests/run-regressions.mjs`.
-- **Flash Execution Mode & Single-Action Protocol:** When executing under a Flash model (or if `#flash` or `Recommended Execution Model: FLASH` is present), strictly enforce the Single-Action Protocol from `flash/SKILL.md` (execute one state-changing command per step, never chain commands with `&&` or `;`, run diagnostic commands before attempting secondary fixes, and keep reasoning concise). Delegate isolated/repetitive file edits to a `flash` subagent to save time, or execute directly under these stability rules.
-- **Multi-IDE Capability Translation:** Adapt subagent calls automatically to the active host IDE (see `.agents/rules/multi-ide-setup.md`):
-  - **Mode A (Native Multi-Model Subagents, e.g., Antigravity):** Use `invoke_subagent` with `TypeName: 'self'` (or `'research'` for Red-Team audits) and `Model: 'flash_lite' | 'flash' | 'pro'`.
-  - **Mode B (Fixed-Model Subagents / Rate-Limited Agents, e.g., Kimi Code / CLI):** Spawn `inherit` subagents for context isolation (respecting sequential rate limits in `KIMI.md` where applicable) and enforce `.agents/skills/flash/SKILL.md` for Tier 1–2 steps.
-  - **Mode C (Single-Agent IDEs without Subagents, e.g., Cline / Windsurf):** Execute Tier 1–2 steps directly under `.agents/skills/flash/SKILL.md`. Before a Tier 3 (`PRO`, Score >= 7) step, if running on a lightweight model, advise switching to the IDE's high-reasoning model; if already on a high-reasoning model, perform a dedicated self-review pass before committing.
-  - **Mode D (Cursor Task Subagents):** Map `invoke_subagent` → Cursor `Task` (`generalPurpose` for implementers, `explore` for read-only auditors). Default `model: "inherit"`; never pass `flash_lite`/`flash`/`pro` as Cursor model slugs. Tier 1–2 = Flash behavior (inline for single matching `#exec N`, else `Task`). Tier 3 = high-reasoning parent + self-review / `explore` auditor at Score >= 8. Link agents as `[Name](agent-id)`; persist plans in `.tmp/`.
-  - **Mode E (Kilo Code `task` Subagents):** Map `invoke_subagent` → `task` (`general` implementer, `explore` auditor). Omit `model`, `provider`, and `variant` so the subagent inherits the active model; overrides only on explicit user request. Report the returned `task_id`; no `conversation://` links. Tier 1-2 = Flash behavior (inline for a single matching `#exec N`, else `task`). Tier 3 = self-review / `explore` auditor at Score >= 8. Persist plans in `.tmp/`.
-- **Plan Continuity:** Plans are addressed by `planId` and loaded from `.tmp/plans/<planId>.md` via the registry. Plans do not rely on chat history order. For cross-session execution, use the registry/artifact; if the referenced plan is unavailable or the requested step cannot be identified safely, ask for the plan ID instead of guessing.
-- Apply the global preflight, scope, validation, and decision-gate contract in `AGENTS.md`; if new material ambiguity appears, pause and run `#grillme`.
-- If `N` is `all`, implement all remaining steps in order without stopping for routine confirmations.
-- Edit files directly rather than returning source code for manual copying.
-- **Direct File Modification (No Code Blocks in Chat):** Apply all changes directly using file tools. Do NOT output code blocks, file headers, or source code in chat responses unless the user explicitly requests them.
-- Preserve existing user changes and all protected behavior defined in project guidelines (like AGENTS.md if present).
-- After every implemented step, check environment integrity, build configurations, and relevant platform behavior. Fix discovered regressions before continuing.
-- Run the repository's relevant type-check, tests, or build when feasible and report the actual results.
-- Stop for authorization only when an irreversible action, external side effect (e.g., `git push`, Cloudflare deployment), new authority, or material scope expansion is required.
-- **Combo Anti-Phantom Diff Audit (Subagent Return):** Before accepting any subagent's `SUCCESS`, run `git diff --name-only` and `git status --porcelain` in the Coordinator terminal and reconcile the union of both outputs against the bound plan's `scope.files` (and step File Inventory). If any assigned file is completely untouched on disk or any modified file is outside `scope.files` (`SCOPE_VIOLATION`), reject the report as `INCOMPLETE_TASK` / `PHANTOM_REPORTING` and run a targeted completion pass before validation. Mark plan status via `node scripts/plan-registry.mjs start/complete` as appropriate and release locks on completion/abort.
-- **Git & Checkpoint Policy (Intermediate Steps vs. Plan Completion):**
-  - **Intermediate Steps (`#exec N` where subsequent steps remain):** Run step validation (`npm run typecheck` in the touched package) and report status, leaving changes uncommitted without bumping any `package.json` version (unless an optional intermediate step checkpoint is explicitly requested).
-  - **Plan Completion (`#exec all` or the final step of the plan):** Autonomously execute the following 6-point policy upon completing all planned steps (never leave the checkpoint commit unexecuted, pending, or deferred to the user):
-  1. **Pre-Commit Verification:** Run `npm run typecheck` in every touched package plus `node scripts/patches_and_tests/worker-smoke.mjs`. If type-checks or probes fail, resolve them first or abort; never commit broken code. Bump the patch version of the touched package(s) — `packages/userscript-hud` uses `npm run release:patch` so the userscript `@version` banner stays in sync.
-  2. **Branch Check:** This repository develops directly on `main`; dedicated `feature/*`/`task/*` branches are optional. Warn only when the working tree is dirty with unrelated changes, and never `git push` without explicit user instruction.
-  3. **Scope Inspection:** Run `git status --short` to inspect working tree status. If untracked or unexpected out-of-scope files exist, warn in the final summary, but proceed with staging only the explicitly planned files.
-  4. **Explicit Staging:** Stage modified and planned files explicitly by relative path (`git add <file1> <file2>`). NEVER stage blindly with `git add .` or `git add -A`.
-  5. **Conventional Commit:** Create an autonomous commit using Conventional Commits format (`type(scope): subject\n\nbody`) including a concise rationale in the commit body.
-  6. **Remote Safety:** NEVER push automatically to remote (`git push` is an irreversible external action and a strict Hard Stop requiring explicit user instruction).
-- **Final response:**
-  - Summarize what changed and why in clear, concise bullet points.
-  - List validation performed and any remaining risks.
-  - Explicitly state the required refresh/deployment action needed from the user.
-  - Do not reproduce source code or code blocks in the chat response.
+Global contract (`AGENTS.md` preflight, scope, `< 500` lines, Decision Gate, Single-Action Protocol) applies and is not restated here. On new material ambiguity, pause and run `#grillme`.
+
+## 0. Context Budget (Coordinator)
+
+- Load plan metadata via `node scripts/plan-registry.mjs get <planId>` (one JSON line); never read the whole `.tmp/plan-registry.json`.
+- From the plan artifact read only the header (Execution Metadata, `scope.files`, Acceptance & Invariant Checklist) plus the step(s) being executed.
+- When delegating, pass **paths and IDs**, not inlined specs or file contents. Do not pre-read target source files the subagent will edit.
+- Inspect results with `git diff --stat` / `--name-only`; open a full `git diff -- <file>` only for a failing or suspicious file.
+- Report validation as pass/fail plus the first relevant errors; never paste full compiler or test logs.
+
+## 1. Plan Binding
+
+1. Resolve `<planId>`: if omitted, use the single `RUNNING` plan (`plan-registry.mjs running`); otherwise list `queued` plans and ask the user to pick one. Never guess "most recent".
+2. Load `.tmp/plans/<planId>.md`. If `git rev-parse HEAD` ≠ `baseSha`, warn and require confirmation.
+3. `node scripts/plan-registry.mjs lock <planId> <scope.files...>`, then `start <planId>`. Append `START <planId> step <N|all>` to `plans/EXECUTION_LOG.md`.
+4. `N = all` ⇒ run all remaining steps in order without routine confirmations.
+
+## 2. 3-Tier Routing (lockstep)
+
+| Tier | Score | Model | Scope |
+| :--- | :--- | :--- | :--- |
+| 1 `FLASH_LITE` | 1–3 | `flash_lite` | Copy, config, type, CSS edits; files < 300 lines, ≤ 2–3 files |
+| 2 `FLASH` (default) | 4–6 | `flash` | Bounded component/hook steps; ≤ 3–4 files, < 500 lines |
+| 3 `PRO` | 7–10 | `pro` | Edge-worker request/commit pipeline, HUD patch-queue/OID state, GitHub GraphQL/tarball contracts, unsliced files ≥ 500 lines |
+
+- **Hybrid plans:** only `PRO`-tagged steps go to `pro`; all others run on Flash tiers.
+- **Flash Override:** with `Flash-Only Viability: YES` or `#flash`, ≥ 500-line files may run on `flash` if the step is sliced to Score ≤ 6 and uses Anchor-Snippet edits only (no whole-file rewrites).
+- **Inline vs. Subagent:** run inline (under `.agents/skills/flash/SKILL.md`) only for a single `#exec N` whose tier ≤ the active session model. Otherwise delegate (`invoke_subagent`, `TypeName: 'self'`, `Role: 'Step Executor'`, tier `Model`). `#exec all` always delegates per step for context isolation.
+- **Red-Team (Score ≥ 8 or high blast-radius `PRO`):** after implementation spawn `TypeName: 'research'`, `Model: 'pro'`, `Role: 'Red-Team Auditor'`, emit `[🛡️ Watch Red-Team Audit](conversation://<id>)` and require `1. Verdict: [PASS | BLOCKING_ISSUES]` `2. Findings: [file:line bullets or "None"]` before finalizing.
+
+## 3. Subagent Prompt (fresh context — fill placeholders, do not inline the plan)
+
+> Read step `<N>` of `.tmp/plans/<planId>.md` (planId: `<planId>`, baseSha: `<baseSha>`). Allowed files: `<scope.files>`. Implement exactly that step using file read/edit tools under `.agents/skills/flash/SKILL.md`. Inspect and modify every file in the step's File Inventory. Do NOT run `git` commands. Report only: `1. Status: [SUCCESS | BLOCKED | FAILED]` `2. Files Modified: [relative paths]` `3. Summary: [1-2 sentences]` `4. planId` `5. batchId/step`. Never paste source code.
+
+Immediately after launch emit `[⚡ Watch Step Stream](conversation://<subagent-conversation-id>)` (Kilo: report `task_id`), then wait.
+
+## 4. Gather & Combo Anti-Phantom Diff Audit (lockstep)
+
+Before accepting `SUCCESS`, run `git diff --name-only` and `git status --porcelain` and reconcile their union against `scope.files` and the step File Inventory:
+- Assigned file untouched ⇒ `INCOMPLETE_TASK` / `PHANTOM_REPORTING` → targeted completion pass.
+- Modified file outside scope ⇒ `SCOPE_VIOLATION` → reject the report, never stage that file, and flag it to the user (no auto-revert).
+Then verify the plan's **Acceptance & Invariant Checklist** point by point.
+
+## 5. Validation (per package; no root `package.json`)
+
+- **Intermediate step:** `npm run typecheck` in each touched package only (`packages/edge-worker`, `packages/userscript-hud`, `packages/local-cli`). Leave changes uncommitted, no version bump.
+- **Plan completion (`all` or final step):** typecheck every touched package → `node scripts/patches_and_tests/worker-smoke.mjs` → `node scripts/patches_and_tests/run-regressions.mjs`.
+
+## 6. Failure Ladder (never loop)
+
+1. Flash failure (type/lint/test) ⇒ **one** targeted diagnose-and-repair attempt.
+2. Still failing ⇒ escalate the step to `pro` (`TypeName: 'self'`, `Model: 'pro'`).
+3. **Budget mode** (`--no-pro`, `--no-pro-escalation`, `#dflash`, or user instruction) ⇒ skip step 2 and go to Graceful Pause.
+4. **Pro quota exhausted** (429 / ResourceExhausted) ⇒ fall back to `flash` with Single-Action Protocol and micro-batched edits; after 2 failed attempts ⇒ Graceful Pause.
+5. **Graceful Pause (Dirty Inspection):** keep all modified files (never `git checkout`/`git reset`), show the scoped `git diff` and the failing compiler lines, log `BLOCKED_NEEDS_USER_INPUT`, and alert: `[Graceful Pause (Dirty Inspection): Step halted. Modified files preserved on disk for manual inspection.]`
+
+## 7. Plan Completion Checkpoint (autonomous, never deferred)
+
+1. Full gate from §5 green (otherwise fix or abort — never commit broken code).
+2. Bump the patch version of touched package(s); `packages/userscript-hud` uses `npm run release:patch` (keeps `@version` in sync).
+3. `git status --short`: warn about unrelated/untracked files; work stays on `main`.
+4. Stage planned files explicitly (`git add <paths>`); never `git add .` / `-A`.
+5. Conventional Commit `type(scope): subject` + short rationale body.
+6. Never `git push` (Hard Stop).
+7. `plan-registry.mjs complete <planId>` + `release <planId>` (on abort: `abort` + `release`). Append `DONE <planId>` to `plans/EXECUTION_LOG.md` and the gate results to `plans/TEST_LOG.md`.
+
+## 8. Multi-IDE
+
+Follow `.agents/rules/multi-ide-setup.md` (Mode A–E). Deltas for this skill: Mode A uses tier `Model` values above; Modes B/D/E inherit the active model (never pass `flash_lite`/`flash`/`pro` as Cursor/Kilo slugs; Kilo reports `task_id`, Cursor links `[Name](agent-id)`); Mode C runs steps inline and, before a Tier 3 step, advises a model switch or performs an explicit self-review pass.
+
+## 9. Final Response
+
+Bullets: what changed and why, validation actually run with results, remaining risks, required user action (refresh/deploy). Edit files directly; no code blocks or source in chat unless requested.
 
 > [!NOTE] **Lockstep Dependency Group:** This file belongs to the execution lockstep group (`multi-ide-setup`, `plan`, `exec`, `exec-wave`, `delegate`, `solve`). The 3-tier routing table, the Combo Anti-Phantom Diff Audit, and the handoff link labels must stay identical across the group; see `.agents/rules/multi-ide-setup.md`.

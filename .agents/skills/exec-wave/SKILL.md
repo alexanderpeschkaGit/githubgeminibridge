@@ -5,73 +5,74 @@ description: >-
   Triggered by #exec-wave, /exec-wave, #wave-exec, or /wave-exec.
 ---
 
-# Exec-Wave Workflow (`#exec-wave`)
+# Exec-Wave Workflow (`#exec-wave <planId>`)
 
-**Purpose:** Execute multi-batch architectural plans (`plans/Batch_*.md`) organized into serial phases and parallel waves while keeping the main Coordinator agent's context window minimal and routing each batch to the most cost- and speed-effective model tier.
+Execute multi-batch plans (`plans/Batch_*.md` or `.tmp/plans/<planId>.md`) in serial phases and parallel waves. The Coordinator **orchestrates only**: it never implements batch code itself (except one targeted fix in §5) and keeps its context to the roadmap plus subagent reports. Global contract (`AGENTS.md`) applies and is not restated here.
 
----
+## 0. Context Budget (Coordinator)
 
-## Core Execution Protocol
+- Read only the roadmap / plan header: topology (phases, waves), per-batch tier/score, File Inventory, `scope.files`. **Do not open batch plan bodies or target source files** — subagents read them.
+- Plan metadata via `node scripts/plan-registry.mjs get <planId>`; never dump the whole registry.
+- Audit with `git diff --name-only` / `git status --porcelain` / `git diff --stat`; full `git diff -- <file>` only for failing files.
+- Keep subagent reports to the 5-line contract; summarize validation as pass/fail + first errors.
 
-1. **Read Only the Master Roadmap & Resolve Batch Tiers:**
-   - Read the referenced roadmap file (e.g., `plans/00_MASTER_ROADMAP.md`) or a bound plan artifact from `.tmp/plans/<planId>.md`. Identify execution topology and batch complexity metadata.
-   - **Plan Binding:** `#exec-wave` must be bound to a specific `planId` (e.g. `#exec-wave <planId>`). Load from `.tmp/plan-registry.json` and artifact. Verify `baseSha` freshness; lock all batch `scope.files` (check disjointness and no conflicts with other `RUNNING` plans) via `node scripts/plan-registry.mjs lock`. Release locks on completion/abort. Never mix batches from different plans.
-   - **3-Tier Per-Batch Model Selection (Flash-First Strategy):** Triggering `#exec-wave` / `/exec-wave` (or `#wave-exec` / `/wave-exec`) constitutes explicit user authorization to pass `Model: 'flash_lite' | 'flash' | 'pro'` to `invoke_subagent` (overriding default `'inherit'` in Mode A). In Kilo (Mode E) the trigger authorizes `task` delegation, but `model` and `variant` overrides still require an explicit model request; omit them so subagents inherit:
-     - **Tier 1 (`flash_lite` — Score 1–3):** Trivial/mechanical batches (copy, simple types, static config, minor Tailwind/CSS in files <300 lines, strictly capped at <= 2–3 files). Auto-Upgrade Guard: If a batch tagged `flash_lite` touches 4 or more files, the Coordinator MUST automatically escalate its Model to `flash` upon invocation to prevent subagent truncation and phantom reporting.
-     - **Tier 2 (`flash` — Score 4–6, Default):** Standard scoped implementation batches (<= 3–4 files, clear interfaces, files <500 lines). If a batch has no explicit tier tag and touches only files <500 lines, default to `flash`.
-     - **Tier 3 (`pro` — Score 7–10 or Unsliced Files >=500 Lines):** Complex cross-file changes (edge-worker request/commit pipeline, HUD patch-queue and OID state, GitHub GraphQL/tarball contracts), unsliced files >=500 lines (`AGENTS.md` Mandatory Pro Decomposition), or high blast-radius architecture batches. **Flash Wave Exemption:** If `#flash` is specified in the trigger or roadmap, batches touching >=500 line files route to `flash` instead of `pro`, provided the batch File Inventory <= 3 files and complexity score <= 6.
+## 1. Plan Binding
 
-2. **Serial Phase Execution:**
-   - For a serial batch (e.g., `plans/Batch_01_*.md`), spawn a single subagent via `invoke_subagent` using the batch's resolved tier:
-     - **TypeName:** `self`
-     - **Model:** `flash_lite` (Score 1–3) | `flash` (Score 4–6) | `pro` (Score 7–10)
-     - **Role:** `Batch Executor`
-     - **Prompt:** _"Read the execution plan at `<relative-path-to-batch.md>` (planId: <planId>, batchId: <batchId>, baseSha: <baseSha>). Implement all file changes strictly as specified, adhering to `.agents/skills/flash/SKILL.md` stability rules. Do NOT run git commit or shell commands; only perform file read/edit/write operations. You MUST inspect and modify every file listed in your plan's File Inventory. Report back strictly using: 1. Status: [SUCCESS | BLOCKED | FAILED] 2. Files Modified: [List ONLY relative paths actually modified/created] 3. Summary: [1-2 sentences] 4. planId: <planId> 5. batchId: <batchId>. Do NOT dump complete source files into the report."_
-   - **Serial Launch Card (Clickable Stream Link, Mode A):** Immediately after invoking `invoke_subagent`, output a launch card with a clickable deep link to the subagent's live session before entering the wait state. In Kilo report the returned `task_id` rather than a `conversation://` link:
-     - Format: `[⚡ Watch Batch Live Stream](conversation://<subagent-conversation-id>)`
-   - **Gather & Validation:** Wait for the subagent to report back, log its 3-point feedback summary, run the validation gate (`npm run typecheck` in every touched package plus `node scripts/patches_and_tests/worker-smoke.mjs`), and create the checkpoint commit on the current branch (this repository develops directly on `main`; never `git push` without explicit user instruction).
+1. Bind to exactly one `planId`; never mix batches from different plans. Verify `baseSha` against `git rev-parse HEAD` (mismatch ⇒ warn + confirm).
+2. Check that each wave's File Inventories are disjoint and do not collide with other `RUNNING` plans; then `plan-registry.mjs lock <planId> <files...>` and `start <planId>`.
+3. Append `START <planId> wave <X>` to `plans/EXECUTION_LOG.md` per phase/wave.
 
-3. **Parallel Wave Execution (Hybrid Scatter-Gather):**
-   - For a parallel wave (e.g., Wave 1: `Batch_02`, `Batch_03`, `Batch_04`), verify from the roadmap that their File Inventories are strictly disjoint (zero overlapping files).
-   - **Scatter:** Spawn one subagent per batch concurrently via `invoke_subagent` with `TypeName: 'self'`, `Role: 'Batch Executor'`, and its batch-specific `Model` (`flash_lite`, `flash`, or `pro`). Routine `flash` batches and complex `pro` batches can run side-by-side in the same wave so only the complex batch uses Pro tokens.
-     - **Strict Subagent Rule:** Parallel subagents are strictly forbidden from running terminal/shell commands (`npm`, `tsc`, `git`) to prevent lock contention and race conditions. They must ONLY read, create, or edit their assigned files.
-      - **Standard Subagent Prompt:** Every parallel subagent MUST be instructed with the standard 3-point feedback contract plus plan/batch IDs:
-        _"Read the execution plan at `<relative-path-to-batch.md>` (planId: <planId>, batchId: <batchId>, baseSha: <baseSha>). Implement all file changes strictly as specified, adhering to `.agents/skills/flash/SKILL.md` stability rules. Do NOT run git commit or shell commands; only perform file read/edit/write operations. You MUST inspect and modify every file listed in your plan's File Inventory. Report back strictly: 1. Status: [SUCCESS | BLOCKED | FAILED] 2. Files Modified: [List ONLY relative paths actually modified/created] 3. Summary: [1-2 sentences] 4. planId: <planId> 5. batchId: <batchId>. Do NOT dump complete source files into the report."_
-   - **Wave Launch Dashboard (Mode A: clickable links; Kilo: `task_id` column):** Immediately after triggering `invoke_subagent` or `task`, the Coordinator MUST render a structured Wave Launch Dashboard table in chat before stopping tool calls to wait:
-     ```markdown
-     ### 🌊 Parallel Wave Launched: Wave X
+## 2. 3-Tier Per-Batch Routing (lockstep)
 
-     | Batch      | Tier & Model                | Assigned Scope / Files | Live Stream Link                                   |
-     | :--------- | :-------------------------- | :--------------------- | :------------------------------------------------- |
-     | `Batch_02` | `FLASH` (`flash`)           | `packages/edge-worker/...` | [⚡ Watch Batch_02 Stream](conversation://<id-02>) |
-     | `Batch_03` | `FLASH_LITE` (`flash_lite`) | `shared/...`           | [⚡ Watch Batch_03 Stream](conversation://<id-03>) |
-     | `Batch_04` | `PRO` (`pro`)               | `packages/userscript-hud/...` | [⚡ Watch Batch_04 Stream](conversation://<id-04>) |
-     ```
-   - **Gather & Auto-Escalation Gate:** Once all parallel subagents in the wave have reported back:
-     1. **Wave Completion Summary:** Aggregate the subagents' 3-point reports into a concise bulleted summary in the main chat (Status, modified files, brief summary).
-     2. **Combo Anti-Phantom Diff Audit:** Run both `git diff --name-only` (modified tracked files) and `git status --porcelain` (adds untracked files) in the Coordinator terminal, then reconcile the union of both outputs against each batch plan's `File Inventory` and the bound plan's `scope.files`. If any file assigned for modification shows zero diffs or modified files are outside scope (`SCOPE_VIOLATION`), reject the subagent's SUCCESS status as `INCOMPLETE_BATCH` / `PHANTOM_REPORTING` and perform a targeted completion/escalation pass before running validation commands.
-     3. **Sequential Validation:** Run `npm run typecheck` in every touched package, then `node scripts/patches_and_tests/worker-smoke.mjs`, sequentially in the main Coordinator terminal.
-     4. **Auto-Escalation (`FLASH` → `PRO`) & Zero-PRO Guard:**
-        - **Standard:** If a `flash_lite` or `flash` batch caused a type, lint, or test failure that survives **one** targeted Coordinator fix, immediately re-delegate that specific batch's files to a `pro` subagent (`TypeName: 'self'`, `Model: 'pro'`, `Role: 'Batch Executor'`). Output the escalation stream link: `[🚨 Watch Escalation Stream (PRO)](conversation://<pro-conversation-id>; Mode A only, in Kilo report the returned task_id)`. Enforce the same 3-point feedback contract.
-        - **Budget Mode (Zero-PRO; `--no-pro`, `--no-pro-escalation`, `#dflash`, or explicit user instruction):** When budget mode is active, do NOT escalate to `pro`. If the single targeted Coordinator fix does not resolve the failure, halt the wave immediately in **Graceful Pause (Dirty Inspection)**: preserve all modified intermediate files on disk without destructive resets, run `git diff` and compiler checks to log the exact errors, and notify the user: `[Graceful Pause (Dirty Inspection): Wave halted without PRO escalation. Modified files preserved on disk for manual inspection.]`.
-     5. **Red-Team Audit for Critical Batches:** If any batch in the wave had Score >= 8 (`Tier: PRO`), spawn a read-only Reviewer subagent via `invoke_subagent` with `TypeName: 'research'`, `Model: 'pro'`, `Role: 'Red-Team Auditor'` on that batch's modified files before committing. Output the reviewer stream link: `[🛡️ Watch Red-Team Audit](conversation://<reviewer-conversation-id>; Mode A only, in Kilo report the returned task_id)`, and require a compact 2-point audit report (`1. Verdict: [PASS | BLOCKING_ISSUES]`, `2. Findings: [Concise file:line bullets or "None"]`).
-     6. Stage all files from the wave explicitly by relative path (`git add <file1> <file2> ...` derived directly from the audited diffs — NEVER run blind `git add .` or `git add -A`) and create a single consolidated checkpoint commit for the wave.
+Triggering `#exec-wave` authorizes per-batch `Model` overrides in Mode A (Kilo/Cursor still inherit unless the user names a model).
 
-4. **Final Verification Gate (After Final Phase):**
-   - Run the full repository verification suite sequentially (Single-Action Protocol):
-     1. `npm run typecheck` in `packages/edge-worker`
-     2. `npm run typecheck` in `packages/userscript-hud`
-     3. `npm run typecheck` in `packages/local-cli`
-     4. `node scripts/patches_and_tests/worker-smoke.mjs`
-     5. `node scripts/patches_and_tests/run-regressions.mjs`
-   - Bump the patch version of the touched package(s) once (exclusively by the Coordinator, unless an explicit config batch in the roadmap already bumped it; `packages/userscript-hud` uses `npm run release:patch` to keep the userscript `@version` banner in sync) and commit the final state on the current branch (this repository develops directly on `main`; never `git push` without explicit user instruction).
+| Tier | Score | Model | Scope |
+| :--- | :--- | :--- | :--- |
+| 1 `FLASH_LITE` | 1–3 | `flash_lite` | Copy, simple types, static config, minor CSS; files < 300 lines, ≤ 2–3 files. **Auto-upgrade to `flash` at ≥ 4 files.** |
+| 2 `FLASH` (default) | 4–6 | `flash` | Scoped batches ≤ 3–4 files, clear interfaces, < 500 lines. Untagged batches with only < 500-line files ⇒ `flash`. |
+| 3 `PRO` | 7–10 | `pro` | Edge-worker request/commit pipeline, HUD patch-queue/OID state, GitHub GraphQL/tarball contracts, unsliced files ≥ 500 lines, high blast radius. |
 
-5. **Multi-IDE Capability Translation (Cross-IDE Portability):**
-   - Adapt wave execution automatically to the host environment (see `.agents/rules/multi-ide-setup.md`):
-     - **Mode A — Native Multi-Model Subagents (e.g., Antigravity):** Execute full parallel Scatter-Gather with `TypeName: 'self'` (or `'research'` for Red-Team audits) and per-batch `Model: 'flash_lite' | 'flash' | 'pro'`. Emit live clickable links via `[⚡ Watch Stream](conversation://<conversation-id>)` and aggregate the 3-point feedback reports in the Gather phase.
-     - **Mode B — Fixed-Model or Rate-Limited Subagents (e.g., Kimi Code / CLI Agents):** Spawn subagents with `Model: 'inherit'` to preserve context isolation, enforce `.agents/skills/flash/SKILL.md` and the 3-point feedback contract inside each subagent, and respect host concurrency rules (e.g., sequential subagent queue with pacing in `KIMI.md`). If the UI cannot handle `conversation://` URIs, output the subagent ID and the absolute path to its transcript file (`file:///<appDataDir>/brain/<conversation-id>/.system_generated/logs/transcript.jsonl`) as a readable fallback.
-     - **Mode C — Single-Agent IDEs without Subagents (e.g., Cline / Windsurf):** Execute batches sequentially in strict context-hygiene passes (read only the current batch's target files, apply `.agents/skills/flash/SKILL.md` Single-Action Protocol, emit short 3-point feedback per batch pass, and validate per wave). Before starting a `Tier: PRO` batch (Score >= 7), emit a brief model-switch advisory if running on a fast/lightweight model, or perform an explicit self-review pass before staging.
-     - **Mode D — Cursor (Task Subagents):** Map each batch to Cursor `Task` (`generalPurpose` implementer; `explore` for Score >= 8 auditors). Default `model: "inherit"`; never pass `flash_lite`/`flash`/`pro` as Cursor model slugs. Parallel Scatter-Gather only for disjoint file inventories; otherwise serial. Link via `[Name](agent-id)`; enforce Flash SKILL + 3-point feedback inside each subagent; persist wave plans/reports in `.tmp/`.
-      - **Mode E - Kilo Code (`task` Subagents):** Map each batch to `task` (`general` implementer; `explore` for Score >= 8 auditors). Omit `model`, `provider`, and `variant` so subagents inherit the active model; overrides only on explicit user request. Parallel scatter-gather only for disjoint file inventories. Report each returned `task_id` instead of a `conversation://` link; enforce Flash SKILL + 3-point feedback; persist wave plans/reports in `.tmp/`.
+**Flash Wave Exemption:** with `#flash` in trigger or roadmap, ≥ 500-line batches route to `flash` if File Inventory ≤ 3 files and score ≤ 6.
+
+## 3. Batch Executor Prompt (single template for serial and parallel)
+
+`invoke_subagent` with `TypeName: 'self'`, `Role: 'Batch Executor'`, `Model: <tier>`:
+
+> Read the execution plan at `<batch-path>` (planId: `<planId>`, batchId: `<batchId>`, baseSha: `<baseSha>`). Implement all changes strictly as specified under `.agents/skills/flash/SKILL.md`. Only read/create/edit files — NO shell, `npm`, `tsc` or `git` commands. Inspect and modify every file in your File Inventory; touch nothing else. Report only: `1. Status: [SUCCESS | BLOCKED | FAILED]` `2. Files Modified: [relative paths actually changed]` `3. Summary: [1-2 sentences]` `4. planId` `5. batchId`. Never paste source code.
+
+## 4. Execution
+
+- **Serial batch:** launch one executor, emit `[⚡ Watch Batch Live Stream](conversation://<id>)`, wait, then run §5.
+- **Parallel wave (disjoint inventories only):** launch all executors of the wave concurrently (Flash and Pro batches may share a wave). Before waiting, render one dashboard:
+
+  ```markdown
+  ### 🌊 Parallel Wave Launched: Wave X
+  | Batch | Tier & Model | Scope | Live Stream |
+  | :-- | :-- | :-- | :-- |
+  | `Batch_02` | `FLASH` (`flash`) | `packages/edge-worker/...` | [⚡ Watch Batch_02 Stream](conversation://<id-02>) |
+  ```
+
+  Kilo: replace links with `task_id`.
+
+## 5. Gather Gate (after every serial batch / wave)
+
+1. **Summary:** aggregate the reports in ≤ 1 bullet per batch.
+2. **Combo Anti-Phantom Diff Audit (lockstep):** reconcile the union of `git diff --name-only` + `git status --porcelain` against each File Inventory and `scope.files`. Untouched assigned file ⇒ `INCOMPLETE_BATCH` / `PHANTOM_REPORTING` → targeted completion pass. Out-of-scope file ⇒ `SCOPE_VIOLATION` → reject, do not stage, flag to user.
+3. **Validation (sequential, Coordinator terminal):** `npm run typecheck` in each touched package → `node scripts/patches_and_tests/worker-smoke.mjs`.
+4. **Failure Ladder (never loop):**
+   - One targeted Coordinator fix; still failing ⇒ re-delegate that batch's files to `pro` (`Role: 'Batch Executor'`, same prompt) and emit `[🚨 Watch Escalation Stream (PRO)](conversation://<id>)`.
+   - **Budget mode** (`--no-pro`, `--no-pro-escalation`, `#dflash`, user instruction) or **Pro quota exhausted** (after 2 Flash attempts) ⇒ **Graceful Pause (Dirty Inspection):** keep files on disk (no `git checkout`/`reset`), show scoped diff + failing lines, log `BLOCKED_NEEDS_USER_INPUT`, alert `[Graceful Pause (Dirty Inspection): Wave halted without PRO escalation. Modified files preserved on disk for manual inspection.]`
+5. **Red-Team (any batch Score ≥ 8):** `TypeName: 'research'`, `Model: 'pro'`, `Role: 'Red-Team Auditor'` on that batch's files; emit `[🛡️ Watch Red-Team Audit](conversation://<id>)`; require `1. Verdict: [PASS | BLOCKING_ISSUES]` `2. Findings: [file:line bullets or "None"]`.
+6. **Checkpoint:** stage audited files explicitly (`git add <paths>`, never `.`/`-A`), one Conventional Commit per batch/wave on `main`. Append `DONE <planId> wave <X>` to `plans/EXECUTION_LOG.md`.
+
+## 6. Final Verification (after last phase)
+
+1. Sequentially: `npm run typecheck` in `packages/edge-worker`, `packages/userscript-hud`, `packages/local-cli` → `worker-smoke.mjs` → `run-regressions.mjs`; record results in `plans/TEST_LOG.md`.
+2. Bump patch version of touched packages once (Coordinator only, unless a roadmap batch already did; HUD via `npm run release:patch`) and commit.
+3. `plan-registry.mjs complete <planId>` + `release <planId>` (on abort: `abort` + `release`). Never `git push` (Hard Stop).
+
+## 7. Multi-IDE
+
+Follow `.agents/rules/multi-ide-setup.md` (Mode A–E). Deltas: Mode A = full parallel scatter-gather with tier models; Mode B = `inherit`, sequential FIFO if rate-limited, transcript-path fallback for links; Mode C = batches run inline in sequential context-hygiene passes (load only the current batch's files), model-switch advisory or self-review before Tier 3; Mode D (Cursor `Task`) / Mode E (Kilo `task`) = inherit model, `explore` auditors at Score ≥ 8, parallel only for disjoint inventories, link `[Name](agent-id)` / report `task_id`, persist reports in `.tmp/`.
 
 > [!NOTE] **Lockstep Dependency Group:** This file belongs to the execution lockstep group (`multi-ide-setup`, `plan`, `exec`, `exec-wave`, `delegate`, `solve`). The 3-tier routing table, the Combo Anti-Phantom Diff Audit, and the handoff link labels must stay identical across the group; see `.agents/rules/multi-ide-setup.md`.
