@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-31T14:12:15.629Z",
+  "timestamp": "2026-10-31T21:05:17.556Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -42,7 +42,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "0.80.5",
+      "version": "0.80.6",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },
@@ -108,10 +108,10 @@
       "name": "File-Size Modularity Audit (<500 lines) & End-to-End Artifact Completeness",
       "pass": true,
       "totalTsFilesAudited": 55,
-      "warningZoneFilesCount": 11,
+      "warningZoneFilesCount": 10,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 144860,
+      "bundleSize": 144481,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
@@ -125,7 +125,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 421
+          "lines": 394
         },
         {
           "file": "packages/edge-worker/src/modules/patchInMemory.ts",
@@ -137,19 +137,15 @@
         },
         {
           "file": "packages/edge-worker/src/modules/webhookHandler.ts",
-          "lines": 355
+          "lines": 348
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
-          "lines": 397
-        },
-        {
-          "file": "packages/userscript-hud/src/dom/patchParser.ts",
-          "lines": 368
+          "lines": 420
         },
         {
           "file": "packages/userscript-hud/src/ui/hudApplyPatch.ts",
-          "lines": 376
+          "lines": 358
         },
         {
           "file": "packages/userscript-hud/src/ui/hudDomTree.ts",
@@ -196,7 +192,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 421
+          "lines": 394
         },
         {
           "file": "packages/edge-worker/src/modules/patchInMemory.ts",
@@ -216,7 +212,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/webhookHandler.ts",
-          "lines": 355
+          "lines": 348
         },
         {
           "file": "packages/edge-worker/src/types.ts",
@@ -228,7 +224,7 @@
         },
         {
           "file": "packages/edge-worker/src/utils/github.ts",
-          "lines": 19
+          "lines": 17
         },
         {
           "file": "packages/edge-worker/src/utils/githubBatchRead.ts",
@@ -256,7 +252,7 @@
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
-          "lines": 397
+          "lines": 420
         },
         {
           "file": "packages/userscript-hud/src/dom/injector.ts",
@@ -264,7 +260,7 @@
         },
         {
           "file": "packages/userscript-hud/src/dom/patchParser.ts",
-          "lines": 368
+          "lines": 267
         },
         {
           "file": "packages/userscript-hud/src/dom/pathHints.ts",
@@ -272,7 +268,7 @@
         },
         {
           "file": "packages/userscript-hud/src/index.ts",
-          "lines": 68
+          "lines": 101
         },
         {
           "file": "packages/userscript-hud/src/services/accountProfiles.ts",
@@ -304,7 +300,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/repoHistory.ts",
-          "lines": 91
+          "lines": 94
         },
         {
           "file": "packages/userscript-hud/src/services/runtimeInfo.ts",
@@ -328,7 +324,7 @@
         },
         {
           "file": "packages/userscript-hud/src/types.ts",
-          "lines": 112
+          "lines": 111
         },
         {
           "file": "packages/userscript-hud/src/ui/hudAccountSwitch.ts",
@@ -336,7 +332,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudApplyPatch.ts",
-          "lines": 376
+          "lines": 358
         },
         {
           "file": "packages/userscript-hud/src/ui/hudConfigBindings.ts",
@@ -352,23 +348,23 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudRender.ts",
-          "lines": 140
+          "lines": 139
         },
         {
           "file": "packages/userscript-hud/src/ui/hudRepoHistoryDropdown.ts",
-          "lines": 177
+          "lines": 181
         },
         {
           "file": "packages/userscript-hud/src/ui/hudStylesAndDom.ts",
-          "lines": 236
+          "lines": 234
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 250
+          "lines": 273
         },
         {
           "file": "packages/userscript-hud/src/ui/updateBanner.ts",
-          "lines": 140
+          "lines": 151
         },
         {
           "file": "packages/local-cli/src/cli.ts",

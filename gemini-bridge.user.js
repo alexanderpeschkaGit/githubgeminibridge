@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.5
+// @version      0.80.6
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -597,7 +597,6 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   .hud-trigger-badge.patching { background: #d97706; color: #ffffff; }
   .hud-trigger-badge.committed { background: #059669; color: #ffffff; }
   .hud-trigger-badge.error { background: #dc2626; color: #ffffff; }
-  .hud-trigger-badge.target_branch_stale { background: #d97706; color: #ffffff; }
 
   .hud-panel {
     position: fixed; bottom: 80px; right: 24px; width: 440px;
@@ -722,7 +721,6 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   .hud-status-box.info { background: #0c4a6e; color: #7dd3fc; border-color: #0284c7; }
   .hud-status-box.success { background: #064e3b; color: #6ee7b7; border-color: #059669; }
   .hud-status-box.error { background: #7f1d1d; color: #fca5a5; border-color: #dc2626; }
-  .hud-status-box.warning { background: #78350f; color: #fde68a; border-color: #d97706; }
   .hud-status-box.idle { background: #1e293b; color: #94a3b8; border-color: #334155; }
   .hud-toggle-label {
     display: flex; align-items: center; gap: 8px; cursor: pointer;
@@ -786,7 +784,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     const header = createHudElement("div", "hud-header");
     const title = createHudElement("div", "hud-title", "\u26A1 Cloudflare Edge HUD");
     const updateCheckBtn = createHudElement("button", "hud-header-icon", "\u27F3");
-    updateCheckBtn.title = "Check published userscript version";
+    updateCheckBtn.title = "Check published userscript version (Shift-Click to soft reset HUD)";
     const closeBtn = createHudElement("button", "hud-close-btn", "\xD7");
     closeBtn.title = "Close Panel";
     header.appendChild(title);
@@ -1124,9 +1122,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     let installUrl = "";
     let installVersion = "";
     const runningVersion = getRunningScriptVersion();
-    if (runningVersion) {
-      dom.updateCheckBtn.title = `Check published userscript version (running v${runningVersion})`;
-    }
+    dom.updateCheckBtn.title = runningVersion ? `Check published userscript version (running v${runningVersion}) \u2014 Shift-Click to soft reset HUD` : "Check published userscript version \u2014 Shift-Click to soft reset HUD";
     dom.updateBanner.style.display = "none";
     const hide = () => {
       if (hideTimer) {
@@ -1205,7 +1201,17 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
         dom.updateCheckBtn.disabled = false;
       }
     };
-    dom.updateCheckBtn.addEventListener("click", () => {
+    dom.updateCheckBtn.addEventListener("click", (e) => {
+      if (e?.shiftKey) {
+        e.preventDefault?.();
+        e.stopPropagation?.();
+        if (typeof deps.onSoftReset === "function") {
+          deps.onSoftReset();
+        } else if (typeof window !== "undefined" && typeof window.resetGeminiEdgeHud === "function") {
+          window.resetGeminiEdgeHud();
+        }
+        return;
+      }
       void runCheck(true);
     });
     void runCheck(false);
@@ -1223,15 +1229,19 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   }
   function normalizeEntry(entry) {
     return {
-      owner: (entry.owner || "").trim(),
-      repo: (entry.repo || "").trim(),
+      owner: (entry.owner || "").trim().replace(/^\/+|\/+$/g, ""),
+      repo: sanitizeRepo(entry.repo || "").replace(/^\/+|\/+$/g, ""),
       branch: (entry.branch || "").trim(),
       targetBranch: (entry.targetBranch || "").trim() || void 0
     };
   }
-  function entryKey(e) {
-    const n = normalizeEntry(e);
-    return `${n.owner}|||${n.repo}|||${n.branch}|||${n.targetBranch || ""}`;
+  function repoSlug(entry) {
+    const n = normalizeEntry(entry);
+    const owner = n.owner.toLowerCase();
+    const repo = n.repo.toLowerCase();
+    if (!repo) return "";
+    if (repo.includes("/")) return repo;
+    return owner ? `${owner}/${repo}` : repo;
   }
   function loadRepoHistory() {
     try {
@@ -1240,14 +1250,13 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
       const out = [];
-      const seen = /* @__PURE__ */ new Set();
+      const seenSlugs = /* @__PURE__ */ new Set();
       for (const p of parsed) {
         if (!p) continue;
         const n = normalizeEntry(p);
-        if (!n.repo) continue;
-        const key = entryKey(n);
-        if (seen.has(key)) continue;
-        seen.add(key);
+        const slug = repoSlug(n);
+        if (!slug || seenSlugs.has(slug)) continue;
+        seenSlugs.add(slug);
         out.push(n);
       }
       return out.slice(0, MAX_ENTRIES);
@@ -1257,17 +1266,17 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   }
   function saveRepoHistory(entries) {
     try {
-      const cleaned = entries.map(normalizeEntry).filter((e) => e.repo).slice(0, MAX_ENTRIES);
+      const cleaned = entries.map(normalizeEntry).filter((e) => Boolean(repoSlug(e))).slice(0, MAX_ENTRIES);
       setStoredValue(historyKey(), JSON.stringify(cleaned));
     } catch {
     }
   }
   function pushRepoHistory(entry) {
     const n = normalizeEntry(entry);
-    if (!n.repo) return loadRepoHistory();
+    const targetSlug = repoSlug(n);
+    if (!targetSlug) return loadRepoHistory();
     const current = loadRepoHistory();
-    const key = entryKey(n);
-    const filtered = current.filter((e) => entryKey(e) !== key);
+    const filtered = current.filter((e) => repoSlug(e) !== targetSlug);
     const next = [n, ...filtered].slice(0, MAX_ENTRIES);
     saveRepoHistory(next);
     return next;
@@ -1413,13 +1422,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   // src/ui/hudRepoHistoryDropdown.ts
   var activeDocumentClickHandler = null;
   var activeDocumentKeydownHandler = null;
-  function formatRepoHistoryLabel(entry) {
-    const repoLabel = entry.repo.includes("/") ? entry.repo : `${entry.owner}/${entry.repo}`;
-    const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : "";
-    return `${repoLabel} @ ${entry.branch}${target}`;
-  }
-  function bindRepoHistoryDropdown(deps) {
-    const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, refreshAccountHint: refreshAccountHint2, renderState } = deps;
+  function unbindRepoHistoryDropdownListeners() {
     if (activeDocumentClickHandler) {
       document.removeEventListener("click", activeDocumentClickHandler);
       activeDocumentClickHandler = null;
@@ -1428,6 +1431,15 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       document.removeEventListener("keydown", activeDocumentKeydownHandler);
       activeDocumentKeydownHandler = null;
     }
+  }
+  function formatRepoHistoryLabel(entry) {
+    const repoLabel = entry.repo.includes("/") || !entry.owner ? entry.repo : `${entry.owner}/${entry.repo}`;
+    const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : "";
+    return `${repoLabel} @ ${entry.branch}${target}`;
+  }
+  function bindRepoHistoryDropdown(deps) {
+    const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, refreshAccountHint: refreshAccountHint2, renderState } = deps;
+    unbindRepoHistoryDropdownListeners();
     const closeMenu = () => {
       dom.repoHistoryMenu.style.display = "none";
       dom.repoHistoryBtn.setAttribute("aria-expanded", "false");
@@ -1925,8 +1937,7 @@ Fix Instructions:
       GIT_CONFLICT: "error",
       COMMITTED: "success",
       MIXING: "info",
-      PATCHING: "info",
-      TARGET_BRANCH_STALE: "warning"
+      PATCHING: "info"
     };
     dom.statusBox.className = `hud-status-box ${statusClasses[state.status] || "idle"}`;
     dom.statusBox.textContent = "";
@@ -2453,14 +2464,6 @@ Fix Instructions:
       if (state.headOid) {
         const patchReq = buildWorkerPatchRequest(config, state, effectivePayload);
         const res = await requestWorkerPatch(config, patchReq);
-        if (res.status === "TARGET_BRANCH_STALE") {
-          updateState({
-            status: "TARGET_BRANCH_STALE",
-            statusMessage: `\u26A0\uFE0F ${res.errorMessage || "Target branch is strictly behind base branch."}`,
-            lastErrors: []
-          });
-          return false;
-        }
         if (res.status === "COMMITTED") {
           state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
           applyPatchResponseOids(config, state, res);
@@ -2552,14 +2555,6 @@ Fix Instructions:
           effectiveDryRun
         );
         workerRes = await requestWorkerPatch(deps.config, patchReq);
-        if (workerRes.status === "TARGET_BRANCH_STALE") {
-          deps.updateState({
-            status: "TARGET_BRANCH_STALE",
-            statusMessage: `\u26A0\uFE0F ${workerRes.errorMessage || "Target branch is strictly behind base branch."}`,
-            lastErrors: []
-          });
-          return false;
-        }
         if (workerRes.status === "GIT_CONFLICT" || workerRes.status === "ERROR") {
           return handleConflictOrError(workerRes, deps.config, deps.state, deps.updateState);
         }
@@ -2617,7 +2612,7 @@ Fix Instructions:
   }
 
   // src/ui/shadowHud.ts
-  function mountShadowHud(onApplyPatchCustom) {
+  function mountShadowHud(onApplyPatchCustom, options) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
     }
@@ -2637,7 +2632,7 @@ Fix Instructions:
     if (runningVersion && dom.title) {
       dom.title.textContent = `\u26A1 Cloudflare Edge HUD v${runningVersion}`;
     }
-    initHudUpdateBanner(dom);
+    initHudUpdateBanner(dom, { onSoftReset: options?.onSoftReset });
     function updateState(partial) {
       Object.assign(state, partial);
       renderState();
@@ -2766,6 +2761,23 @@ Fix Instructions:
         }
       });
     };
+    const destroy = () => {
+      unbindRepoHistoryDropdownListeners();
+      setRepoHistorySelectRefresher(null);
+      if (dom.host) {
+        if (typeof dom.host.remove === "function") {
+          dom.host.remove();
+        } else if (dom.host.parentNode) {
+          if (typeof dom.host.parentNode.removeChild === "function") {
+            dom.host.parentNode.removeChild(dom.host);
+          } else if (Array.isArray(dom.host.parentNode.children)) {
+            const children = dom.host.parentNode.children;
+            const idx = children.indexOf(dom.host);
+            if (idx !== -1) children.splice(idx, 1);
+          }
+        }
+      }
+    };
     const controller = {
       getState: () => ({ ...state }),
       updateState: (partial) => {
@@ -2774,6 +2786,7 @@ Fix Instructions:
       openPanel,
       closePanel,
       handleApplyPatch,
+      destroy,
       addHarvestedPatch: (patch) => {
         const duplicateId = findDuplicatePatchId(state.harvestedPatches, patch);
         if (duplicateId !== null) {
@@ -3026,94 +3039,10 @@ Fix Instructions:
     if (fromCode) return normalizeRepoPath(fromCode);
     return "";
   }
-  function isV2PayloadEnvelope(text) {
-    if (!text || !text.trim()) return false;
-    let clean = text.trim();
-    const fenceMatch = clean.match(/^```(?:json|md|markdown)?\s*([\s\S]*?)(?:```|$)/i);
-    if (fenceMatch) {
-      clean = fenceMatch[1].trim();
-    }
-    const innerFenceOpen = clean.match(/```(?:json)?\s*\{/i);
-    if (innerFenceOpen && innerFenceOpen.index !== void 0) {
-      clean = clean.slice(innerFenceOpen.index + innerFenceOpen[0].length - 1).trim();
-    }
-    const firstBrace = clean.indexOf("{");
-    if (firstBrace === -1) return false;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    let currentKey = "";
-    let collectingKey = false;
-    const topLevelKeys = /* @__PURE__ */ new Set();
-    for (let i = firstBrace; i < clean.length; i++) {
-      const ch = clean[i];
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-          if (collectingKey) currentKey += ch;
-        } else if (ch === "\\") {
-          escaped = true;
-        } else if (ch === '"') {
-          inString = false;
-          if (collectingKey) {
-            collectingKey = false;
-            let j = i + 1;
-            while (j < clean.length && /\s/.test(clean[j])) j++;
-            if (j < clean.length && clean[j] === ":") {
-              topLevelKeys.add(currentKey);
-              if (currentKey === "commitMessage" || currentKey === "patches") {
-                return true;
-              }
-            }
-            currentKey = "";
-          }
-        } else if (collectingKey) {
-          currentKey += ch;
-        }
-        continue;
-      }
-      if (ch === '"') {
-        inString = true;
-        if (depth === 1) {
-          collectingKey = true;
-          currentKey = "";
-        }
-      } else if (ch === "{") {
-        depth++;
-      } else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          break;
-        }
-      }
-    }
-    if (collectingKey && (currentKey === "commitMessage" || currentKey === "patches")) {
-      return true;
-    }
-    return topLevelKeys.has("commitMessage") || topLevelKeys.has("patches");
-  }
   function convertLegacyBlocksToV2Payload(codeText, defaultPath) {
     if (!codeText || codeText.trim().length === 0) return null;
-    if (isV2PayloadEnvelope(codeText)) {
-      let isCompleteJson = false;
-      try {
-        let clean = codeText.trim();
-        const fenceMatch = clean.match(/^```(?:json|md|markdown)?\s*([\s\S]*?)\s*```$/i);
-        if (fenceMatch) clean = fenceMatch[1].trim();
-        const firstBrace = clean.indexOf("{");
-        if (firstBrace !== -1) {
-          const balanced = extractBalancedJsonObject(clean, firstBrace);
-          if (balanced) {
-            JSON.parse(balanced);
-            isCompleteJson = true;
-          }
-        }
-      } catch {
-        isCompleteJson = false;
-      }
-      if (!isCompleteJson) {
-        return null;
-      }
+    if (/^\s*(?:```(?:json|md|markdown)?\s*)?\{\s*"(?:commitMessage|patches)"/.test(codeText)) {
+      return null;
     }
     if (codeText.includes("<<<<<<<")) {
       const openCount = (codeText.match(/^<{7}/gm) || []).length;
@@ -3289,27 +3218,6 @@ Fix Instructions:
           timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString()
         };
       } else {
-        if (isV2PayloadEnvelope(codeText)) {
-          let isCompleteJson = false;
-          try {
-            let clean = codeText.trim();
-            const fenceMatch = clean.match(/^```(?:json|md|markdown)?\s*([\s\S]*?)\s*```$/i);
-            if (fenceMatch) clean = fenceMatch[1].trim();
-            const firstBrace = clean.indexOf("{");
-            if (firstBrace !== -1) {
-              const balanced = extractBalancedJsonObject(clean, firstBrace);
-              if (balanced) {
-                JSON.parse(balanced);
-                isCompleteJson = true;
-              }
-            }
-          } catch {
-            isCompleteJson = false;
-          }
-          if (!isCompleteJson) {
-            return;
-          }
-        }
         const detectedPath = extractPathFromCode(codeText, pre);
         const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || void 0);
         if (converted && (isSearchReplace(codeText) || Boolean(detectedPath))) {
@@ -3479,11 +3387,11 @@ Fix Instructions:
     });
     if (typeof document !== "undefined") {
       if (document.body) {
-        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+        observer.observe(document.body, { childList: true, subtree: true });
       } else {
         document.addEventListener("DOMContentLoaded", () => {
           if (document.body) {
-            observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+            observer.observe(document.body, { childList: true, subtree: true });
           }
         });
       }
@@ -3491,9 +3399,70 @@ Fix Instructions:
     }
     return observer;
   }
+  function stopDomHarvester(observer) {
+    try {
+      observer.disconnect();
+    } catch {
+    }
+    if (typeof document === "undefined") return;
+    const removeNode = (el) => {
+      if (typeof el.remove === "function") {
+        el.remove();
+        return;
+      }
+      const parent = el.parentNode || el.parentElement;
+      if (parent) {
+        if (typeof parent.removeChild === "function") {
+          parent.removeChild(el);
+        } else if (Array.isArray(parent.children)) {
+          const idx = parent.children.indexOf(el);
+          if (idx !== -1) parent.children.splice(idx, 1);
+        }
+      }
+    };
+    const cleanRoot = (root) => {
+      if (typeof root.querySelectorAll !== "function") return;
+      root.querySelectorAll(".ggb-inline-btn, .ggb-canvas-btn").forEach(removeNode);
+      root.querySelectorAll("[data-ggh-processed]").forEach((el) => {
+        if (typeof el.removeAttribute === "function") el.removeAttribute("data-ggh-processed");
+        else el.attributes?.delete?.("data-ggh-processed");
+      });
+      root.querySelectorAll("[data-ggh-canvas-processed]").forEach((el) => {
+        if (typeof el.removeAttribute === "function") el.removeAttribute("data-ggh-canvas-processed");
+        else el.attributes?.delete?.("data-ggh-canvas-processed");
+      });
+    };
+    cleanRoot(document);
+    if (typeof document.querySelectorAll === "function") {
+      document.querySelectorAll("code-block, pre").forEach((el) => {
+        if (el.shadowRoot) cleanRoot(el.shadowRoot);
+      });
+    }
+  }
 
   // src/index.ts
   var controllerInstance = null;
+  var activeObserver = null;
+  function destroyGeminiEdgeHud() {
+    if (activeObserver) {
+      stopDomHarvester(activeObserver);
+      activeObserver = null;
+    }
+    if (controllerInstance) {
+      controllerInstance.destroy();
+      controllerInstance = null;
+    }
+  }
+  function resetGeminiEdgeHud() {
+    if (controllerInstance) {
+      const { status } = controllerInstance.getState();
+      if (status === "PATCHING" || status === "MIXING") {
+        return controllerInstance;
+      }
+    }
+    destroyGeminiEdgeHud();
+    return initGeminiEdgeHud();
+  }
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {
       return null;
@@ -3512,8 +3481,12 @@ Fix Instructions:
         repo: cfg.repo,
         branch: cfg.branch
       });
-      controllerInstance = mountShadowHud();
-      startDomHarvester(
+      controllerInstance = mountShadowHud(void 0, {
+        onSoftReset: () => {
+          resetGeminiEdgeHud();
+        }
+      });
+      activeObserver = startDomHarvester(
         (patch) => {
           controllerInstance?.addHarvestedPatch(patch);
         },
@@ -3521,6 +3494,10 @@ Fix Instructions:
           controllerInstance?.handleApplyPatch(patch);
         }
       );
+      if (typeof window !== "undefined") {
+        window.resetGeminiEdgeHud = resetGeminiEdgeHud;
+        window.destroyGeminiEdgeHud = destroyGeminiEdgeHud;
+      }
     } catch (error) {
       reportHudInitFailure(error);
       return null;
