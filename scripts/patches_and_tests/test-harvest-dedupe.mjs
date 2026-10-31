@@ -758,6 +758,40 @@ const {
   }
   siblingEnv.observer.callback();
   assert.equal(siblingEnv.harvested.length, 2, 'both sibling <pre> blocks in a shared container are harvested');
+
+  // 10. Streaming multi-block diff growth updates the harvested patch in-place without duplicate emission
+  const streamEnv = mountHarvester(startDomHarvester);
+  const streamPre = streamEnv.document.createElement('pre');
+  const streamCode = streamEnv.document.createElement('code');
+  streamCode.textContent = `// filepath: src/stream.ts\n${blockA}`;
+  streamPre.appendChild(streamCode);
+  streamEnv.document.body.appendChild(streamPre);
+  streamEnv.observer.callback();
+  assert.equal(streamEnv.harvested.length, 1, 'initial completed diff block is harvested once');
+  assert.equal(streamEnv.harvested[0].payload.patches[0].blocks.length, 1, 'starts with 1 diff block');
+
+  // Mid-stream second block (partial marker) is ignored until balanced
+  streamCode.textContent = `// filepath: src/stream.ts\n${blockA}\n<<<<`;
+  assert.equal(
+    convertLegacyBlocksToV2Payload(streamCode.textContent, 'src/stream.ts'),
+    null,
+    'trailing partial diff marker returns null while second block is streaming'
+  );
+  assert.equal(
+    convertLegacyBlocksToV2Payload('// filepath: src/stream.ts', 'src/stream.ts'),
+    null,
+    'header-only comment without body lines returns null during streaming'
+  );
+
+  // Second diff block finishes streaming into the same <pre>
+  streamCode.textContent = `// filepath: src/stream.ts\n${blockA}\n\n${blockB}`;
+  streamEnv.observer.callback();
+  assert.equal(streamEnv.harvested.length, 1, 'streaming growth does not emit a duplicate queue entry');
+  assert.equal(
+    streamEnv.harvested[0].payload.patches[0].blocks.length,
+    2,
+    'existing harvested patch is updated in-place with the second diff block'
+  );
 }
 
 console.log(

@@ -90,14 +90,72 @@ function findCodeHeader(
  */
 export function startDomHarvester(
   onPatchHarvested: (patch: HarvestedPatch) => void,
-  onInlineApply: (patch: HarvestedPatch) => void
+  onInlineApply: (patch: HarvestedPatch) => void,
+  onPatchUpdated?: (patch: HarvestedPatch) => void
 ): MutationObserver {
   const processedSet = new WeakSet<Element>();
+  const harvestedBlocks = new Map<
+    HTMLElement,
+    { codeEl: Element; lastCodeText: string; patch: HarvestedPatch }
+  >();
   const pendingPathFills: Array<{
     element: HTMLElement;
     codeText: string;
     patch: HarvestedPatch;
   }> = [];
+
+  function parseCodeBlockPayload(codeText: string, pre: HTMLElement): HarvestedPatch | null {
+    if (codeText.length < 15) return null;
+    const v2Payload = parseV2PatchPayloadFromCode(codeText);
+    if (v2Payload) {
+      return {
+        id: createStablePatchId('v2_json', v2Payload),
+        mode: 'v2_json',
+        commitMessage: v2Payload.commitMessage,
+        payload: v2Payload,
+        timestamp: new Date().toLocaleTimeString(),
+      };
+    }
+    const detectedPath = extractPathFromCode(codeText, pre);
+    const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || undefined);
+    if (converted && (isSearchReplace(codeText) || Boolean(detectedPath))) {
+      const legacyMode: HarvestedPatch['mode'] = isSearchReplace(codeText)
+        ? 'v1_search_replace'
+        : 'v2_json';
+      return {
+        id: createStablePatchId(legacyMode, converted.payload),
+        mode: legacyMode,
+        commitMessage: converted.payload.commitMessage,
+        payload: converted.payload,
+        legacyPayload: converted.legacyPayload,
+        timestamp: new Date().toLocaleTimeString(),
+      };
+    }
+    return null;
+  }
+
+  /** Streaming can append additional diff sections after the first harvest; update in-place when text grows. */
+  function refreshStreamingBlocks(): void {
+    for (const [el, entry] of harvestedBlocks.entries()) {
+      if (el.isConnected === false) {
+        harvestedBlocks.delete(el);
+        continue;
+      }
+      const liveText = (entry.codeEl.textContent || '').trim();
+      if (!liveText || liveText === entry.lastCodeText) continue;
+      const updated = parseCodeBlockPayload(liveText, el);
+      if (!updated) continue;
+      entry.lastCodeText = liveText;
+      if (updated.id !== entry.patch.id) {
+        entry.patch.id = updated.id;
+        entry.patch.mode = updated.mode;
+        entry.patch.commitMessage = updated.commitMessage;
+        entry.patch.payload = updated.payload;
+        entry.patch.legacyPayload = updated.legacyPayload;
+        onPatchUpdated?.(entry.patch);
+      }
+    }
+  }
 
   /** Streaming can render the heading after the block; retry pending paths on every scan. */
   function refreshPendingPathFills(): void {
@@ -109,6 +167,7 @@ export function startDomHarvester(
       }
       if (fillMissingPatchPaths(pending.patch, extractPathFromCode(pending.codeText, pending.element))) {
         pendingPathFills.splice(index, 1);
+        onPatchUpdated?.(pending.patch);
       }
     }
   }
@@ -136,39 +195,7 @@ export function startDomHarvester(
       pre.querySelector('code') ||
       pre;
     const codeText = (codeEl.textContent || '').trim();
-    if (codeText.length < 15) return;
-
-    let harvested: HarvestedPatch | null = null;
-
-    // Check for V2 JSON payload first
-    const v2Payload = parseV2PatchPayloadFromCode(codeText);
-    if (v2Payload) {
-      harvested = {
-        id: createStablePatchId('v2_json', v2Payload),
-        mode: 'v2_json',
-        commitMessage: v2Payload.commitMessage,
-        payload: v2Payload,
-        timestamp: new Date().toLocaleTimeString(),
-      };
-    } else {
-      // Check for legacy diff or file (require diff markers or an explicit path hint so prose blocks are ignored)
-      const detectedPath = extractPathFromCode(codeText, pre);
-      const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || undefined);
-      if (converted && (isSearchReplace(codeText) || Boolean(detectedPath))) {
-        const legacyMode: HarvestedPatch['mode'] = isSearchReplace(codeText)
-          ? 'v1_search_replace'
-          : 'v2_json';
-        harvested = {
-          id: createStablePatchId(legacyMode, converted.payload),
-          mode: legacyMode,
-          commitMessage: converted.payload.commitMessage,
-          payload: converted.payload,
-          legacyPayload: converted.legacyPayload,
-          timestamp: new Date().toLocaleTimeString(),
-        };
-      }
-    }
-
+    const harvested = parseCodeBlockPayload(codeText, pre);
     if (!harvested) return;
 
     // Only mark as processed AFTER a successful harvest.
@@ -182,6 +209,7 @@ export function startDomHarvester(
     }
 
     const currentPatch = harvested;
+    harvestedBlocks.set(pre, { codeEl, lastCodeText: codeText, patch: currentPatch });
 
     // Create Trusted-Types-safe inline action button
     const btn = document.createElement('button');
@@ -213,7 +241,8 @@ export function startDomHarvester(
       e.stopPropagation();
       // The full answer (and with it the filename heading) is guaranteed to be
       // rendered by the time the user clicks, so resolve a missing path now.
-      refreshPatchPathFromDom(currentPatch, codeText, pre);
+      const liveText = (codeEl.textContent || '').trim() || codeText;
+      refreshPatchPathFromDom(currentPatch, liveText, pre);
       onInlineApply(currentPatch);
     };
 
@@ -334,6 +363,7 @@ export function startDomHarvester(
   }
 
   function scanDOM() {
+    refreshStreamingBlocks();
     refreshPendingPathFills();
     const blocks = document.querySelectorAll<HTMLElement>(
       'code-block:not([data-ggh-processed]), pre:not([data-ggh-processed])'

@@ -108,6 +108,8 @@ export function parseV2PatchPayloadFromCode(codeText: string): GeminiPatchPayloa
   const innerFenceOpen = textToParse.match(/```(?:json)?\s*\{/i);
   if (innerFenceOpen && innerFenceOpen.index !== undefined) {
     const fromBrace = textToParse.slice(innerFenceOpen.index + innerFenceOpen[0].length - 1);
+    const directInner = tryParseGeminiPayload(fromBrace);
+    if (directInner) return directInner;
     const lastFenceIdx = fromBrace.lastIndexOf('```');
     const innerCandidate = lastFenceIdx !== -1 ? fromBrace.slice(0, lastFenceIdx) : fromBrace;
     const innerParsed = tryParseGeminiPayload(innerCandidate);
@@ -164,15 +166,31 @@ export function convertLegacyBlocksToV2Payload(
   if (!codeText || codeText.trim().length === 0) return null;
 
   // Never convert an incomplete/streaming V2 JSON payload into a raw file creation
-  if (/^\s*(?:```(?:json|md|markdown)?\s*)?\{\s*"(?:commitMessage|patches)"/.test(codeText)) {
+  const strippedFence = codeText.trim().replace(/^```(?:json|md|markdown)?\s*/i, '');
+  if (
+    /^\{\s*(?:"(?:commit|patch|preflight)[a-zA-Z]*"|\s*$)/.test(strippedFence) ||
+    /```(?:json)?\s*\{\s*"(?:commit|patch|preflight)/i.test(codeText)
+  ) {
     return null;
   }
 
-  // If diff open markers are present, require balanced open/close markers (prevents premature harvest during streaming)
-  if (codeText.includes('<<<<<<<')) {
+  // If any diff markers or partial streaming markers are present, require balanced open/separator/close markers
+  const hasAnyDiffMarker =
+    codeText.includes('<<<<<<<') ||
+    codeText.includes('=======') ||
+    codeText.includes('>>>>>>>') ||
+    /(?:^|\r?\n)(?:<{4,7}|={4,7}|>{4,7})\s*$/.test(codeText);
+  if (hasAnyDiffMarker) {
     const openCount = (codeText.match(/^<{7}/gm) || []).length;
+    const sepCount = (codeText.match(/^={7}\s*$/gm) || []).length;
     const closeCount = (codeText.match(/^>{7}/gm) || []).length;
-    if (openCount === 0 || openCount !== closeCount) {
+    const hasTrailingPartialMarker = /(?:^|\r?\n)(?:<{1,6}|={1,6}|>{1,6})\s*$/.test(codeText);
+    if (
+      openCount === 0 ||
+      openCount !== sepCount ||
+      openCount !== closeCount ||
+      hasTrailingPartialMarker
+    ) {
       return null;
     }
   }
@@ -237,6 +255,24 @@ export function convertLegacyBlocksToV2Payload(
 
       return { payload, legacyPayload };
     }
+    return null;
+  }
+
+  if (hasAnyDiffMarker) {
+    return null;
+  }
+
+  // Do not harvest a single-line path comment before the file body has streamed
+  const nonEmptyLines = codeText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (
+    nonEmptyLines.length === 1 &&
+    (/^(?:\/\/|#|\/\*)\s*(?:filepath|file|path):/i.test(nonEmptyLines[0]) ||
+      /^(?:\/\/|#|\/\*+)\s*[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+\s*\*?\/?$/.test(nonEmptyLines[0]))
+  ) {
+    return null;
   }
 
   // Not search/replace: Treat as full file update

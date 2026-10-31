@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 const hudDir = path.resolve(rootDir, 'packages/userscript-hud');
 const workerDir = path.resolve(rootDir, 'packages/edge-worker');
+const cliDir = path.resolve(rootDir, 'packages/local-cli');
 
 function run(command, cwd = rootDir) {
   console.log(`\n> [EXEC] ${command} (in ${path.relative(rootDir, cwd) || '.'})`);
@@ -19,8 +20,11 @@ async function main() {
   console.log('  Gemini Git Bridge - Full Release & Deploy Pipeline');
   console.log('===================================================');
 
-  // Step 1: Build Userscript with version bump
-  console.log('\n[1/5] Building Userscript with Version Bump...');
+  // Step 1: Typecheck all packages & build Userscript with version bump
+  console.log('\n[1/6] Typechecking Packages & Building Userscript with Version Bump...');
+  run('npm run typecheck', workerDir);
+  run('npm run typecheck', hudDir);
+  run('npm run typecheck', cliDir);
   run('node scripts/build-userscript.mjs --bump=patch', hudDir);
 
   // Read the new version
@@ -28,9 +32,10 @@ async function main() {
   const version = (pkgRaw.match(/"version"\s*:\s*"([^"]+)"/) || [])[1] || 'unknown';
   console.log(`\n>>> New Release Version: v${version} <<<`);
 
-  // Step 2: Build Edge Worker & Run Local Regressions
-  console.log('\n[2/6] Building Edge Worker & Running Local Regressions...');
+  // Step 2: Build Edge Worker + Local CLI & Run Local Regressions
+  console.log('\n[2/6] Building Edge Worker + Local CLI & Running Local Regressions...');
   run('node scripts/build-worker.mjs', workerDir);
+  run('node scripts/build-cli.mjs', cliDir);
   run('node scripts/patches_and_tests/run-regressions.mjs', rootDir);
 
   // Step 3: Deploy Worker 1 (Default: gemini-git-bridge)
