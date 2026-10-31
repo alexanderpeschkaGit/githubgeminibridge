@@ -211,10 +211,10 @@ export function startDomHarvester(
         timestamp: new Date().toLocaleTimeString(),
       };
     } else {
-      // Check for legacy diff or file
+      // Check for legacy diff or file (require diff markers or an explicit path hint so prose blocks are ignored)
       const detectedPath = extractPathFromCode(codeText, pre);
       const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || undefined);
-      if (converted) {
+      if (converted && (isSearchReplace(codeText) || Boolean(detectedPath))) {
         const legacyMode: HarvestedPatch['mode'] = isSearchReplace(codeText)
           ? 'v1_search_replace'
           : 'v2_json';

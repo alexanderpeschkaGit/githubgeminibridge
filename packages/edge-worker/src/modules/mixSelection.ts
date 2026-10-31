@@ -19,6 +19,11 @@ const ROOT_CONFIG_FILES = new Set([
   'wrangler.jsonc',
   'pnpm-workspace.yaml',
   'turbo.json',
+  'agents.md',
+  'AGENTS.md',
+  'GEMINI.md',
+  '.repomixignore.cf',
+  '.repomixignore',
 ]);
 
 const ENTRYPOINT_PATTERN = /^(index|main|worker|app)\.(ts|tsx|js|jsx|mjs)$/;

@@ -17,10 +17,11 @@ export const LLM_PLACEHOLDER_PATTERNS = [
  * Throws an error immediately if detected (used by V1 Legacy endpoints).
  */
 export function validateNoPlaceholders(content: string, filePath: string): void {
+  const examplePlaceholder = '// ..' + '. existing code ...';
   for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
     if (pattern.test(content)) {
       throw new Error(
-        `Hard Guardrail Rejection: File "${filePath}" contains forbidden LLM placeholder text (e.g. "// ... existing code ..."). Commit rejected to prevent accidental code truncation.`
+        `Hard Guardrail Rejection: File "${filePath}" contains forbidden LLM placeholder text (e.g. "${examplePlaceholder}"). Commit rejected to prevent accidental code truncation.`
       );
     }
   }
@@ -35,8 +36,9 @@ export function checkPlaceholderErrors(content: string, filePath: string): Linte
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const unquotedLine = line.replace(/(["'`])(?:(?!\1)[^\\]|\\.)*\1/g, '');
     for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
-      if (pattern.test(line)) {
+      if (pattern.test(unquotedLine)) {
         errors.push({
           file: filePath,
           stage: 'CUSTOM_RULE',

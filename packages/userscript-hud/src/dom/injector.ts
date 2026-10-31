@@ -97,9 +97,16 @@ export function injectPromptText(promptText: string, autoSubmit = false): boolea
 
   inputEl.focus();
 
+  const existingText =
+    inputEl instanceof HTMLTextAreaElement || 'value' in inputEl
+      ? (inputEl as HTMLTextAreaElement).value
+      : inputEl.textContent || '';
+  const needsLeadingNewline = existingText.length > 0 && !/\r?\n$/.test(existingText);
+  const cleanPromptText = (needsLeadingNewline ? `\n\n${promptText}` : promptText).replace(/\u200B/g, '');
+
   let inserted = false;
   try {
-    inserted = document.execCommand('insertText', false, promptText);
+    inserted = document.execCommand('insertText', false, cleanPromptText);
   } catch (e) {
     inserted = false;
   }
@@ -109,12 +116,12 @@ export function injectPromptText(promptText: string, autoSubmit = false): boolea
       const textarea = inputEl as HTMLTextAreaElement;
       const start = textarea.selectionStart ?? textarea.value.length;
       const end = textarea.selectionEnd ?? textarea.value.length;
-      textarea.value = textarea.value.slice(0, start) + promptText + textarea.value.slice(end);
+      textarea.value = textarea.value.slice(0, start) + cleanPromptText + textarea.value.slice(end);
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
     } else {
-      inputEl.textContent = (inputEl.textContent || '') + promptText;
-      inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: promptText }));
+      inputEl.textContent = (inputEl.textContent || '') + cleanPromptText;
+      inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: cleanPromptText }));
     }
   }
 
