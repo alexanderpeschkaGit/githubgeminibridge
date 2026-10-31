@@ -12,8 +12,8 @@ import {
   loadPatchOidState,
 } from '../services/patchOidStore';
 import {
-
   enqueueHarvestedPatch,
+  isDuplicatePatch,
   runPatchQueue,
 } from '../services/patchQueue';
 import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } from './hudStylesAndDom';
@@ -77,9 +77,12 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     renderState();
   }
 
+  let supersededPatchIds = new Set<string>();
+
   /** Config changes invalidate every snapshot OID: they are repo+branch bound. */
   function resetPatchOidState(reason: string) {
     clearPatchOidState(state);
+    supersededPatchIds.clear();
     state.continuationQueue = [];
     updateState({
       status: 'IDLE',
@@ -158,8 +161,6 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       onApplyPatchCustom,
     });
 
-  let supersededPatchIds = new Set<string>();
-
   dom.clearQueueBtn.onclick = () => {
     state.harvestedPatches = [];
     supersededPatchIds.clear();
@@ -224,6 +225,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     closePanel,
     handleApplyPatch,
     addHarvestedPatch: (patch: HarvestedPatch) => {
+      if (isDuplicatePatch(state.harvestedPatches, patch)) return;
       if (supersededPatchIds.size > 0) {
         state.harvestedPatches = state.harvestedPatches.filter((p) => !supersededPatchIds.has(p.id));
         supersededPatchIds.clear();

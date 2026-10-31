@@ -31,6 +31,77 @@ export interface HudApplyPatchDeps {
   onApplyPatchCustom?: (patch: HarvestedPatch) => Promise<boolean>;
 }
 
+function checkForeignOwnerBlocked(
+  config: HudConfig,
+  updateState: (partial: Partial<HudState>) => void
+): boolean {
+  if (classifyRepoOwner(config) !== 'foreign') return false;
+  updateState({
+    status: 'ERROR',
+    statusMessage: `❌ Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. Öffentliche Repos können weiterhin gemischt werden, aber Commits brauchen einen PAT für diesen Owner.`,
+  });
+  return true;
+}
+
+function handleConflictOrError(
+  res: WorkerPatchResponse,
+  config: HudConfig,
+  state: HudState,
+  updateState: (partial: Partial<HudState>) => void
+): false {
+  const scopeHint = res.status === 'GIT_CONFLICT' ? ` [validated ${config.repo}@${config.branch}]` : '';
+  const resetScope = resolveConflictOidReset(res);
+  if (resetScope === 'source') {
+    clearPatchOidState(state);
+  } else if (resetScope === 'target') {
+    clearTargetOidState(state);
+  }
+  const recoveryHint =
+    resetScope === 'source'
+      ? ' Stale snapshot OID discarded — click "Load Repo Mix" to mix the current HEAD, then retry.'
+      : resetScope === 'target'
+        ? ` Target OID discarded — retry to commit on the current "${config.targetBranch}" HEAD.`
+        : '';
+  updateState({
+    status: res.status === 'GIT_CONFLICT' ? 'GIT_CONFLICT' : 'ERROR',
+    statusMessage: `❌ ${res.status}: ${res.errorMessage || 'Preflight / Concurrency check failed'}${scopeHint}${recoveryHint}`,
+    lastErrors: res.errors || [],
+  });
+  return false;
+}
+
+function handlePreflightFailure(
+  res: WorkerPatchResponse,
+  config: HudConfig,
+  state: HudState,
+  updateState: (partial: Partial<HudState>) => void,
+  prefixLabel: string,
+  targetFiles?: string[]
+): false {
+  const selfHealingResult = executeSelfHealingTurn(res, config, state, true, targetFiles);
+  const errors = res.errors || [];
+  if (selfHealingResult.triggered) {
+    updateState({
+      status: 'PREFLIGHT_FAILED',
+      statusMessage: `⚠️ ${prefixLabel} 🤖 Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
+      retryCount: selfHealingResult.nextRetryCount,
+      lastErrors: errors,
+    });
+  } else {
+    const reasonMsg =
+      selfHealingResult.reason === 'MAX_RETRIES_EXCEEDED'
+        ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.`
+        : 'Auto-pilot disabled.';
+    updateState({
+      status: 'PREFLIGHT_FAILED',
+      statusMessage: `❌ ${prefixLabel} ${reasonMsg} Review errors below or trigger manual retry.`,
+      retryCount: selfHealingResult.nextRetryCount,
+      lastErrors: errors,
+    });
+  }
+  return false;
+}
+
 /** Applies one harvested patch through the worker, including OID recovery and self-healing. */
 export async function applyHudPatch(
   patch: HarvestedPatch,
@@ -43,14 +114,8 @@ export async function applyHudPatch(
   openPanel();
 
   // Foreign-owner guard: mixing public foreign repos stays allowed, but commits
-  // need a PAT for that owner which no registered account provides. This must run
-  // before any prompt, status switch or network/OID lookup.
-  const ownerMatch = classifyRepoOwner(config);
-  if (ownerMatch === 'foreign') {
-    updateState({
-      status: 'ERROR',
-      statusMessage: `❌ Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. Öffentliche Repos können weiterhin gemischt werden, aber Commits brauchen einen PAT für diesen Owner.`,
-    });
+  // need a PAT for that owner which no registered account provides.
+  if (checkForeignOwnerBlocked(config, updateState)) {
     return false;
   }
 
@@ -124,50 +189,11 @@ export async function applyHudPatch(
       }
 
       if (res.status === 'PREFLIGHT_FAILED') {
-        const selfHealingResult = executeSelfHealingTurn(res, config, state, true);
-        if (selfHealingResult.triggered) {
-          updateState({
-            status: 'PREFLIGHT_FAILED',
-            statusMessage: `⚠️ Preflight failed. 🤖 Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
-            retryCount: selfHealingResult.nextRetryCount,
-            lastErrors: res.errors || [],
-          });
-        } else {
-          const reasonMsg =
-            selfHealingResult.reason === 'MAX_RETRIES_EXCEEDED'
-              ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.`
-              : 'Auto-pilot disabled.';
-          updateState({
-            status: 'PREFLIGHT_FAILED',
-            statusMessage: `❌ Preflight failed. ${reasonMsg} Review errors below or trigger manual retry.`,
-            retryCount: selfHealingResult.nextRetryCount,
-            lastErrors: res.errors || [],
-          });
-        }
-        return false;
+        return handlePreflightFailure(res, config, state, updateState, 'Preflight failed.');
       }
 
       if (res.status === 'GIT_CONFLICT' || res.status === 'ERROR') {
-        const scopeHint = res.status === 'GIT_CONFLICT'
-          ? ` [validated ${config.repo}@${config.branch}]`
-          : '';
-        const resetScope = resolveConflictOidReset(res);
-        if (resetScope === 'source') {
-          clearPatchOidState(state);
-        } else if (resetScope === 'target') {
-          clearTargetOidState(state);
-        }
-        const recoveryHint = resetScope === 'source'
-          ? ' Stale snapshot OID discarded — click "Load Repo Mix" to mix the current HEAD, then retry.'
-          : resetScope === 'target'
-            ? ` Target OID discarded — retry to commit on the current "${config.targetBranch}" HEAD.`
-            : '';
-        updateState({
-          status: res.status,
-          statusMessage: `❌ ${res.status}: ${res.errorMessage || 'Preflight / Concurrency check failed'}${scopeHint}${recoveryHint}`,
-          lastErrors: res.errors || [],
-        });
-        return false;
+        return handleConflictOrError(res, config, state, updateState);
       }
 
       if (res.status === 'NO_CHANGES_NEEDED') {
@@ -206,15 +232,8 @@ export interface HolisticQueuePatchDeps extends HudApplyPatchDeps {
 export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promise<boolean> {
   deps.openPanel();
 
-  if (!deps.dryRun) {
-    const ownerMatch = classifyRepoOwner(deps.config);
-    if (ownerMatch === 'foreign') {
-      deps.updateState({
-        status: 'ERROR',
-        statusMessage: `❌ Patch blockiert: "${ownerOfRepo(deps.config.repo)}" ist keiner der registrierten GitHub-Accounts. Öffentliche Repos können weiterhin gemischt werden, aber Commits brauchen einen PAT für diesen Owner.`,
-      });
-      return false;
-    }
+  if (!deps.dryRun && checkForeignOwnerBlocked(deps.config, deps.updateState)) {
+    return false;
   }
 
   if (deps.state.harvestedPatches.length === 0) {
@@ -262,21 +281,7 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
       workerRes = await requestWorkerPatch(deps.config, patchReq);
 
       if (workerRes.status === 'GIT_CONFLICT' || workerRes.status === 'ERROR') {
-        const scopeHint = workerRes.status === 'GIT_CONFLICT'
-          ? ` [validated ${deps.config.repo}@${deps.config.branch}]`
-          : '';
-        const resetScope = resolveConflictOidReset(workerRes);
-        if (resetScope === 'source') {
-          clearPatchOidState(deps.state);
-        } else if (resetScope === 'target') {
-          clearTargetOidState(deps.state);
-        }
-        deps.updateState({
-          status: workerRes.status,
-          statusMessage: `❌ ${workerRes.status}: ${workerRes.errorMessage || 'Preflight / Concurrency check failed'}${scopeHint}`,
-          lastErrors: workerRes.errors || [],
-        });
-        return false;
+        return handleConflictOrError(workerRes, deps.config, deps.state, deps.updateState);
       }
     }
 
@@ -287,30 +292,14 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
 
     if (allErrors.length > 0) {
       deps.onMarkQueueSuperseded?.(deps.state.harvestedPatches.map((p) => p.id));
-      const syntheticRes: WorkerPatchResponse = {
-        status: 'PREFLIGHT_FAILED',
-        errors: allErrors
-      };
-      const selfHealingResult = executeSelfHealingTurn(syntheticRes, deps.config, deps.state, true, targetFiles);
-      if (selfHealingResult.triggered) {
-        deps.updateState({
-          status: 'PREFLIGHT_FAILED',
-          statusMessage: `⚠️ Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). 🤖 Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
-          retryCount: selfHealingResult.nextRetryCount,
-          lastErrors: allErrors,
-        });
-      } else {
-        const reasonMsg = selfHealingResult.reason === 'MAX_RETRIES_EXCEEDED'
-          ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.`
-          : 'Auto-pilot disabled.';
-        deps.updateState({
-          status: 'PREFLIGHT_FAILED',
-          statusMessage: `❌ Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). ${reasonMsg} Review errors below or trigger manual retry.`,
-          retryCount: selfHealingResult.nextRetryCount,
-          lastErrors: allErrors,
-        });
-      }
-      return false;
+      return handlePreflightFailure(
+        { status: 'PREFLIGHT_FAILED', errors: allErrors },
+        deps.config,
+        deps.state,
+        deps.updateState,
+        `Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)).`,
+        targetFiles
+      );
     }
 
     if (deps.dryRun || workerRes?.status === 'VALIDATED') {
@@ -341,6 +330,10 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
       return true;
     }
 
+    deps.updateState({
+      status: 'ERROR',
+      statusMessage: `❌ Holistic validation could not complete: ${patchSnapshotRequiredMessage(deps.config, 'batch queue')}`,
+    });
     return false;
   } catch (err: any) {
     deps.updateState({

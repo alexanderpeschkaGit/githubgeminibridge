@@ -674,6 +674,46 @@ const {
   assert.ok(prompt.includes('branch "preview"'), 'includes target branch');
   assert.ok(prompt.includes('Anchor Context: Provide 2–4 lines of verbatim surrounding context'), 'includes anchor context rule');
   assert.ok(prompt.includes('directly importable Markdown/JSON patch block'), 'demands importable code block');
+
+  // 5. Same-file create followed by modify is preserved in sequence in partitionQueueForHolisticCheck
+  const createPatch = {
+    id: 'q-create',
+    mode: 'v2_json',
+    commitMessage: 'feat: create c.ts',
+    payload: {
+      commitMessage: 'feat: create c.ts',
+      patches: [{ path: './src/c.ts', action: 'create', fullContent: 'export const c = 1;\n' }],
+      preflight: { requireExports: { './src/c.ts': ['c'] } },
+    },
+    timestamp: '',
+  };
+  const modifyCreatedPatch = makeBatchPatch('q-mod-c', 'src/c.ts', 'feat: update c.ts');
+  const createThenModPartition = partitionQueueForHolisticCheck([modifyCreatedPatch, createPatch]);
+  assert.equal(
+    createThenModPartition.validBatch.payload.patches.length,
+    2,
+    'create followed by modify on the same file stays a 2-step sequence'
+  );
+  assert.equal(createThenModPartition.validBatch.payload.patches[0].action, 'create');
+  assert.equal(createThenModPartition.validBatch.payload.patches[1].action, 'modify');
+  assert.deepEqual(
+    createThenModPartition.validBatch.payload.preflight.requireExports,
+    { 'src/c.ts': ['c'] },
+    'requireExports keys are canonicalized via normalizeRepoPath'
+  );
+
+  // 6. parseV2PatchPayloadFromCode preserves JSON strings containing inner backtick fences
+  const fenceInsideString = '```md\n```json\n' + JSON.stringify({
+    commitMessage: 'docs: example fence',
+    patches: [{
+      path: 'src/prompt.ts',
+      action: 'modify',
+      blocks: [{ search: 'old', replace: 'Example:\n```json\n{ "a": 1 }\n```' }],
+    }],
+  }) + '\n```\n```';
+  const parsedWithInnerFence = parseV2PatchPayloadFromCode(fenceInsideString);
+  assert.ok(parsedWithInnerFence, 'parses JSON payload even when replace string contains backtick fences');
+  assert.equal(parsedWithInnerFence.patches[0].path, 'src/prompt.ts');
 }
 
 console.log(

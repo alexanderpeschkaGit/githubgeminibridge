@@ -61,11 +61,12 @@ export function coalescePatchesIntoBatch(queue: HarvestedPatch[]): HarvestedPatc
     }
 
     for (const [filePath, symbols] of Object.entries(entry.payload.preflight?.requireExports ?? {})) {
-      const merged = requireExports[filePath] ?? [];
+      const normExportPath = normalizeRepoPath(filePath) || filePath;
+      const merged = requireExports[normExportPath] ?? [];
       for (const symbol of symbols) {
         if (!merged.includes(symbol)) merged.push(symbol);
       }
-      requireExports[filePath] = merged;
+      requireExports[normExportPath] = merged;
     }
 
     if (entry.commitMessage) commitMessages.push(entry.commitMessage);
@@ -166,20 +167,37 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
         targetFiles.push(normPath);
       }
 
-      const existingOp = validOperations.find((o) => o.path === normPath);
+      const clonedOp: FilePatchOperation = {
+        ...op,
+        path: normPath,
+        ...(op.blocks ? { blocks: op.blocks.map((b) => ({ ...b })) } : {})
+      };
+
+      let lastIdx = -1;
+      for (let i = validOperations.length - 1; i >= 0; i--) {
+        if (validOperations[i].path === normPath) {
+          lastIdx = i;
+          break;
+        }
+      }
+      const existingOp = lastIdx >= 0 ? validOperations[lastIdx] : undefined;
+
       if (existingOp) {
-        if (existingOp.action === 'modify' && op.action === 'modify' && existingOp.blocks && op.blocks) {
-          existingOp.blocks.push(...op.blocks);
+        if (existingOp.action === 'modify' && clonedOp.action === 'modify' && existingOp.blocks && clonedOp.blocks) {
+          existingOp.blocks.push(...clonedOp.blocks);
+        } else if (
+          existingOp.action === 'create' &&
+          clonedOp.action === 'modify' &&
+          typeof existingOp.fullContent === 'string' &&
+          clonedOp.blocks &&
+          clonedOp.blocks.length > 0
+        ) {
+          // Keep create followed by modify in sequence so applyPatchesInMemory chains them in workingFiles
+          validOperations.push(clonedOp);
         } else {
-          const existingIdx = validOperations.indexOf(existingOp);
-          validOperations[existingIdx] = { ...op, path: normPath };
+          validOperations[lastIdx] = clonedOp;
         }
       } else {
-        const clonedOp: FilePatchOperation = {
-          ...op,
-          path: normPath,
-          ...(op.blocks ? { blocks: op.blocks.map((b) => ({ ...b })) } : {})
-        };
         validOperations.push(clonedOp);
       }
     }
@@ -189,11 +207,12 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
     }
 
     for (const [filePath, symbols] of Object.entries(entry.payload?.preflight?.requireExports ?? {})) {
-      const merged = requireExports[filePath] ?? [];
+      const normExportPath = normalizeRepoPath(filePath) || filePath;
+      const merged = requireExports[normExportPath] ?? [];
       for (const symbol of symbols) {
         if (!merged.includes(symbol)) merged.push(symbol);
       }
-      requireExports[filePath] = merged;
+      requireExports[normExportPath] = merged;
     }
 
     if (entry.commitMessage) {

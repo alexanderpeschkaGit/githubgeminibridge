@@ -504,20 +504,28 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
         if (!targetFiles.includes(normPath)) {
           targetFiles.push(normPath);
         }
-        const existingOp = validOperations.find((o) => o.path === normPath);
+        const clonedOp = {
+          ...op,
+          path: normPath,
+          ...op.blocks ? { blocks: op.blocks.map((b) => ({ ...b })) } : {}
+        };
+        let lastIdx = -1;
+        for (let i = validOperations.length - 1; i >= 0; i--) {
+          if (validOperations[i].path === normPath) {
+            lastIdx = i;
+            break;
+          }
+        }
+        const existingOp = lastIdx >= 0 ? validOperations[lastIdx] : void 0;
         if (existingOp) {
-          if (existingOp.action === "modify" && op.action === "modify" && existingOp.blocks && op.blocks) {
-            existingOp.blocks.push(...op.blocks);
+          if (existingOp.action === "modify" && clonedOp.action === "modify" && existingOp.blocks && clonedOp.blocks) {
+            existingOp.blocks.push(...clonedOp.blocks);
+          } else if (existingOp.action === "create" && clonedOp.action === "modify" && typeof existingOp.fullContent === "string" && clonedOp.blocks && clonedOp.blocks.length > 0) {
+            validOperations.push(clonedOp);
           } else {
-            const existingIdx = validOperations.indexOf(existingOp);
-            validOperations[existingIdx] = { ...op, path: normPath };
+            validOperations[lastIdx] = clonedOp;
           }
         } else {
-          const clonedOp = {
-            ...op,
-            path: normPath,
-            ...op.blocks ? { blocks: op.blocks.map((b) => ({ ...b })) } : {}
-          };
           validOperations.push(clonedOp);
         }
       }
@@ -525,11 +533,12 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
         if (!forbidPatterns.includes(pattern)) forbidPatterns.push(pattern);
       }
       for (const [filePath, symbols] of Object.entries(entry.payload?.preflight?.requireExports ?? {})) {
-        const merged = requireExports[filePath] ?? [];
+        const normExportPath = normalizeRepoPath(filePath) || filePath;
+        const merged = requireExports[normExportPath] ?? [];
         for (const symbol of symbols) {
           if (!merged.includes(symbol)) merged.push(symbol);
         }
-        requireExports[filePath] = merged;
+        requireExports[normExportPath] = merged;
       }
       if (entry.commitMessage) {
         commitMessages.push(entry.commitMessage);
@@ -2344,17 +2353,57 @@ Fix Instructions:
   }
 
   // src/ui/hudApplyPatch.ts
+  function checkForeignOwnerBlocked(config, updateState) {
+    if (classifyRepoOwner(config) !== "foreign") return false;
+    updateState({
+      status: "ERROR",
+      statusMessage: `\u274C Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden, aber Commits brauchen einen PAT f\xFCr diesen Owner.`
+    });
+    return true;
+  }
+  function handleConflictOrError(res, config, state, updateState) {
+    const scopeHint = res.status === "GIT_CONFLICT" ? ` [validated ${config.repo}@${config.branch}]` : "";
+    const resetScope = resolveConflictOidReset(res);
+    if (resetScope === "source") {
+      clearPatchOidState(state);
+    } else if (resetScope === "target") {
+      clearTargetOidState(state);
+    }
+    const recoveryHint = resetScope === "source" ? ' Stale snapshot OID discarded \u2014 click "Load Repo Mix" to mix the current HEAD, then retry.' : resetScope === "target" ? ` Target OID discarded \u2014 retry to commit on the current "${config.targetBranch}" HEAD.` : "";
+    updateState({
+      status: res.status === "GIT_CONFLICT" ? "GIT_CONFLICT" : "ERROR",
+      statusMessage: `\u274C ${res.status}: ${res.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}${recoveryHint}`,
+      lastErrors: res.errors || []
+    });
+    return false;
+  }
+  function handlePreflightFailure(res, config, state, updateState, prefixLabel, targetFiles) {
+    const selfHealingResult = executeSelfHealingTurn(res, config, state, true, targetFiles);
+    const errors = res.errors || [];
+    if (selfHealingResult.triggered) {
+      updateState({
+        status: "PREFLIGHT_FAILED",
+        statusMessage: `\u26A0\uFE0F ${prefixLabel} \u{1F916} Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
+        retryCount: selfHealingResult.nextRetryCount,
+        lastErrors: errors
+      });
+    } else {
+      const reasonMsg = selfHealingResult.reason === "MAX_RETRIES_EXCEEDED" ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.` : "Auto-pilot disabled.";
+      updateState({
+        status: "PREFLIGHT_FAILED",
+        statusMessage: `\u274C ${prefixLabel} ${reasonMsg} Review errors below or trigger manual retry.`,
+        retryCount: selfHealingResult.nextRetryCount,
+        lastErrors: errors
+      });
+    }
+    return false;
+  }
   async function applyHudPatch(patch, { config, state, openPanel, updateState, onApplyPatchCustom }) {
     if (onApplyPatchCustom) {
       return onApplyPatchCustom(patch);
     }
     openPanel();
-    const ownerMatch = classifyRepoOwner(config);
-    if (ownerMatch === "foreign") {
-      updateState({
-        status: "ERROR",
-        statusMessage: `\u274C Patch blockiert: "${ownerOfRepo(config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden, aber Commits brauchen einen PAT f\xFCr diesen Owner.`
-      });
+    if (checkForeignOwnerBlocked(config, updateState)) {
       return false;
     }
     const resolvedPaths = resolvePatchPaths(patch.payload, (index, total) => {
@@ -2417,40 +2466,10 @@ Fix Instructions:
           return true;
         }
         if (res.status === "PREFLIGHT_FAILED") {
-          const selfHealingResult = executeSelfHealingTurn(res, config, state, true);
-          if (selfHealingResult.triggered) {
-            updateState({
-              status: "PREFLIGHT_FAILED",
-              statusMessage: `\u26A0\uFE0F Preflight failed. \u{1F916} Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
-              retryCount: selfHealingResult.nextRetryCount,
-              lastErrors: res.errors || []
-            });
-          } else {
-            const reasonMsg = selfHealingResult.reason === "MAX_RETRIES_EXCEEDED" ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.` : "Auto-pilot disabled.";
-            updateState({
-              status: "PREFLIGHT_FAILED",
-              statusMessage: `\u274C Preflight failed. ${reasonMsg} Review errors below or trigger manual retry.`,
-              retryCount: selfHealingResult.nextRetryCount,
-              lastErrors: res.errors || []
-            });
-          }
-          return false;
+          return handlePreflightFailure(res, config, state, updateState, "Preflight failed.");
         }
         if (res.status === "GIT_CONFLICT" || res.status === "ERROR") {
-          const scopeHint = res.status === "GIT_CONFLICT" ? ` [validated ${config.repo}@${config.branch}]` : "";
-          const resetScope = resolveConflictOidReset(res);
-          if (resetScope === "source") {
-            clearPatchOidState(state);
-          } else if (resetScope === "target") {
-            clearTargetOidState(state);
-          }
-          const recoveryHint = resetScope === "source" ? ' Stale snapshot OID discarded \u2014 click "Load Repo Mix" to mix the current HEAD, then retry.' : resetScope === "target" ? ` Target OID discarded \u2014 retry to commit on the current "${config.targetBranch}" HEAD.` : "";
-          updateState({
-            status: res.status,
-            statusMessage: `\u274C ${res.status}: ${res.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}${recoveryHint}`,
-            lastErrors: res.errors || []
-          });
-          return false;
+          return handleConflictOrError(res, config, state, updateState);
         }
         if (res.status === "NO_CHANGES_NEEDED") {
           state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
@@ -2473,15 +2492,8 @@ Fix Instructions:
   }
   async function runHolisticQueuePatch(deps) {
     deps.openPanel();
-    if (!deps.dryRun) {
-      const ownerMatch = classifyRepoOwner(deps.config);
-      if (ownerMatch === "foreign") {
-        deps.updateState({
-          status: "ERROR",
-          statusMessage: `\u274C Patch blockiert: "${ownerOfRepo(deps.config.repo)}" ist keiner der registrierten GitHub-Accounts. \xD6ffentliche Repos k\xF6nnen weiterhin gemischt werden, aber Commits brauchen einen PAT f\xFCr diesen Owner.`
-        });
-        return false;
-      }
+    if (!deps.dryRun && checkForeignOwnerBlocked(deps.config, deps.updateState)) {
+      return false;
     }
     if (deps.state.harvestedPatches.length === 0) {
       return false;
@@ -2521,19 +2533,7 @@ Fix Instructions:
         );
         workerRes = await requestWorkerPatch(deps.config, patchReq);
         if (workerRes.status === "GIT_CONFLICT" || workerRes.status === "ERROR") {
-          const scopeHint = workerRes.status === "GIT_CONFLICT" ? ` [validated ${deps.config.repo}@${deps.config.branch}]` : "";
-          const resetScope = resolveConflictOidReset(workerRes);
-          if (resetScope === "source") {
-            clearPatchOidState(deps.state);
-          } else if (resetScope === "target") {
-            clearTargetOidState(deps.state);
-          }
-          deps.updateState({
-            status: workerRes.status,
-            statusMessage: `\u274C ${workerRes.status}: ${workerRes.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}`,
-            lastErrors: workerRes.errors || []
-          });
-          return false;
+          return handleConflictOrError(workerRes, deps.config, deps.state, deps.updateState);
         }
       }
       const allErrors = [
@@ -2542,28 +2542,14 @@ Fix Instructions:
       ];
       if (allErrors.length > 0) {
         deps.onMarkQueueSuperseded?.(deps.state.harvestedPatches.map((p) => p.id));
-        const syntheticRes = {
-          status: "PREFLIGHT_FAILED",
-          errors: allErrors
-        };
-        const selfHealingResult = executeSelfHealingTurn(syntheticRes, deps.config, deps.state, true, targetFiles);
-        if (selfHealingResult.triggered) {
-          deps.updateState({
-            status: "PREFLIGHT_FAILED",
-            statusMessage: `\u26A0\uFE0F Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). \u{1F916} Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
-            retryCount: selfHealingResult.nextRetryCount,
-            lastErrors: allErrors
-          });
-        } else {
-          const reasonMsg = selfHealingResult.reason === "MAX_RETRIES_EXCEEDED" ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.` : "Auto-pilot disabled.";
-          deps.updateState({
-            status: "PREFLIGHT_FAILED",
-            statusMessage: `\u274C Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). ${reasonMsg} Review errors below or trigger manual retry.`,
-            retryCount: selfHealingResult.nextRetryCount,
-            lastErrors: allErrors
-          });
-        }
-        return false;
+        return handlePreflightFailure(
+          { status: "PREFLIGHT_FAILED", errors: allErrors },
+          deps.config,
+          deps.state,
+          deps.updateState,
+          `Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)).`,
+          targetFiles
+        );
       }
       if (deps.dryRun || workerRes?.status === "VALIDATED") {
         deps.updateState({
@@ -2588,6 +2574,10 @@ Fix Instructions:
         });
         return true;
       }
+      deps.updateState({
+        status: "ERROR",
+        statusMessage: `\u274C Holistic validation could not complete: ${patchSnapshotRequiredMessage(deps.config, "batch queue")}`
+      });
       return false;
     } catch (err) {
       deps.updateState({
@@ -2624,8 +2614,10 @@ Fix Instructions:
       Object.assign(state, partial);
       renderState();
     }
+    let supersededPatchIds = /* @__PURE__ */ new Set();
     function resetPatchOidState(reason) {
       clearPatchOidState(state);
+      supersededPatchIds.clear();
       state.continuationQueue = [];
       updateState({
         status: "IDLE",
@@ -2693,7 +2685,6 @@ Fix Instructions:
       updateState: (partial) => updateState(partial),
       onApplyPatchCustom
     });
-    let supersededPatchIds = /* @__PURE__ */ new Set();
     dom.clearQueueBtn.onclick = () => {
       state.harvestedPatches = [];
       supersededPatchIds.clear();
@@ -2753,6 +2744,7 @@ Fix Instructions:
       closePanel,
       handleApplyPatch,
       addHarvestedPatch: (patch) => {
+        if (isDuplicatePatch(state.harvestedPatches, patch)) return;
         if (supersededPatchIds.size > 0) {
           state.harvestedPatches = state.harvestedPatches.filter((p) => !supersededPatchIds.has(p.id));
           supersededPatchIds.clear();
@@ -2882,41 +2874,50 @@ Fix Instructions:
     fillMissingPatchPaths(patch, extractPathFromCode(codeText, element));
   }
 
-  // src/dom/harvester.ts
+  // src/dom/patchParser.ts
   function isSearchReplace(text) {
     return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
+  }
+  function isValidPatchOperation(p) {
+    if (!p || typeof p.path !== "string") return false;
+    if (p.action === "modify") {
+      return Array.isArray(p.blocks) || typeof p.fullContent === "string";
+    }
+    if (p.action === "create") {
+      return typeof p.fullContent === "string";
+    }
+    return p.action === "delete";
+  }
+  function tryParseGeminiPayload(candidate) {
+    const trimmed = candidate.trim();
+    const startIdx = trimmed.indexOf("{");
+    const endIdx = trimmed.lastIndexOf("}");
+    if (startIdx === -1 || endIdx <= startIdx) return null;
+    try {
+      const obj = JSON.parse(trimmed.substring(startIdx, endIdx + 1));
+      if (obj && typeof obj === "object" && typeof obj.commitMessage === "string" && Array.isArray(obj.patches) && obj.patches.length > 0 && obj.patches.every(isValidPatchOperation)) {
+        return obj;
+      }
+    } catch {
+    }
+    return null;
   }
   function parseV2PatchPayloadFromCode(codeText) {
     if (!codeText || codeText.trim().length === 0) return null;
     let textToParse = codeText.trim();
-    const fenceMatch = textToParse.match(/^```(?:json|md|markdown)?\s*([\s\S]*?)\s*```$/i);
+    const fenceMatch = textToParse.match(/^```(?:json|md|markdown)?\s*([\s\S]*)\s*```$/i);
     if (fenceMatch) {
       textToParse = fenceMatch[1].trim();
     }
-    const innerJsonFence = textToParse.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
-    if (innerJsonFence) {
-      textToParse = innerJsonFence[1].trim();
-    }
-    if (!textToParse.startsWith("{") || !textToParse.endsWith("}")) {
-      const startIdx = textToParse.indexOf("{");
-      const endIdx = textToParse.lastIndexOf("}");
-      if (startIdx !== -1 && endIdx > startIdx) {
-        textToParse = textToParse.substring(startIdx, endIdx + 1);
-      } else {
-        return null;
-      }
-    }
-    try {
-      const obj = JSON.parse(textToParse);
-      if (obj && typeof obj === "object" && typeof obj.commitMessage === "string" && Array.isArray(obj.patches) && obj.patches.length > 0) {
-        const validPatches = obj.patches.every(
-          (p) => p && typeof p.path === "string" && (p.action === "modify" || p.action === "create" || p.action === "delete")
-        );
-        if (validPatches) {
-          return obj;
-        }
-      }
-    } catch {
+    const direct = tryParseGeminiPayload(textToParse);
+    if (direct) return direct;
+    const innerFenceOpen = textToParse.match(/```(?:json)?\s*\{/i);
+    if (innerFenceOpen && innerFenceOpen.index !== void 0) {
+      const fromBrace = textToParse.slice(innerFenceOpen.index + innerFenceOpen[0].length - 1);
+      const lastFenceIdx = fromBrace.lastIndexOf("```");
+      const innerCandidate = lastFenceIdx !== -1 ? fromBrace.slice(0, lastFenceIdx) : fromBrace;
+      const innerParsed = tryParseGeminiPayload(innerCandidate);
+      if (innerParsed) return innerParsed;
     }
     return null;
   }
@@ -2924,10 +2925,14 @@ Fix Instructions:
     if (!sectionText || !sectionText.trim()) return "";
     const fromCode = extractPathFromCode(sectionText);
     if (fromCode) return normalizeRepoPath(fromCode);
-    const headerMatch = sectionText.match(/(?:^|\r?\n)\s*#{1,6}\s*([^\r\n]+)/);
-    if (headerMatch && headerMatch[1]) {
+    const lines = sectionText.split(/\r?\n/);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const headerMatch = lines[i].match(/^\s*#{1,6}\s+(.+)$/);
+      if (!headerMatch || !headerMatch[1]) continue;
       const cleaned = headerMatch[1].replace(/[`*]/g, "").trim();
-      const labeled = cleaned.match(/(?:filepath|file|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i);
+      const labeled = cleaned.match(
+        /(?:filepath|file|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i
+      );
       if (labeled && labeled[1]) return normalizeRepoPath(labeled[1]);
       const candidate = cleaned.replace(/[:;,]+$/, "").trim();
       if (/^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/.test(candidate)) {
@@ -3009,6 +3014,8 @@ Fix Instructions:
     };
     return { payload, legacyPayload };
   }
+
+  // src/dom/harvester.ts
   function startDomHarvester(onPatchHarvested, onInlineApply) {
     const processedSet = /* @__PURE__ */ new WeakSet();
     const pendingPathFills = [];

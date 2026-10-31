@@ -25,6 +25,10 @@ const RELATIVE_MODULES = [
     specifier: './pathHints',
     source: 'packages/userscript-hud/src/dom/pathHints.ts',
   },
+  {
+    specifier: './patchParser',
+    source: 'packages/userscript-hud/src/dom/patchParser.ts',
+  },
 ];
 
 const HARVESTER_SOURCE = 'packages/userscript-hud/src/dom/harvester.ts';
