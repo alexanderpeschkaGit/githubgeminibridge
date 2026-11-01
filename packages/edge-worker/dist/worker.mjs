@@ -1,4 +1,4 @@
-// src/utils/encoding.ts
+// packages/edge-worker/src/utils/encoding.ts
 function utf8ToBase64(str) {
   const bytes = new TextEncoder().encode(str);
   const CHUNK_SIZE = 32768;
@@ -10,7 +10,7 @@ function utf8ToBase64(str) {
   return btoa(binary);
 }
 
-// ../../shared/repoPaths.ts
+// shared/repoPaths.ts
 function normalizeRepoPath(input) {
   return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
 }
@@ -32,7 +32,7 @@ function findRepoPathIssue(input) {
   return null;
 }
 
-// src/utils/githubRepo.ts
+// packages/edge-worker/src/utils/githubRepo.ts
 function parseRepoOwner(repoInput, ownerInput) {
   if (ownerInput && repoInput && !repoInput.includes("/")) {
     return { owner: ownerInput.trim(), repo: repoInput.trim() };
@@ -47,7 +47,7 @@ function parseRepoOwner(repoInput, ownerInput) {
   };
 }
 
-// src/utils/githubGraphQL.ts
+// packages/edge-worker/src/utils/githubGraphQL.ts
 var GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql";
 var BranchNotFoundError = class extends Error {
   defaultBranch;
@@ -177,7 +177,7 @@ async function fetchFileContent(owner, repo, branch, path, token) {
   return await res.text();
 }
 
-// src/utils/githubBatchRead.ts
+// packages/edge-worker/src/utils/githubBatchRead.ts
 async function fetchMultipleFilesViaGraphQL(arg1, arg2, arg3, arg4, arg5) {
   let owner;
   let repo;
@@ -263,7 +263,7 @@ async function fetchMultipleFilesViaGraphQL(arg1, arg2, arg3, arg4, arg5) {
   return result;
 }
 
-// src/utils/githubCommit.ts
+// packages/edge-worker/src/utils/githubCommit.ts
 async function createCommitOnBranch(owner, repo, branch, expectedHeadOid, message, additions, deletions, token) {
   const mutation = `
     mutation CreateCommitOnBranch($input: CreateCommitOnBranchInput!) {
@@ -358,7 +358,7 @@ async function commitSingleFileViaGraphQL(arg1, arg2, arg3, arg4, arg5, arg6, ar
   );
 }
 
-// src/modules/searchReplace.ts
+// packages/edge-worker/src/modules/searchReplace.ts
 var LLM_PLACEHOLDER_PATTERNS = [
   /\/\/\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
   /#\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
@@ -454,7 +454,7 @@ function applySearchReplace(original, search, replace, filePath = "") {
 ${snippet}`);
 }
 
-// src/modules/patchInMemory.ts
+// packages/edge-worker/src/modules/patchInMemory.ts
 function runBuiltinPreflightRules(files, preflight) {
   const errors = [];
   if (!preflight) {
@@ -681,7 +681,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
   };
 }
 
-// src/modules/syntaxScanner.ts
+// packages/edge-worker/src/modules/syntaxScanner.ts
 var registeredOxcParser = null;
 var SUPPORTED_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
 function validateJson(filePath, content, getSnippet) {
@@ -1157,7 +1157,7 @@ async function validateSyntaxInWorker(filePath, content) {
   return errors;
 }
 
-// src/modules/linter.ts
+// packages/edge-worker/src/modules/linter.ts
 async function validateSyntaxInWorker2(filePath, content) {
   return validateSyntaxInWorker(filePath, content);
 }
@@ -1199,7 +1199,7 @@ async function runPreflightLinter(files, preflight) {
   return deduplicated;
 }
 
-// src/modules/patcher.ts
+// packages/edge-worker/src/modules/patcher.ts
 async function applyPatchesInMemory2(patches, existingFiles, preflight, preflightHook = runPreflightLinter) {
   return applyPatchesInMemory(patches, existingFiles, preflight, preflightHook);
 }
@@ -1464,7 +1464,7 @@ async function resolveFileContent(fileInput, existingContentFetcher) {
   return resolved;
 }
 
-// src/modules/mixSelection.ts
+// packages/edge-worker/src/modules/mixSelection.ts
 var ROOT_CONFIG_FILES = /* @__PURE__ */ new Set([
   "package.json",
   "tsconfig.json",
@@ -1606,7 +1606,7 @@ function buildMixTruncation(params) {
   };
 }
 
-// src/utils/tarUtils.ts
+// packages/edge-worker/src/utils/tarUtils.ts
 function concatBuffers(a, b) {
   const result = new Uint8Array(a.length + b.length);
   result.set(a, 0);
@@ -1758,7 +1758,7 @@ var DEFAULT_IGNORED_EXTENSIONS = /* @__PURE__ */ new Set([
   ".tsbuildinfo"
 ]);
 
-// src/modules/mixerTarScan.ts
+// packages/edge-worker/src/modules/mixerTarScan.ts
 var TarScanError = class extends Error {
   headOid;
   constructor(message, headOid) {
@@ -1988,7 +1988,7 @@ async function scanTarGzipStream(stream, includePaths) {
   return { headOid, fileTreeEntries, files, skippedFiles: skippedFiles.length > 0 ? skippedFiles : void 0 };
 }
 
-// src/modules/mixSerializer.ts
+// packages/edge-worker/src/modules/mixSerializer.ts
 var CONTINUATION_MIX_INSTRUCTIONS = (partNum, totalParts) => `<instructions>
 # Part ${partNum}/${totalParts} Continuation: Refer to Part 1 for master file_tree and modification protocol.
 </instructions>`;
@@ -2172,7 +2172,7 @@ function packFilesIntoBuckets(params) {
   };
 }
 
-// src/modules/mixContinuation.ts
+// packages/edge-worker/src/modules/mixContinuation.ts
 var MAX_CONTINUATION_PARTS = 20;
 function packContinuationBuckets(params) {
   if (params.partBudget <= 0 || params.files.length === 0) {
@@ -2371,7 +2371,7 @@ ${bucket.map((b) => b.path).join("\n")}`;
   return { continuationParts, coveredFilesCount };
 }
 
-// src/modules/mixChunker.ts
+// packages/edge-worker/src/modules/mixChunker.ts
 var DEFAULT_MAX_CHUNK_CHARS = 85e3;
 var HARD_GEMINI_CHAR_LIMIT = 1e5;
 var MAX_GEMINI_PARTS = 10;
@@ -2697,7 +2697,7 @@ ${bucket.map((b) => b.path).join("\n")}`;
   };
 }
 
-// src/modules/recentCommits.ts
+// packages/edge-worker/src/modules/recentCommits.ts
 function escapeXml(str) {
   if (!str) return "";
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -2833,7 +2833,7 @@ async function fetchRecentCommitsAndVolatileFiles(owner, repo, branch, token, co
   }
 }
 
-// src/modules/mixer.ts
+// packages/edge-worker/src/modules/mixer.ts
 async function describeTarballNotFound(owner, repo, branch, token) {
   try {
     const branchInfo = await getBranchHeadOid(owner, repo, branch, token);
@@ -3030,7 +3030,7 @@ async function handleMixRequest(req, githubToken) {
   };
 }
 
-// src/modules/webhookHandler.ts
+// packages/edge-worker/src/modules/webhookHandler.ts
 async function verifyGithubWebhookSignature(rawBody, signatureHeader, secret) {
   if (!signatureHeader || !secret) {
     return false;
@@ -3263,7 +3263,7 @@ async function handleGithubWebhookRequest(request, env, ctx) {
   );
 }
 
-// src/index.ts
+// packages/edge-worker/src/index.ts
 var ClientValidationError = class extends Error {
   constructor(message) {
     super(message);
@@ -3354,7 +3354,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "0.80.2",
+        version: "0.80.8",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))
