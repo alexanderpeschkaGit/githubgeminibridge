@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.9
+// @version      0.80.10
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -326,9 +326,19 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   function patchSnapshotRequiredMessage(config, commitMessage) {
     return `No repo mix snapshot for ${config.repo}@${config.branch}. Click "Load Repo Mix" first \u2014 patches are only committed against a validated HEAD OID. (Patch: "${commitMessage}")`;
   }
-  function resolveConflictOidReset(response) {
+  function resolveConflictOidReset(response, config) {
     if (response.status !== "GIT_CONFLICT") return "none";
-    return response.targetBranch ? "target" : "source";
+    if (!response.targetBranch) return "source";
+    if (config) {
+      const respBranch = normalizeBranch(response.targetBranch);
+      const srcBranch = normalizeBranch(config.branch);
+      const cfgTarget = normalizeBranch(config.targetBranch || "");
+      const hasDistinctTarget = Boolean(cfgTarget) && cfgTarget !== srcBranch;
+      if (!hasDistinctTarget && respBranch === srcBranch) {
+        return "source";
+      }
+    }
+    return "target";
   }
   function advancePatchOidState(config, response) {
     if (response.status !== "COMMITTED" && response.status !== "NO_CHANGES_NEEDED" || !response.newHeadOid) {
@@ -357,9 +367,13 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     });
   }
   function setSourceHeadOid(config, state, oid) {
+    const previousOid = state.headOid;
     state.headOid = oid;
     setStoredValue("head_oid", oid);
     setStoredValue("head_oid_scope", buildOidScope(config));
+    if (previousOid && previousOid !== oid) {
+      clearTargetOidState(state);
+    }
   }
   function clearPatchOidState(state) {
     state.headOid = "";
@@ -2022,7 +2036,7 @@ Fix Instructions:
     return typeof payload.status === "string" || typeof payload.errorMessage === "string" || Array.isArray(payload.errors);
   }
   function shouldResolveV2Error(status, data) {
-    return (status === 400 || status === 409) && isV2ErrorPayload(data);
+    return status >= 400 && status < 500 && isV2ErrorPayload(data);
   }
   async function gmRequestJson(url, method, secret, body) {
     const headers = {
@@ -2220,6 +2234,7 @@ Fix Instructions:
         const res = await requestRepoMix(config);
         if (res.status === "OK" && (res.parts?.length || res.xmlContent)) {
           setSourceHeadOid(config, state, res.headOid);
+          clearTargetOidState(state);
           try {
             recordFromConfig(config);
             refreshRepoHistorySelectNow();
@@ -2356,16 +2371,18 @@ Fix Instructions:
   }
   function handleConflictOrError(res, config, state, updateState) {
     const scopeHint = res.status === "GIT_CONFLICT" ? ` [validated ${config.repo}@${config.branch}]` : "";
-    const resetScope = resolveConflictOidReset(res);
+    const resetScope = resolveConflictOidReset(res, config);
     if (resetScope === "source") {
       clearPatchOidState(state);
     } else if (resetScope === "target") {
       clearTargetOidState(state);
     }
-    const recoveryHint = resetScope === "source" ? ' Stale snapshot OID discarded \u2014 click "Load Repo Mix" to mix the current HEAD, then retry.' : resetScope === "target" ? ` Target OID discarded \u2014 retry to commit on the current "${config.targetBranch}" HEAD.` : "";
+    const targetHeadHint = resetScope === "target" && res.newHeadOid ? ` (latest HEAD ${res.newHeadOid.slice(0, 7)})` : "";
+    const recoveryHint = resetScope === "source" ? ' Stale snapshot OID discarded \u2014 click "Load Repo Mix" to mix the current HEAD, then retry.' : resetScope === "target" ? ` Target OID${targetHeadHint} discarded \u2014 retry to commit on the current "${res.targetBranch || config.targetBranch}" HEAD.` : "";
+    const codeBadge = res.errorCode && res.errorCode !== res.status ? ` [${res.errorCode}]` : "";
     updateState({
       status: res.status === "GIT_CONFLICT" ? "GIT_CONFLICT" : "ERROR",
-      statusMessage: `\u274C ${res.status}: ${res.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}${recoveryHint}`,
+      statusMessage: `\u274C ${res.status}${codeBadge}: ${res.errorMessage || "Preflight / Concurrency check failed"}${scopeHint}${recoveryHint}`,
       lastErrors: res.errors || []
     });
     return false;

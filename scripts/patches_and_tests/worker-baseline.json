@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-01T14:24:02.035Z",
+  "timestamp": "2026-11-01T16:43:25.379Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -42,7 +42,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "0.80.8",
+      "version": "0.80.10",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },
@@ -107,14 +107,18 @@
       "id": 10,
       "name": "File-Size Modularity Audit (<500 lines) & End-to-End Artifact Completeness",
       "pass": true,
-      "totalTsFilesAudited": 54,
-      "warningZoneFilesCount": 10,
+      "totalTsFilesAudited": 56,
+      "warningZoneFilesCount": 11,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 140998,
+      "bundleSize": 141843,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
+        {
+          "file": "packages/edge-worker/src/modules/commitLegacy.ts",
+          "lines": 359
+        },
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
           "lines": 428
@@ -125,7 +129,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 394
+          "lines": 413
         },
         {
           "file": "packages/edge-worker/src/modules/patchInMemory.ts",
@@ -145,7 +149,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudApplyPatch.ts",
-          "lines": 372
+          "lines": 375
         },
         {
           "file": "packages/userscript-hud/src/ui/hudDomTree.ts",
@@ -160,7 +164,11 @@
       "audit": [
         {
           "file": "packages/edge-worker/src/index.ts",
-          "lines": 286
+          "lines": 187
+        },
+        {
+          "file": "packages/edge-worker/src/modules/commitLegacy.ts",
+          "lines": 359
         },
         {
           "file": "packages/edge-worker/src/modules/linter.ts",
@@ -192,7 +200,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
-          "lines": 394
+          "lines": 413
         },
         {
           "file": "packages/edge-worker/src/modules/patchInMemory.ts",
@@ -224,7 +232,7 @@
         },
         {
           "file": "packages/edge-worker/src/utils/github.ts",
-          "lines": 17
+          "lines": 25
         },
         {
           "file": "packages/edge-worker/src/utils/githubBatchRead.ts",
@@ -235,8 +243,12 @@
           "lines": 166
         },
         {
+          "file": "packages/edge-worker/src/utils/githubError.ts",
+          "lines": 220
+        },
+        {
           "file": "packages/edge-worker/src/utils/githubGraphQL.ts",
-          "lines": 192
+          "lines": 193
         },
         {
           "file": "packages/edge-worker/src/utils/githubRepo.ts",
@@ -280,11 +292,11 @@
         },
         {
           "file": "packages/userscript-hud/src/services/patchOidState.ts",
-          "lines": 125
+          "lines": 136
         },
         {
           "file": "packages/userscript-hud/src/services/patchOidStore.ts",
-          "lines": 59
+          "lines": 63
         },
         {
           "file": "packages/userscript-hud/src/services/patchPaths.ts",
@@ -328,7 +340,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudApplyPatch.ts",
-          "lines": 372
+          "lines": 375
         },
         {
           "file": "packages/userscript-hud/src/ui/hudConfigBindings.ts",
@@ -340,7 +352,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudMixAction.ts",
-          "lines": 167
+          "lines": 168
         },
         {
           "file": "packages/userscript-hud/src/ui/hudRender.ts",
