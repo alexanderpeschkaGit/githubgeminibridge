@@ -13,7 +13,7 @@ export interface TarScanResult {
   headOid: string | null;
   fileTreeEntries: string[];
   files: { path: string; content: string }[];
-  skippedFiles?: Array<{ path: string; reason: 'too_large'; bytes?: number; chars?: number }>;
+  skippedFiles?: Array<{ path: string; reason: 'too_large' | 'stream_cap'; bytes?: number; chars?: number }>;
 }
 
 /**
@@ -152,7 +152,7 @@ export async function scanTarGzipStream(
   const files: { path: string; content: string }[] = [];
   const dynamicIgnorePatterns: string[] = [];
   const textDecoder = new TextDecoder();
-  const skippedFiles: Array<{ path: string; reason: 'too_large'; bytes?: number; chars?: number }> = [];
+  const skippedFiles: Array<{ path: string; reason: 'too_large' | 'stream_cap'; bytes?: number; chars?: number }> = [];
   let totalCollectedBytes = 0;
 
   // Read next chunk into buffer if needed

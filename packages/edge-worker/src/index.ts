@@ -70,7 +70,7 @@ export function verifyAuth(request: Request, env: WorkerEnv): boolean {
 
   const authHeader = request.headers.get('Authorization');
   if (authHeader) {
-    const token = authHeader.replace(/^Bearer\\s+/i, '').trim();
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
     if (token && constantTimeEqual(token, secret)) {
       return true;
     }

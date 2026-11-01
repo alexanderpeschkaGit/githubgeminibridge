@@ -51,7 +51,7 @@ const BRANCH_PROTECTION_PATTERN =
   /protected branch|repository rule violations|Changes must be made through a pull request|Required status check|GH006|GH013|push declined due to repository rule|ruleset/i;
 
 const GIT_CONFLICT_PATTERN =
-  /expectedHeadOid|Expected branch to point to|but it points to|fast[- ]forward|Head sha|reference update failed|cannot lock ref|was at [0-9a-f]{7,40} but expected|conflict|stale|\bHEAD\b/i;
+  /expectedHeadOid|Expected branch to point to|but it points to|fast[- ]forward|Head sha|reference update failed|cannot lock ref|was at [0-9a-f]{7,40} but expected|stale (?:ref|head|branch|commit)|merge conflict/i;
 
 const RATE_LIMIT_PATTERN =
   /rate limit|secondary rate limit|abuse detection|HTTP error 429/i;

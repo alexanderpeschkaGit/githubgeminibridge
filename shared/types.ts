@@ -66,7 +66,7 @@ export interface MixRequest {
 // Tarball-level skips only; chunker omissions are reported via MixOmittedFile in MixTruncation.
 export interface SkippedFile {
   path: string;
-  reason: 'too_large';
+  reason: 'too_large' | 'stream_cap';
   bytes?: number;
   chars?: number;
 }
