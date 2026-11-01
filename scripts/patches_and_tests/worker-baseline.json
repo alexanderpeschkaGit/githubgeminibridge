@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-01T16:54:11.855Z",
+  "timestamp": "2026-11-01T16:58:00.762Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -111,7 +111,7 @@
       "warningZoneFilesCount": 11,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 142169,
+      "bundleSize": 142829,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [

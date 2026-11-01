@@ -47,6 +47,150 @@ function parseRepoOwner(repoInput, ownerInput) {
   };
 }
 
+// src/utils/githubError.ts
+var GitHubApiError = class extends Error {
+  code;
+  httpStatus;
+  graphqlTypes;
+  actualHeadOid;
+  retryable;
+  constructor(params) {
+    super(params.message);
+    this.name = "GitHubApiError";
+    this.code = params.code;
+    this.httpStatus = params.httpStatus;
+    this.graphqlTypes = params.graphqlTypes || [];
+    this.actualHeadOid = params.actualHeadOid;
+    this.retryable = params.retryable;
+  }
+};
+function extractConflictingHeadOid(message) {
+  if (!message) return void 0;
+  const match = message.match(/but it points to ["']?([0-9a-fA-F]{40})["']?/i) || message.match(/branch [^\n]*? is at ["']?([0-9a-fA-F]{40})["']?/i) || message.match(/was at ["']?([0-9a-fA-F]{40})["']? but expected/i);
+  return match ? match[1].toLowerCase() : void 0;
+}
+var BRANCH_PROTECTION_PATTERN = /protected branch|repository rule violations|Changes must be made through a pull request|Required status check|GH006|GH013|push declined due to repository rule|ruleset/i;
+var GIT_CONFLICT_PATTERN = /expectedHeadOid|Expected branch to point to|but it points to|fast[- ]forward|Head sha|reference update failed|cannot lock ref|was at [0-9a-f]{7,40} but expected|stale (?:ref|head|branch|commit)|merge conflict/i;
+var RATE_LIMIT_PATTERN = /rate limit|secondary rate limit|abuse detection|HTTP error 429/i;
+var AUTH_FORBIDDEN_PATTERN = /Bad credentials|Resource not accessible by personal access token|INSUFFICIENT_SCOPES|requires one of the following scopes|must have push access|write access to repository not granted|HTTP error 401|HTTP error 403/i;
+var REPO_NOT_FOUND_PATTERN = /Could not resolve to a Repository|Repository .* was not found|not accessible with the provided token/i;
+var BRANCH_NOT_FOUND_PATTERN = /Branch .* was not found|Reference does not exist|ref .* not found/i;
+function classifyGitHubError(err, context) {
+  const rawMessage = err instanceof Error ? err.message : String(err || "Unknown GitHub error");
+  const errName = err instanceof Error ? err.name : "";
+  const graphqlTypes = err instanceof GitHubApiError ? err.graphqlTypes.map((t) => t.toUpperCase()) : [];
+  const actualHeadOid = (err instanceof GitHubApiError ? err.actualHeadOid : void 0) || extractConflictingHeadOid(rawMessage);
+  if (BRANCH_PROTECTION_PATTERN.test(rawMessage)) {
+    const branchLabel = context?.branch ? `"${context.branch}"` : "the target branch";
+    const hint = ` [Actionable Fix: Branch ${branchLabel} is protected by GitHub branch protection or rulesets. Set a separate "Target Branch" (e.g. "feature/patch") in the HUD to commit to a new branch and open a Pull Request.]`;
+    return {
+      code: "BRANCH_PROTECTED",
+      httpStatus: 403,
+      patchStatus: "ERROR",
+      message: rawMessage.includes("Actionable Fix:") ? rawMessage : `${rawMessage}${hint}`,
+      retryable: false
+    };
+  }
+  if (errName === "BranchNotFoundError" || BRANCH_NOT_FOUND_PATTERN.test(rawMessage)) {
+    return {
+      code: "BRANCH_NOT_FOUND",
+      httpStatus: 404,
+      patchStatus: "ERROR",
+      message: rawMessage,
+      retryable: false
+    };
+  }
+  if (graphqlTypes.includes("RATE_LIMITED") || RATE_LIMIT_PATTERN.test(rawMessage)) {
+    const hint = " [Actionable Fix: GitHub API rate limit reached. Wait 30-60 seconds and retry.]";
+    return {
+      code: "RATE_LIMITED",
+      httpStatus: 429,
+      patchStatus: "ERROR",
+      message: rawMessage.includes("Actionable Fix:") ? rawMessage : `${rawMessage}${hint}`,
+      retryable: true
+    };
+  }
+  if (graphqlTypes.includes("NOT_FOUND") || REPO_NOT_FOUND_PATTERN.test(rawMessage)) {
+    return {
+      code: "REPO_NOT_FOUND",
+      httpStatus: 404,
+      patchStatus: "ERROR",
+      message: rawMessage,
+      retryable: false
+    };
+  }
+  if (graphqlTypes.includes("INSUFFICIENT_SCOPES") || graphqlTypes.includes("FORBIDDEN") || AUTH_FORBIDDEN_PATTERN.test(rawMessage)) {
+    const repoLabel = context?.repo ? ` for "${context.repo}"` : "";
+    const hint = ` [Actionable Fix: Verify that the Worker's GITHUB_PAT / GITHUB_TOKEN has "Contents: Read and write" permission${repoLabel} and that the active HUD Account matches the repository owner.]`;
+    return {
+      code: "AUTH_FORBIDDEN",
+      httpStatus: /HTTP error 401|Bad credentials/i.test(rawMessage) ? 401 : 403,
+      patchStatus: "ERROR",
+      message: rawMessage.includes("Actionable Fix:") ? rawMessage : `${rawMessage}${hint}`,
+      retryable: false
+    };
+  }
+  if (err instanceof GitHubApiError && err.code === "GIT_CONFLICT" || GIT_CONFLICT_PATTERN.test(rawMessage)) {
+    return {
+      code: "GIT_CONFLICT",
+      httpStatus: 409,
+      patchStatus: "GIT_CONFLICT",
+      message: rawMessage,
+      actualHeadOid,
+      retryable: true
+    };
+  }
+  if (graphqlTypes.includes("UNPROCESSABLE") || /HTTP error 422|UNPROCESSABLE/i.test(rawMessage)) {
+    return {
+      code: "VALIDATION_FAILED",
+      httpStatus: 422,
+      patchStatus: "ERROR",
+      message: rawMessage,
+      retryable: false
+    };
+  }
+  return {
+    code: "UPSTREAM_ERROR",
+    httpStatus: err instanceof GitHubApiError ? err.httpStatus : 502,
+    patchStatus: "ERROR",
+    message: rawMessage,
+    retryable: true
+  };
+}
+function createGitHubHttpError(status, statusText, bodyText) {
+  const message = `GitHub GraphQL HTTP error ${status} (${statusText}): ${bodyText}`;
+  const classified = classifyGitHubError(new Error(message));
+  return new GitHubApiError({
+    message,
+    code: classified.code,
+    httpStatus: status >= 400 ? status : classified.httpStatus,
+    actualHeadOid: classified.actualHeadOid,
+    retryable: status === 429 || status >= 500 || classified.retryable
+  });
+}
+function createGitHubGraphQLError(errors) {
+  const msg = errors.map((e) => e?.message || "Unknown GraphQL error").join(" | ");
+  const graphqlTypes = errors.map((e) => typeof e?.type === "string" ? e.type.trim() : "").filter(Boolean);
+  const message = `GitHub GraphQL error: ${msg}`;
+  const probe = new GitHubApiError({
+    message,
+    code: "UPSTREAM_ERROR",
+    httpStatus: 502,
+    graphqlTypes,
+    actualHeadOid: extractConflictingHeadOid(msg),
+    retryable: false
+  });
+  const classified = classifyGitHubError(probe);
+  return new GitHubApiError({
+    message,
+    code: classified.code,
+    httpStatus: classified.httpStatus,
+    graphqlTypes,
+    actualHeadOid: classified.actualHeadOid,
+    retryable: classified.retryable
+  });
+}
+
 // src/utils/githubGraphQL.ts
 var GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql";
 var BranchNotFoundError = class extends Error {
@@ -69,12 +213,11 @@ async function executeGraphQL(query, variables, token) {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`GitHub GraphQL HTTP error ${res.status} (${res.statusText}): ${text}`);
+    throw createGitHubHttpError(res.status, res.statusText, text);
   }
   const json = await res.json();
   if (json.errors && json.errors.length > 0) {
-    const msg = json.errors.map((e) => e.message).join(" | ");
-    throw new Error(`GitHub GraphQL error: ${msg}`);
+    throw createGitHubGraphQLError(json.errors);
   }
   return json.data;
 }
@@ -452,6 +595,301 @@ function applySearchReplace(original, search, replace, filePath = "") {
   const snippet = search.length > 200 ? `${search.slice(0, 200)}...` : search;
   throw new Error(`Search block could not be resolved for file "${filePath}". Target snippet:
 ${snippet}`);
+}
+
+// src/modules/commitLegacy.ts
+var ClientValidationError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ClientValidationError";
+  }
+};
+var UpstreamRequestError = class extends Error {
+  httpStatus;
+  errorCode;
+  retryable;
+  constructor(message, httpStatus = 502, errorCode = "UPSTREAM_ERROR", retryable = false) {
+    super(message);
+    this.name = "UpstreamRequestError";
+    this.httpStatus = httpStatus;
+    this.errorCode = errorCode;
+    this.retryable = retryable;
+  }
+};
+function fileChangeNeedsExistingContent(fileInput) {
+  if (typeof fileInput.search === "string" && typeof fileInput.replace === "string") return true;
+  if (Array.isArray(fileInput.patches) && fileInput.patches.length > 0) return true;
+  const diffToCheck = fileInput.diff || fileInput.content || "";
+  return diffToCheck.includes("<<<<<<<") || diffToCheck.includes("=====");
+}
+async function resolveFileContent(fileInput, existingContentFetcher) {
+  const patchesToApply = [];
+  if (typeof fileInput.search === "string" && typeof fileInput.replace === "string") {
+    patchesToApply.push({ search: fileInput.search, replace: fileInput.replace });
+  }
+  if (Array.isArray(fileInput.patches)) {
+    for (const p of fileInput.patches) {
+      if (typeof p.search === "string" && typeof p.replace === "string") {
+        patchesToApply.push(p);
+      }
+    }
+  }
+  const diffToCheck = fileInput.diff || fileInput.content || "";
+  if (diffToCheck.includes("<<<<<<<") || diffToCheck.includes("=====")) {
+    const parsed = parseSearchReplaceBlocks(diffToCheck);
+    patchesToApply.push(...parsed);
+  }
+  if (patchesToApply.length === 0) {
+    if (typeof fileInput.content === "string") {
+      validateNoPlaceholders(fileInput.content, fileInput.path);
+      return fileInput.content;
+    }
+    throw new Error(`File change for "${fileInput.path}" must provide either "content" or search/replace patches.`);
+  }
+  for (const patch of patchesToApply) {
+    validateNoPlaceholders(patch.replace, fileInput.path);
+  }
+  const existingContent = await existingContentFetcher(fileInput.path);
+  let resolved = existingContent;
+  for (const patch of patchesToApply) {
+    resolved = applySearchReplace(resolved, patch.search, patch.replace, fileInput.path);
+  }
+  validateNoPlaceholders(resolved, fileInput.path);
+  return resolved;
+}
+async function handleCommitRequest(body, githubToken) {
+  let owner = "";
+  let repo = "";
+  try {
+    const parsed = parseRepoOwner(body.repo || "", body.owner);
+    owner = parsed.owner;
+    repo = parsed.repo;
+  } catch {
+    throw new ClientValidationError(
+      'Missing required fields: Repository must be specified as "owner/repo" or separate "owner" and "repo".'
+    );
+  }
+  const commitMessage = (body.commitMessage || body.message || "").trim();
+  if (!commitMessage) {
+    throw new ClientValidationError('Missing required field: "commitMessage" (or "message") must be specified.');
+  }
+  const fileChanges = body.changes || body.files || [];
+  const deletions = body.deletions || [];
+  if (fileChanges.length === 0 && deletions.length === 0) {
+    throw new ClientValidationError('Commit must include at least one entry in "changes" or "files" or "deletions".');
+  }
+  if (body.expectedTargetHeadOid !== void 0 && (typeof body.expectedTargetHeadOid !== "string" || !/^[0-9a-f]{40}$/i.test(body.expectedTargetHeadOid))) {
+    throw new ClientValidationError("expectedTargetHeadOid must be a 40-character Git commit OID.");
+  }
+  const normalizedChanges = fileChanges.map((fileInput) => {
+    const pathIssue = findRepoPathIssue(fileInput.path);
+    if (pathIssue) throw new ClientValidationError(pathIssue);
+    return { ...fileInput, path: normalizeRepoPath(fileInput.path) };
+  });
+  const formattedDeletions = deletions.map((del) => {
+    const rawPath = typeof del === "string" ? del : del.path;
+    const pathIssue = findRepoPathIssue(rawPath);
+    if (pathIssue) throw new ClientValidationError(pathIssue);
+    return { path: normalizeRepoPath(rawPath) };
+  });
+  const normalizeBranch = (branch) => branch.replace(/^refs\/heads\//, "");
+  const effectiveTargetBranch = (body.targetBranch || body.branch || "main").trim();
+  const baseBranch = (body.baseBranch || body.branch || effectiveTargetBranch).trim();
+  const isDistinctTarget = normalizeBranch(effectiveTargetBranch) !== normalizeBranch(baseBranch);
+  let sourceInfo;
+  try {
+    sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
+  } catch (err) {
+    const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: baseBranch });
+    throw new UpstreamRequestError(classified.message, classified.httpStatus, classified.code, classified.retryable);
+  }
+  if (body.expectedHeadOid && sourceInfo.headOid !== body.expectedHeadOid) {
+    const errorMessage = `Expected HEAD "${body.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`;
+    return {
+      httpStatus: 409,
+      body: {
+        success: false,
+        error: errorMessage,
+        status: "GIT_CONFLICT",
+        errorCode: "GIT_CONFLICT",
+        retryable: true,
+        newHeadOid: sourceInfo.headOid,
+        errorMessage
+      }
+    };
+  }
+  let targetInfo = sourceInfo;
+  let createdBranch = false;
+  if (isDistinctTarget) {
+    try {
+      targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+    } catch (err) {
+      if (!(err instanceof BranchNotFoundError)) {
+        const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });
+        throw new UpstreamRequestError(classified.message, classified.httpStatus, classified.code, classified.retryable);
+      }
+      if (body.expectedTargetHeadOid) {
+        const errorMessage = `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${body.expectedTargetHeadOid}".`;
+        return {
+          httpStatus: 409,
+          body: {
+            success: false,
+            error: errorMessage,
+            status: "GIT_CONFLICT",
+            errorCode: "GIT_CONFLICT",
+            retryable: true,
+            targetBranch: normalizeBranch(effectiveTargetBranch),
+            errorMessage
+          }
+        };
+      }
+      if (body.createBranchIfNeeded === false) {
+        throw new ClientValidationError(
+          `Target branch "${effectiveTargetBranch}" does not exist and createBranchIfNeeded is false.`
+        );
+      }
+      const baseOidForCreate = body.expectedHeadOid || sourceInfo.headOid;
+      try {
+        const createdRef = await createBranchRef(
+          owner,
+          repo,
+          effectiveTargetBranch,
+          baseOidForCreate,
+          githubToken,
+          sourceInfo.repositoryId
+        );
+        createdBranch = true;
+        targetInfo = {
+          headOid: createdRef.oid || baseOidForCreate,
+          resolvedBranch: normalizeBranch(effectiveTargetBranch),
+          repositoryId: sourceInfo.repositoryId
+        };
+      } catch (createErr) {
+        try {
+          targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+        } catch {
+          const classified = classifyGitHubError(createErr, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });
+          throw new UpstreamRequestError(classified.message, classified.httpStatus, classified.code, classified.retryable);
+        }
+      }
+    }
+    if (body.expectedTargetHeadOid && targetInfo.headOid !== body.expectedTargetHeadOid) {
+      const errorMessage = `Expected target HEAD "${body.expectedTargetHeadOid}" but branch "${targetInfo.resolvedBranch}" is at "${targetInfo.headOid}".`;
+      return {
+        httpStatus: 409,
+        body: {
+          success: false,
+          error: errorMessage,
+          status: "GIT_CONFLICT",
+          errorCode: "GIT_CONFLICT",
+          retryable: true,
+          newHeadOid: targetInfo.headOid,
+          targetBranch: targetInfo.resolvedBranch,
+          errorMessage
+        }
+      };
+    }
+  }
+  const commitBranch = targetInfo.resolvedBranch;
+  const commitExpectedHeadOid = targetInfo.headOid;
+  const pathsNeedingFetch = Array.from(
+    new Set(normalizedChanges.filter(fileChangeNeedsExistingContent).map((c) => c.path))
+  );
+  let existingFiles = {};
+  if (pathsNeedingFetch.length > 0) {
+    try {
+      existingFiles = await fetchMultipleFilesViaGraphQL(
+        owner,
+        repo,
+        commitExpectedHeadOid,
+        pathsNeedingFetch,
+        githubToken
+      );
+    } catch (err) {
+      const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: commitBranch });
+      throw new UpstreamRequestError(classified.message, classified.httpStatus, classified.code, classified.retryable);
+    }
+  }
+  const workingFiles = { ...existingFiles };
+  const additionsMap = /* @__PURE__ */ new Map();
+  for (const fileInput of normalizedChanges) {
+    const contentFetcher = async (requestedPath) => {
+      const norm = normalizeRepoPath(requestedPath);
+      const current = workingFiles[norm];
+      if (typeof current === "string") return current;
+      throw new ClientValidationError(
+        `Target file "${norm}" does not exist on branch "${commitBranch}" at revision ${commitExpectedHeadOid.slice(0, 7)}.`
+      );
+    };
+    let resolvedText;
+    try {
+      resolvedText = await resolveFileContent(fileInput, contentFetcher);
+    } catch (err) {
+      if (err instanceof ClientValidationError || err instanceof UpstreamRequestError) throw err;
+      throw new ClientValidationError(err?.message || "Invalid file change payload");
+    }
+    workingFiles[fileInput.path] = resolvedText;
+    additionsMap.set(fileInput.path, utf8ToBase64(resolvedText));
+  }
+  for (const del of formattedDeletions) {
+    additionsMap.delete(del.path);
+  }
+  const additions = Array.from(additionsMap, ([path, contents]) => ({ path, contents }));
+  try {
+    const commitResult = await createCommitOnBranch(
+      owner,
+      repo,
+      commitBranch,
+      commitExpectedHeadOid,
+      commitMessage,
+      additions,
+      formattedDeletions,
+      githubToken
+    );
+    const compareUrl = `https://github.com/${owner}/${repo}/compare/${sourceInfo.resolvedBranch}...${commitBranch}?expand=1`;
+    return {
+      httpStatus: 200,
+      body: {
+        success: true,
+        status: "COMMITTED",
+        commit: commitResult,
+        newHeadOid: commitResult.oid,
+        commitUrl: commitResult.url,
+        branch: commitBranch,
+        targetBranch: commitBranch,
+        createdBranch,
+        ...isDistinctTarget ? { pullRequestUrl: compareUrl } : {},
+        repository: `${owner}/${repo}`,
+        filesChanged: additions.length + formattedDeletions.length
+      }
+    };
+  } catch (err) {
+    const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: commitBranch, operation: "commit" });
+    if (classified.code === "GIT_CONFLICT") {
+      const latestHead = classified.actualHeadOid ? { headOid: classified.actualHeadOid } : await getBranchHeadOid(owner, repo, commitBranch, githubToken).catch(() => ({
+        headOid: commitExpectedHeadOid
+      }));
+      return {
+        httpStatus: 409,
+        body: {
+          success: false,
+          error: classified.message,
+          status: "GIT_CONFLICT",
+          errorCode: "GIT_CONFLICT",
+          retryable: true,
+          newHeadOid: latestHead.headOid,
+          ...isDistinctTarget ? { targetBranch: commitBranch } : {},
+          errorMessage: classified.message
+        }
+      };
+    }
+    throw new UpstreamRequestError(
+      `Commit execution failed: ${classified.message}`,
+      classified.httpStatus,
+      classified.code,
+      classified.retryable
+    );
+  }
 }
 
 // src/modules/patchInMemory.ts
@@ -1262,11 +1700,19 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
     try {
       sourceInfo = await headPromise;
     } catch (err) {
-      return { status: "ERROR", errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+      const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: baseBranch });
+      return {
+        status: "ERROR",
+        errorCode: classified.code,
+        retryable: classified.retryable,
+        errorMessage: `Failed to resolve branch "${baseBranch}": ${classified.message}`
+      };
     }
     if (sourceInfo.headOid !== req.expectedHeadOid) {
       return {
         status: "GIT_CONFLICT",
+        errorCode: "GIT_CONFLICT",
+        retryable: true,
         newHeadOid: sourceInfo.headOid,
         errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
       };
@@ -1274,17 +1720,31 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
     try {
       prefetchedFiles = await filesPromise;
     } catch (err) {
-      return { status: "ERROR", errorMessage: `Batch fetch failed for target files: ${err.message}` };
+      const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: baseBranch });
+      return {
+        status: "ERROR",
+        errorCode: classified.code,
+        retryable: classified.retryable,
+        errorMessage: `Batch fetch failed for target files: ${classified.message}`
+      };
     }
   } else {
     try {
       sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
     } catch (err) {
-      return { status: "ERROR", errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+      const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: baseBranch });
+      return {
+        status: "ERROR",
+        errorCode: classified.code,
+        retryable: classified.retryable,
+        errorMessage: `Failed to resolve branch "${baseBranch}": ${classified.message}`
+      };
     }
     if (sourceInfo.headOid !== req.expectedHeadOid) {
       return {
         status: "GIT_CONFLICT",
+        errorCode: "GIT_CONFLICT",
+        retryable: true,
         newHeadOid: sourceInfo.headOid,
         errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
       };
@@ -1297,22 +1757,33 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
       targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
     } catch (err) {
       if (!(err instanceof BranchNotFoundError)) {
-        return { status: "ERROR", errorMessage: `Failed to resolve target branch "${effectiveTargetBranch}": ${err.message}` };
+        const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });
+        return {
+          status: "ERROR",
+          errorCode: classified.code,
+          retryable: classified.retryable,
+          errorMessage: `Failed to resolve target branch "${effectiveTargetBranch}": ${classified.message}`
+        };
       }
-      if (req.dryRun) {
+      if (req.expectedTargetHeadOid) {
+        return {
+          status: "GIT_CONFLICT",
+          errorCode: "GIT_CONFLICT",
+          retryable: true,
+          targetBranch: normalizeBranch(effectiveTargetBranch),
+          errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${req.expectedTargetHeadOid}".`
+        };
+      } else if (req.dryRun) {
         targetInfo = {
           headOid: req.expectedHeadOid,
           resolvedBranch: normalizeBranch(effectiveTargetBranch),
           repositoryId: sourceInfo.repositoryId
         };
-      } else if (req.expectedTargetHeadOid) {
-        return {
-          status: "GIT_CONFLICT",
-          errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${req.expectedTargetHeadOid}".`
-        };
       } else if (req.createBranchIfNeeded === false) {
         return {
           status: "ERROR",
+          errorCode: "BRANCH_NOT_FOUND",
+          retryable: false,
           errorMessage: `Target branch "${effectiveTargetBranch}" does not exist and createBranchIfNeeded is false.`
         };
       } else {
@@ -1328,9 +1799,12 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
           try {
             targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
           } catch (resolveErr) {
+            const classified = classifyGitHubError(createErr, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });
             return {
               status: "ERROR",
-              errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
+              errorCode: classified.code,
+              retryable: classified.retryable,
+              errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${classified.message}; verification failed: ${resolveErr.message}`
             };
           }
         }
@@ -1339,6 +1813,8 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
     if (req.expectedTargetHeadOid && targetInfo.headOid !== req.expectedTargetHeadOid) {
       return {
         status: "GIT_CONFLICT",
+        errorCode: "GIT_CONFLICT",
+        retryable: true,
         newHeadOid: targetInfo.headOid,
         targetBranch: targetInfo.resolvedBranch,
         errorMessage: `Expected target HEAD "${req.expectedTargetHeadOid}" but branch "${targetInfo.resolvedBranch}" is at "${targetInfo.headOid}".`
@@ -1360,7 +1836,13 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
         githubToken
       );
     } catch (err) {
-      return { status: "ERROR", errorMessage: `Batch fetch failed for target files: ${err.message}` };
+      const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: commitBranch });
+      return {
+        status: "ERROR",
+        errorCode: classified.code,
+        retryable: classified.retryable,
+        errorMessage: `Batch fetch failed for target files: ${classified.message}`
+      };
     }
   }
   const patchResult = await applyPatchesInMemory2(
@@ -1370,7 +1852,14 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
     preflightHook
   );
   if (patchResult.errors.length > 0) {
-    return { status: "PREFLIGHT_FAILED", errors: patchResult.errors };
+    const targetDiverged = isDistinctTarget && !createdBranch && commitExpectedHeadOid !== req.expectedHeadOid;
+    const enrichedErrors = targetDiverged ? patchResult.errors.map(
+      (err) => err.stage === "SEARCH_REPLACE" ? {
+        ...err,
+        message: `${err.message} (Note: target branch "${commitBranch}" is at ${commitExpectedHeadOid.slice(0, 7)} while source "${baseBranch}" is at ${req.expectedHeadOid.slice(0, 7)}; "${commitBranch}" may be stale relative to "${baseBranch}".)`
+      } : err
+    ) : patchResult.errors;
+    return { status: "PREFLIGHT_FAILED", errors: enrichedErrors };
   }
   if (!patchResult.hasEffectiveChanges) {
     return {
@@ -1413,55 +1902,28 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
       pullRequestUrl: isDistinctTarget ? compareUrl : void 0
     };
   } catch (err) {
-    const errMsg = err.message || "";
-    if (/expectedHeadOid|conflict|stale|HEAD/i.test(errMsg)) {
-      const latestHead = await getBranchHeadOid(owner, repo, commitBranch, githubToken).catch(() => ({
+    const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: commitBranch, operation: "commit" });
+    if (classified.code === "GIT_CONFLICT") {
+      const latestHead = classified.actualHeadOid ? { headOid: classified.actualHeadOid } : await getBranchHeadOid(owner, repo, commitBranch, githubToken).catch(() => ({
         headOid: commitExpectedHeadOid
       }));
       return {
         status: "GIT_CONFLICT",
+        errorCode: "GIT_CONFLICT",
+        retryable: true,
         newHeadOid: latestHead.headOid,
-        targetBranch: commitBranch,
-        errorMessage: errMsg
+        ...isDistinctTarget ? { targetBranch: commitBranch } : {},
+        errorMessage: classified.message
       };
     }
-    return { status: "ERROR", errorMessage: `Commit execution failed: ${errMsg}` };
+    return {
+      status: "ERROR",
+      errorCode: classified.code,
+      retryable: classified.retryable,
+      ...isDistinctTarget ? { targetBranch: commitBranch } : {},
+      errorMessage: `Commit execution failed: ${classified.message}`
+    };
   }
-}
-async function resolveFileContent(fileInput, existingContentFetcher) {
-  const patchesToApply = [];
-  if (typeof fileInput.search === "string" && typeof fileInput.replace === "string") {
-    patchesToApply.push({ search: fileInput.search, replace: fileInput.replace });
-  }
-  if (Array.isArray(fileInput.patches)) {
-    for (const p of fileInput.patches) {
-      if (typeof p.search === "string" && typeof p.replace === "string") {
-        patchesToApply.push(p);
-      }
-    }
-  }
-  const diffToCheck = fileInput.diff || fileInput.content || "";
-  if (diffToCheck.includes("<<<<<<<") || diffToCheck.includes("=====")) {
-    const parsed = parseSearchReplaceBlocks(diffToCheck);
-    patchesToApply.push(...parsed);
-  }
-  if (patchesToApply.length === 0) {
-    if (typeof fileInput.content === "string") {
-      validateNoPlaceholders(fileInput.content, fileInput.path);
-      return fileInput.content;
-    }
-    throw new Error(`File change for "${fileInput.path}" must provide either "content" or search/replace patches.`);
-  }
-  for (const patch of patchesToApply) {
-    validateNoPlaceholders(patch.replace, fileInput.path);
-  }
-  const existingContent = await existingContentFetcher(fileInput.path);
-  let resolved = existingContent;
-  for (const patch of patchesToApply) {
-    resolved = applySearchReplace(resolved, patch.search, patch.replace, fileInput.path);
-  }
-  validateNoPlaceholders(resolved, fileInput.path);
-  return resolved;
 }
 
 // src/modules/mixSelection.ts
@@ -1952,7 +2414,7 @@ async function scanTarGzipStream(stream, includePaths) {
       const isIgnoreConfig = relPath === ".repomixignore.cf" || relPath === ".repomixignore";
       if (!isIgnoreConfig && totalCollectedBytes + size > MAX_TOTAL_TAR_BYTES) {
         fileTreeEntries.push(`${relPath} [SKIPPED: total mix >24MB]`);
-        skippedFiles.push({ path: relPath, reason: "too_large", bytes: size });
+        skippedFiles.push({ path: relPath, reason: "stream_cap", bytes: size });
         await discardBytes(paddedSize);
         continue;
       }
@@ -3375,18 +3837,6 @@ async function handleGithubWebhookRequest(request, env, ctx) {
 }
 
 // src/index.ts
-var ClientValidationError = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "ClientValidationError";
-  }
-};
-var UpstreamRequestError = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "UpstreamRequestError";
-  }
-};
 var CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -3440,7 +3890,7 @@ function verifyAuth(request, env) {
   }
   const authHeader = request.headers.get("Authorization");
   if (authHeader) {
-    const token = authHeader.replace(/^Bearer\\s+/i, "").trim();
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
     if (token && constantTimeEqual(token, secret)) {
       return true;
     }
@@ -3461,7 +3911,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "0.80.9",
+        version: "0.80.11",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))
@@ -3482,90 +3932,8 @@ var index_default = {
         const body = await request.json().catch(() => {
           throw new ClientValidationError("Malformed JSON payload");
         });
-        let owner = "";
-        let repo = "";
-        try {
-          const parsed = parseRepoOwner(body.repo || "", body.owner);
-          owner = parsed.owner;
-          repo = parsed.repo;
-        } catch {
-          throw new ClientValidationError('Missing required fields: Repository must be specified as "owner/repo" or separate "owner" and "repo".');
-        }
-        const commitMessage = body.commitMessage || body.message;
-        if (!commitMessage) {
-          throw new ClientValidationError('Missing required field: "commitMessage" (or "message") must be specified.');
-        }
-        const targetBranch = body.targetBranch || body.branch || "main";
-        const fileChanges = body.changes || body.files || [];
-        const deletions = body.deletions || [];
-        if (fileChanges.length === 0 && deletions.length === 0) {
-          throw new ClientValidationError('Commit must include at least one entry in "changes" or "files" or "deletions".');
-        }
-        const { headOid, resolvedBranch } = await getBranchHeadOid(owner, repo, targetBranch, githubToken);
-        if (body.expectedHeadOid && body.expectedHeadOid !== headOid) {
-          return jsonResponse(
-            {
-              status: "GIT_CONFLICT",
-              newHeadOid: headOid,
-              errorMessage: `Expected HEAD "${body.expectedHeadOid}" but branch "${resolvedBranch}" is at "${headOid}". Fetch the latest repo mix and retry.`
-            },
-            409
-          );
-        }
-        const additions = [];
-        for (const fileInput of fileChanges) {
-          const pathIssue = findRepoPathIssue(fileInput.path);
-          if (pathIssue) {
-            throw new ClientValidationError(pathIssue);
-          }
-          const filePath = normalizeRepoPath(fileInput.path);
-          const contentFetcher = async (requestedPath) => {
-            try {
-              return await fetchFileContent(owner, repo, resolvedBranch, requestedPath, githubToken);
-            } catch (err) {
-              throw new UpstreamRequestError(err?.message || "Failed to fetch existing file from GitHub");
-            }
-          };
-          let resolvedText;
-          try {
-            resolvedText = await resolveFileContent({ ...fileInput, path: filePath }, contentFetcher);
-          } catch (err) {
-            if (err instanceof UpstreamRequestError) {
-              throw err;
-            }
-            throw new ClientValidationError(err?.message || "Invalid file change payload");
-          }
-          const encodedBase64 = utf8ToBase64(resolvedText);
-          additions.push({
-            path: filePath,
-            contents: encodedBase64
-          });
-        }
-        const formattedDeletions = deletions.map((del) => {
-          const rawPath = typeof del === "string" ? del : del.path;
-          const pathIssue = findRepoPathIssue(rawPath);
-          if (pathIssue) {
-            throw new ClientValidationError(pathIssue);
-          }
-          return { path: normalizeRepoPath(rawPath) };
-        });
-        const commitResult = await createCommitOnBranch(
-          owner,
-          repo,
-          resolvedBranch,
-          headOid,
-          commitMessage,
-          additions,
-          formattedDeletions,
-          githubToken
-        );
-        return jsonResponse({
-          success: true,
-          commit: commitResult,
-          branch: resolvedBranch,
-          repository: `${owner}/${repo}`,
-          filesChanged: additions.length + formattedDeletions.length
-        });
+        const commitRes = await handleCommitRequest(body, githubToken);
+        return jsonResponse(commitRes.body, commitRes.httpStatus);
       }
       if (request.method === "POST" && path === "/api/mix") {
         const body = await request.json().catch(() => {
@@ -3596,8 +3964,18 @@ var index_default = {
       if (err instanceof ClientValidationError) {
         return errorResponse(err.message, 400);
       }
+      if (err instanceof UpstreamRequestError) {
+        return errorResponse(err.message, err.httpStatus, {
+          errorCode: err.errorCode,
+          retryable: err.retryable
+        });
+      }
+      const classified = classifyGitHubError(err);
       console.error("Request processing error:", err);
-      return errorResponse(err.message || "Internal server error", 500);
+      return errorResponse(classified.message || "Internal server error", 500, {
+        errorCode: classified.code,
+        retryable: classified.retryable
+      });
     }
   }
 };
