@@ -19,9 +19,13 @@ export function loadPatchOidState(config: HudConfig): PatchOidFields {
 }
 
 export function setSourceHeadOid(config: HudConfig, state: PatchOidFields, oid: string): void {
+  const previousOid = state.headOid;
   state.headOid = oid;
   setStoredValue('head_oid', oid);
   setStoredValue('head_oid_scope', buildOidScope(config));
+  if (previousOid && previousOid !== oid) {
+    clearTargetOidState(state);
+  }
 }
 
 export function clearPatchOidState(state: PatchOidFields): void {

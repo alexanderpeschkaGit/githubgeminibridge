@@ -145,7 +145,19 @@ export interface WorkerPatchResponse {
   targetBranch?: string;          // Der tatsächlich verwendete Zielbranch
   createdBranch?: boolean;        // True, falls der Branch frisch erzeugt wurde
   pullRequestUrl?: string;        // GitHub Compare/PR-Link (z.B. https://github.com/owner/repo/compare/base...target?expand=1)
+  errorCode?: GitHubErrorCode;    // Normalized machine-readable GitHub / Worker error category
+  retryable?: boolean;            // True when refreshing snapshot OID or retrying after backoff can recover
 }
+
+export type GitHubErrorCode =
+  | "GIT_CONFLICT"
+  | "BRANCH_PROTECTED"
+  | "REPO_NOT_FOUND"
+  | "BRANCH_NOT_FOUND"
+  | "AUTH_FORBIDDEN"
+  | "RATE_LIMITED"
+  | "VALIDATION_FAILED"
+  | "UPSTREAM_ERROR";
 
 // ==========================================
 // 4. V1 LEGACY COMPATIBILITY INTERFACES (/push, /commit)
@@ -177,6 +189,8 @@ export interface CommitRequest {
   changes?: FileChangeInput[];
   deletions?: (string | FileDeletionInput)[];
   expectedHeadOid?: string;
+  expectedTargetHeadOid?: string;
+  createBranchIfNeeded?: boolean;
 }
 
 export interface GitHubCommitResult {

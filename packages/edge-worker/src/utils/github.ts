@@ -14,3 +14,11 @@ export type { BatchFetchParams } from './githubBatchRead';
 export { fetchMultipleFilesViaGraphQL } from './githubBatchRead';
 export type { CommitSingleFileParams } from './githubCommit';
 export { createCommitOnBranch, commitSingleFileViaGraphQL } from './githubCommit';
+export type { NormalizedGitHubError } from './githubError';
+export {
+  GitHubApiError,
+  classifyGitHubError,
+  extractConflictingHeadOid,
+  createGitHubHttpError,
+  createGitHubGraphQLError
+} from './githubError';

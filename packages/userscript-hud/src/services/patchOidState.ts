@@ -91,10 +91,21 @@ export function patchSnapshotRequiredMessage(
  * target-branch race (only the target token is stale).
  */
 export function resolveConflictOidReset(
-  response: WorkerPatchResponse
+  response: WorkerPatchResponse,
+  config?: Pick<HudConfig, 'branch' | 'targetBranch'>
 ): 'source' | 'target' | 'none' {
   if (response.status !== 'GIT_CONFLICT') return 'none';
-  return response.targetBranch ? 'target' : 'source';
+  if (!response.targetBranch) return 'source';
+  if (config) {
+    const respBranch = normalizeBranch(response.targetBranch);
+    const srcBranch = normalizeBranch(config.branch);
+    const cfgTarget = normalizeBranch(config.targetBranch || '');
+    const hasDistinctTarget = Boolean(cfgTarget) && cfgTarget !== srcBranch;
+    if (!hasDistinctTarget && respBranch === srcBranch) {
+      return 'source';
+    }
+  }
+  return 'target';
 }
 
 export function advancePatchOidState(

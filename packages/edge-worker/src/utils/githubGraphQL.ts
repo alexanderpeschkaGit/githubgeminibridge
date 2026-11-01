@@ -1,3 +1,5 @@
+import { createGitHubGraphQLError, createGitHubHttpError } from './githubError';
+
 const GITHUB_GRAPHQL_ENDPOINT = 'https://api.github.com/graphql';
 
 export class BranchNotFoundError extends Error {
@@ -30,13 +32,12 @@ export async function executeGraphQL<T = any>(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`GitHub GraphQL HTTP error ${res.status} (${res.statusText}): ${text}`);
+    throw createGitHubHttpError(res.status, res.statusText, text);
   }
 
   const json: any = await res.json();
   if (json.errors && json.errors.length > 0) {
-    const msg = json.errors.map((e: any) => e.message).join(' | ');
-    throw new Error(`GitHub GraphQL error: ${msg}`);
+    throw createGitHubGraphQLError(json.errors);
   }
 
   return json.data as T;

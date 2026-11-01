@@ -17,6 +17,14 @@ import {
   fetchMultipleFilesViaGraphQL,
   createCommitOnBranch
 } from '../utils/github';
+import { classifyGitHubError } from '../utils/githubError';
+import {
+  ClientValidationError,
+  UpstreamRequestError,
+  resolveFileContent,
+  handleCommitRequest,
+  type LegacyCommitHttpResult
+} from './commitLegacy';
 import { runPreflightLinter } from './linter';
 import {
   type PreflightLinterHook as PreflightLinterHookType,
@@ -37,7 +45,12 @@ export {
   validateNoPlaceholders,
   checkPlaceholderErrors,
   parseSearchReplaceBlocks,
-  applySearchReplace
+  applySearchReplace,
+  ClientValidationError,
+  UpstreamRequestError,
+  resolveFileContent,
+  handleCommitRequest,
+  type LegacyCommitHttpResult
 };
 
 /**
@@ -151,11 +164,19 @@ export async function handlePatchRequest(
     try {
       sourceInfo = await headPromise;
     } catch (err: any) {
-      return { status: 'ERROR', errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+      const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: baseBranch });
+      return {
+        status: 'ERROR',
+        errorCode: classified.code,
+        retryable: classified.retryable,
+        errorMessage: `Failed to resolve branch "${baseBranch}": ${classified.message}`
+      };
     }
     if (sourceInfo.headOid !== req.expectedHeadOid) {
       return {
         status: 'GIT_CONFLICT',
+        errorCode: 'GIT_CONFLICT',
+        retryable: true,
         newHeadOid: sourceInfo.headOid,
         errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
       };
@@ -163,18 +184,32 @@ export async function handlePatchRequest(
     try {
       prefetchedFiles = await filesPromise;
     } catch (err: any) {
-      return { status: 'ERROR', errorMessage: `Batch fetch failed for target files: ${err.message}` };
+      const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: baseBranch });
+      return {
+        status: 'ERROR',
+        errorCode: classified.code,
+        retryable: classified.retryable,
+        errorMessage: `Batch fetch failed for target files: ${classified.message}`
+      };
     }
   } else {
     // Verify the source snapshot even when the patch will be committed elsewhere.
     try {
       sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
     } catch (err: any) {
-      return { status: 'ERROR', errorMessage: `Failed to resolve branch "${baseBranch}": ${err.message}` };
+      const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: baseBranch });
+      return {
+        status: 'ERROR',
+        errorCode: classified.code,
+        retryable: classified.retryable,
+        errorMessage: `Failed to resolve branch "${baseBranch}": ${classified.message}`
+      };
     }
     if (sourceInfo.headOid !== req.expectedHeadOid) {
       return {
         status: 'GIT_CONFLICT',
+        errorCode: 'GIT_CONFLICT',
+        retryable: true,
         newHeadOid: sourceInfo.headOid,
         errorMessage: `Expected HEAD "${req.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
       };
@@ -189,22 +224,33 @@ export async function handlePatchRequest(
       targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
     } catch (err: any) {
       if (!(err instanceof BranchNotFoundError)) {
-        return { status: 'ERROR', errorMessage: `Failed to resolve target branch "${effectiveTargetBranch}": ${err.message}` };
+        const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });
+        return {
+          status: 'ERROR',
+          errorCode: classified.code,
+          retryable: classified.retryable,
+          errorMessage: `Failed to resolve target branch "${effectiveTargetBranch}": ${classified.message}`
+        };
       }
-      if (req.dryRun) {
+      if (req.expectedTargetHeadOid) {
+        return {
+          status: 'GIT_CONFLICT',
+          errorCode: 'GIT_CONFLICT',
+          retryable: true,
+          targetBranch: normalizeBranch(effectiveTargetBranch),
+          errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${req.expectedTargetHeadOid}".`
+        };
+      } else if (req.dryRun) {
         targetInfo = {
           headOid: req.expectedHeadOid,
           resolvedBranch: normalizeBranch(effectiveTargetBranch),
           repositoryId: sourceInfo.repositoryId
         };
-      } else if (req.expectedTargetHeadOid) {
-        return {
-          status: 'GIT_CONFLICT',
-          errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${req.expectedTargetHeadOid}".`
-        };
       } else if (req.createBranchIfNeeded === false) {
         return {
           status: 'ERROR',
+          errorCode: 'BRANCH_NOT_FOUND',
+          retryable: false,
           errorMessage: `Target branch "${effectiveTargetBranch}" does not exist and createBranchIfNeeded is false.`
         };
       } else {
@@ -224,9 +270,12 @@ export async function handlePatchRequest(
           try {
             targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
           } catch (resolveErr: any) {
+            const classified = classifyGitHubError(createErr, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });
             return {
               status: 'ERROR',
-              errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${createErr.message}; verification failed: ${resolveErr.message}`
+              errorCode: classified.code,
+              retryable: classified.retryable,
+              errorMessage: `Failed to create target branch "${effectiveTargetBranch}": ${classified.message}; verification failed: ${resolveErr.message}`
             };
           }
         }
@@ -236,6 +285,8 @@ export async function handlePatchRequest(
     if (req.expectedTargetHeadOid && targetInfo.headOid !== req.expectedTargetHeadOid) {
       return {
         status: 'GIT_CONFLICT',
+        errorCode: 'GIT_CONFLICT',
+        retryable: true,
         newHeadOid: targetInfo.headOid,
         targetBranch: targetInfo.resolvedBranch,
         errorMessage: `Expected target HEAD "${req.expectedTargetHeadOid}" but branch "${targetInfo.resolvedBranch}" is at "${targetInfo.headOid}".`
@@ -260,7 +311,13 @@ export async function handlePatchRequest(
         githubToken
       );
     } catch (err: any) {
-      return { status: 'ERROR', errorMessage: `Batch fetch failed for target files: ${err.message}` };
+      const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: commitBranch });
+      return {
+        status: 'ERROR',
+        errorCode: classified.code,
+        retryable: classified.retryable,
+        errorMessage: `Batch fetch failed for target files: ${classified.message}`
+      };
     }
   }
 
@@ -271,7 +328,18 @@ export async function handlePatchRequest(
     preflightHook
   );
   if (patchResult.errors.length > 0) {
-    return { status: 'PREFLIGHT_FAILED', errors: patchResult.errors };
+    const targetDiverged = isDistinctTarget && !createdBranch && commitExpectedHeadOid !== req.expectedHeadOid;
+    const enrichedErrors = targetDiverged
+      ? patchResult.errors.map((err) =>
+          err.stage === 'SEARCH_REPLACE'
+            ? {
+                ...err,
+                message: `${err.message} (Note: target branch "${commitBranch}" is at ${commitExpectedHeadOid.slice(0, 7)} while source "${baseBranch}" is at ${req.expectedHeadOid.slice(0, 7)}; "${commitBranch}" may be stale relative to "${baseBranch}".)`
+              }
+            : err
+        )
+      : patchResult.errors;
+    return { status: 'PREFLIGHT_FAILED', errors: enrichedErrors };
   }
   if (!patchResult.hasEffectiveChanges) {
     return {
@@ -317,77 +385,28 @@ export async function handlePatchRequest(
       pullRequestUrl: isDistinctTarget ? compareUrl : undefined
     };
   } catch (err: any) {
-    const errMsg = err.message || '';
-    if (/expectedHeadOid|conflict|stale|HEAD/i.test(errMsg)) {
-      const latestHead = await getBranchHeadOid(owner, repo, commitBranch, githubToken).catch(() => ({
-        headOid: commitExpectedHeadOid
-      }));
+    const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: commitBranch, operation: 'commit' });
+    if (classified.code === 'GIT_CONFLICT') {
+      const latestHead = classified.actualHeadOid
+        ? { headOid: classified.actualHeadOid }
+        : await getBranchHeadOid(owner, repo, commitBranch, githubToken).catch(() => ({
+            headOid: commitExpectedHeadOid
+          }));
       return {
         status: 'GIT_CONFLICT',
+        errorCode: 'GIT_CONFLICT',
+        retryable: true,
         newHeadOid: latestHead.headOid,
-        targetBranch: commitBranch,
-        errorMessage: errMsg
+        ...(isDistinctTarget ? { targetBranch: commitBranch } : {}),
+        errorMessage: classified.message
       };
     }
-    return { status: 'ERROR', errorMessage: `Commit execution failed: ${errMsg}` };
+    return {
+      status: 'ERROR',
+      errorCode: classified.code,
+      retryable: classified.retryable,
+      ...(isDistinctTarget ? { targetBranch: commitBranch } : {}),
+      errorMessage: `Commit execution failed: ${classified.message}`
+    };
   }
-}
-
-/**
- * Resolves a FileChangeInput into full updated file content.
- * Kept for 100% backward compatibility with V1 routes (/push, /commit).
- */
-export async function resolveFileContent(
-  fileInput: FileChangeInput,
-  existingContentFetcher: (path: string) => Promise<string>
-): Promise<string> {
-  const patchesToApply: PatchItem[] = [];
-
-  // Check explicit single search/replace
-  if (typeof fileInput.search === 'string' && typeof fileInput.replace === 'string') {
-    patchesToApply.push({ search: fileInput.search, replace: fileInput.replace });
-  }
-
-  // Check array of patches
-  if (Array.isArray(fileInput.patches)) {
-    for (const p of fileInput.patches) {
-      if (typeof p.search === 'string' && typeof p.replace === 'string') {
-        patchesToApply.push(p);
-      }
-    }
-  }
-
-  // Check diff or content for <<<<<<< SEARCH blocks
-  const diffToCheck = fileInput.diff || fileInput.content || '';
-  if (diffToCheck.includes('<<<<<<<') || diffToCheck.includes('=====')) {
-    const parsed = parseSearchReplaceBlocks(diffToCheck);
-    patchesToApply.push(...parsed);
-  }
-
-  // If no search/replace patches found, treat as full file content replacement/creation
-  if (patchesToApply.length === 0) {
-    if (typeof fileInput.content === 'string') {
-      validateNoPlaceholders(fileInput.content, fileInput.path);
-      return fileInput.content;
-    }
-    throw new Error(`File change for "${fileInput.path}" must provide either "content" or search/replace patches.`);
-  }
-
-  // Validate that replace blocks do not contain placeholders
-  for (const patch of patchesToApply) {
-    validateNoPlaceholders(patch.replace, fileInput.path);
-  }
-
-  // Fetch existing content
-  const existingContent = await existingContentFetcher(fileInput.path);
-  let resolved = existingContent;
-
-  for (const patch of patchesToApply) {
-    resolved = applySearchReplace(resolved, patch.search, patch.replace, fileInput.path);
-  }
-
-  // Validate the final resolved file
-  validateNoPlaceholders(resolved, fileInput.path);
-
-  return resolved;
 }

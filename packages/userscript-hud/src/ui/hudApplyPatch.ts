@@ -53,21 +53,24 @@ function handleConflictOrError(
   updateState: (partial: Partial<HudState>) => void
 ): false {
   const scopeHint = res.status === 'GIT_CONFLICT' ? ` [validated ${config.repo}@${config.branch}]` : '';
-  const resetScope = resolveConflictOidReset(res);
+  const resetScope = resolveConflictOidReset(res, config);
   if (resetScope === 'source') {
     clearPatchOidState(state);
   } else if (resetScope === 'target') {
     clearTargetOidState(state);
   }
+  const targetHeadHint =
+    resetScope === 'target' && res.newHeadOid ? ` (latest HEAD ${res.newHeadOid.slice(0, 7)})` : '';
   const recoveryHint =
     resetScope === 'source'
       ? ' Stale snapshot OID discarded — click "Load Repo Mix" to mix the current HEAD, then retry.'
       : resetScope === 'target'
-        ? ` Target OID discarded — retry to commit on the current "${config.targetBranch}" HEAD.`
+        ? ` Target OID${targetHeadHint} discarded — retry to commit on the current "${res.targetBranch || config.targetBranch}" HEAD.`
         : '';
+  const codeBadge = res.errorCode && res.errorCode !== res.status ? ` [${res.errorCode}]` : '';
   updateState({
     status: res.status === 'GIT_CONFLICT' ? 'GIT_CONFLICT' : 'ERROR',
-    statusMessage: `❌ ${res.status}: ${res.errorMessage || 'Preflight / Concurrency check failed'}${scopeHint}${recoveryHint}`,
+    statusMessage: `❌ ${res.status}${codeBadge}: ${res.errorMessage || 'Preflight / Concurrency check failed'}${scopeHint}${recoveryHint}`,
     lastErrors: res.errors || [],
   });
   return false;

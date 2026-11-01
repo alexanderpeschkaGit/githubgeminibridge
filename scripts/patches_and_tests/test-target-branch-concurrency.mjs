@@ -57,6 +57,11 @@ globalThis.__patchMocks = {
   },
   async createCommitOnBranch(_owner, _repo, branch, expectedOid, _message, additions, deletions) {
     calls.push({ kind: 'commit', branch, expectedOid });
+    if (globalThis.__patchMocks.commitError) {
+      const errToThrow = globalThis.__patchMocks.commitError;
+      delete globalThis.__patchMocks.commitError;
+      throw errToThrow;
+    }
     const entry = branches.get(branch);
     if (entry.headOid !== expectedOid) throw new Error('expectedHeadOid conflict');
     for (const addition of additions) {
@@ -106,7 +111,7 @@ const patcherBuild = await esbuild.build({
   }],
 });
 const patcherUrl = `data:text/javascript;base64,${Buffer.from(patcherBuild.outputFiles[0].text).toString('base64')}`;
-const { handlePatchRequest } = await import(patcherUrl);
+const { handlePatchRequest, handleCommitRequest } = await import(patcherUrl);
 
 const helperEntry = path.join(ROOT, 'packages/userscript-hud/src/services/patchOidState.ts');
 const helperBuild = await esbuild.build({
@@ -117,7 +122,7 @@ const helperBuild = await esbuild.build({
   platform: 'node',
 });
 const helperUrl = `data:text/javascript;base64,${Buffer.from(helperBuild.outputFiles[0].text).toString('base64')}`;
-const { advancePatchOidState, buildWorkerPatchRequest } = await import(helperUrl);
+const { advancePatchOidState, buildWorkerPatchRequest, resolveConflictOidReset } = await import(helperUrl);
 
 const payload = {
   commitMessage: 'preserve target content',
@@ -343,4 +348,107 @@ function request(overrides = {}) {
   assert.equal(state.headOid, OID_SOURCE_NEXT);
   assert.equal(state.targetHeadOid, OID_TARGET_LATER);
   console.log('PASS: FIFO target OIDs advance independently; no-op/failure and source-branch handling stay consistent');
+}
+
+{
+  // Deleted target branch with expectedTargetHeadOid sets targetBranch on GIT_CONFLICT (normal & dryRun)
+  reset({ main: sourceEntry });
+  const deletedNormal = await handlePatchRequest(
+    request({ expectedTargetHeadOid: OID_TARGET }),
+    'token',
+    async () => []
+  );
+  assert.equal(deletedNormal.status, 'GIT_CONFLICT');
+  assert.equal(deletedNormal.errorCode, 'GIT_CONFLICT');
+  assert.equal(deletedNormal.targetBranch, 'feature');
+  assert.equal(resolveConflictOidReset(deletedNormal, sourceConfig), 'target');
+
+  const deletedDryRun = await handlePatchRequest(
+    request({ expectedTargetHeadOid: OID_TARGET, dryRun: true }),
+    'token',
+    async () => []
+  );
+  assert.equal(deletedDryRun.status, 'GIT_CONFLICT');
+  assert.equal(deletedDryRun.targetBranch, 'feature');
+
+  // Same-branch conflict vs distinct-target conflict in resolveConflictOidReset
+  const sameBranchConfig = { ...sourceConfig, targetBranch: '' };
+  assert.equal(
+    resolveConflictOidReset({ status: 'GIT_CONFLICT', newHeadOid: OID_SOURCE_NEXT, targetBranch: 'main' }, sameBranchConfig),
+    'source'
+  );
+  console.log('PASS: deleted target branch with expectedTargetHeadOid and same-branch conflicts reset the exact OID scope');
+}
+
+{
+  // Normalized GitHub GraphQL error statuses (non-fast-forward race, branch protection, auth forbidden)
+  reset({ main: sourceEntry, feature: targetEntry });
+  globalThis.__patchMocks.commitError = new Error(
+    `GitHub GraphQL error: Expected branch to point to "${OID_TARGET}" but it points to "${OID_TARGET_LATER}"`
+  );
+  const raceRes = await handlePatchRequest(request(), 'token', async () => []);
+  assert.equal(raceRes.status, 'GIT_CONFLICT');
+  assert.equal(raceRes.errorCode, 'GIT_CONFLICT');
+  assert.equal(raceRes.newHeadOid, OID_TARGET_LATER);
+  assert.equal(raceRes.targetBranch, 'feature');
+
+  reset({ main: sourceEntry, feature: targetEntry });
+  globalThis.__patchMocks.commitError = new Error(
+    'GitHub GraphQL error: GH006: Protected branch update failed — Changes must be made through a pull request.'
+  );
+  const protectedRes = await handlePatchRequest(request(), 'token', async () => []);
+  assert.equal(protectedRes.status, 'ERROR');
+  assert.equal(protectedRes.errorCode, 'BRANCH_PROTECTED');
+  assert.equal(protectedRes.retryable, false);
+  assert.match(protectedRes.errorMessage, /Actionable Fix:.*Target Branch/);
+
+  reset({ main: sourceEntry, feature: targetEntry });
+  globalThis.__patchMocks.commitError = new Error(
+    'GitHub GraphQL error: Resource not accessible by personal access token'
+  );
+  const authRes = await handlePatchRequest(request(), 'token', async () => []);
+  assert.equal(authRes.status, 'ERROR');
+  assert.equal(authRes.errorCode, 'AUTH_FORBIDDEN');
+  assert.equal(authRes.retryable, false);
+  console.log('PASS: GitHub GraphQL errors normalize into GIT_CONFLICT, BRANCH_PROTECTED, and AUTH_FORBIDDEN');
+}
+
+{
+  // Diverged target branch annotates SEARCH_REPLACE errors with source/target OIDs
+  reset({
+    main: { headOid: OID_SOURCE, files: { 'src/file.txt': 'target\nfresh main\n' } },
+    feature: { headOid: OID_TARGET, files: { 'src/file.txt': 'diverged old content\n' } },
+  });
+  const divergedRes = await handlePatchRequest(request(), 'token', async () => []);
+  assert.equal(divergedRes.status, 'PREFLIGHT_FAILED');
+  assert.match(divergedRes.errors[0].message, /may be stale relative to "main"/);
+  console.log('PASS: diverged target branch annotates SEARCH_REPLACE errors with staleness diagnostics');
+}
+
+{
+  // Unified V1 handleCommitRequest uses 1-subrequest GraphQL batch read, chains edits, and normalizes conflicts
+  reset({
+    main: { headOid: OID_SOURCE, files: { 'src/file.txt': 'line1\nline2\n' } },
+  });
+  const v1Res = await handleCommitRequest(
+    {
+      repo: 'test/repo',
+      branch: 'main',
+      targetBranch: 'feature',
+      expectedHeadOid: OID_SOURCE,
+      commitMessage: 'feat(v1): unified commit pipeline',
+      changes: [
+        { path: './src/file.txt', search: 'line1', replace: 'line1_updated' },
+        { path: 'src/file.txt', search: 'line1_updated', replace: 'line1_chained' },
+      ],
+    },
+    'token'
+  );
+  assert.equal(v1Res.httpStatus, 200);
+  assert.equal(v1Res.body.success, true);
+  assert.equal(v1Res.body.status, 'COMMITTED');
+  assert.equal(v1Res.body.createdBranch, true);
+  assert.equal(branches.get('feature').files['src/file.txt'], 'line1_chained\nline2\n');
+  assert.equal(calls.filter((c) => c.kind === 'fetch').length, 1, 'V1 batch-fetches in 1 GraphQL call');
+  console.log('PASS: unified V1 handleCommitRequest batch-reads at target OID and chains multi-entry file edits');
 }

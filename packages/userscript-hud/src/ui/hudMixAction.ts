@@ -7,7 +7,7 @@ import {
 } from '../dom/injector';
 import { requestRepoMix } from '../services/workerClient';
 import { buildBatchFormulaPrompt } from '../services/batchFormula';
-import { setSourceHeadOid } from '../services/patchOidStore';
+import { clearTargetOidState, setSourceHeadOid } from '../services/patchOidStore';
 import { recordFromConfig } from '../services/repoHistory';
 import { refreshRepoHistorySelectNow } from './hudConfigBindings';
 import type { HudDomElements } from './hudStylesAndDom';
@@ -34,6 +34,7 @@ export function bindMixAction({ dom, config, state, updateState }: HudMixActionD
       const res = await requestRepoMix(config);
       if (res.status === 'OK' && (res.parts?.length || res.xmlContent)) {
         setSourceHeadOid(config, state, res.headOid);
+        clearTargetOidState(state);
         try {
           recordFromConfig(config);
           refreshRepoHistorySelectNow();

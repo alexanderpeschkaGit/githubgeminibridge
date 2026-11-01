@@ -27,7 +27,7 @@ export function isV2ErrorPayload(data: unknown): boolean {
 }
 
 function shouldResolveV2Error(status: number, data: unknown): boolean {
-  return (status === 400 || status === 409) && isV2ErrorPayload(data);
+  return status >= 400 && status < 500 && isV2ErrorPayload(data);
 }
 
 /**

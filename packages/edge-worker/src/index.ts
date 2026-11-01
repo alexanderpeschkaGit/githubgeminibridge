@@ -1,24 +1,13 @@
 import type { WorkerEnv, HybridWorkerEnv, CommitRequest, MixRequest, WorkerPatchRequest } from './types';
-import { utf8ToBase64 } from './utils/encoding';
-import { resolveFileContent, handlePatchRequest } from './modules/patcher';
+import {
+  handleCommitRequest,
+  handlePatchRequest,
+  ClientValidationError,
+  UpstreamRequestError
+} from './modules/patcher';
 import { handleMixRequest } from './modules/mixer';
 import { handleGithubWebhookRequest } from './modules/webhookHandler';
-import { getBranchHeadOid, fetchFileContent, createCommitOnBranch, executeGraphQL, parseRepoOwner } from './utils/github';
-import { normalizeRepoPath, findRepoPathIssue } from '../../../shared/repoPaths';
-
-class ClientValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ClientValidationError';
-  }
-}
-
-class UpstreamRequestError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'UpstreamRequestError';
-  }
-}
+import { executeGraphQL, classifyGitHubError } from './utils/github';
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -137,106 +126,8 @@ export default {
           throw new ClientValidationError('Malformed JSON payload');
         })) as CommitRequest;
 
-        let owner = '';
-        let repo = '';
-        try {
-          const parsed = parseRepoOwner(body.repo || '', body.owner);
-          owner = parsed.owner;
-          repo = parsed.repo;
-        } catch {
-          throw new ClientValidationError('Missing required fields: Repository must be specified as "owner/repo" or separate "owner" and "repo".');
-        }
-
-        const commitMessage = body.commitMessage || body.message;
-        if (!commitMessage) {
-          throw new ClientValidationError('Missing required field: "commitMessage" (or "message") must be specified.');
-        }
-
-        const targetBranch = body.targetBranch || body.branch || 'main';
-        const fileChanges = body.changes || body.files || [];
-        const deletions = body.deletions || [];
-
-        if (fileChanges.length === 0 && deletions.length === 0) {
-          throw new ClientValidationError('Commit must include at least one entry in "changes" or "files" or "deletions".');
-        }
-
-        // 4a. Resolve HEAD Commit OID for target branch to prevent race conditions
-        const { headOid, resolvedBranch } = await getBranchHeadOid(owner, repo, targetBranch, githubToken);
-        if (body.expectedHeadOid && body.expectedHeadOid !== headOid) {
-          return jsonResponse(
-            {
-              status: 'GIT_CONFLICT',
-              newHeadOid: headOid,
-              errorMessage: `Expected HEAD "${body.expectedHeadOid}" but branch "${resolvedBranch}" is at "${headOid}". Fetch the latest repo mix and retry.`
-            },
-            409
-          );
-        }
-
-        // 4b. Resolve File Changes (Apply Search/Replace, Hard Guardrail, & encode to Base64)
-        const additions: { path: string; contents: string }[] = [];
-
-        for (const fileInput of fileChanges) {
-          const pathIssue = findRepoPathIssue(fileInput.path);
-          if (pathIssue) {
-            throw new ClientValidationError(pathIssue);
-          }
-          const filePath = normalizeRepoPath(fileInput.path);
-
-          const contentFetcher = async (requestedPath: string) => {
-            try {
-              return await fetchFileContent(owner, repo, resolvedBranch, requestedPath, githubToken);
-            } catch (err: any) {
-              throw new UpstreamRequestError(err?.message || 'Failed to fetch existing file from GitHub');
-            }
-          };
-
-          let resolvedText: string;
-          try {
-            resolvedText = await resolveFileContent({ ...fileInput, path: filePath }, contentFetcher);
-          } catch (err: any) {
-            if (err instanceof UpstreamRequestError) {
-              throw err;
-            }
-            throw new ClientValidationError(err?.message || 'Invalid file change payload');
-          }
-          const encodedBase64 = utf8ToBase64(resolvedText);
-
-          additions.push({
-            path: filePath,
-            contents: encodedBase64
-          });
-        }
-
-        // 4c. Format Deletions
-        const formattedDeletions: { path: string }[] = deletions.map((del) => {
-          const rawPath = typeof del === 'string' ? del : del.path;
-          const pathIssue = findRepoPathIssue(rawPath);
-          if (pathIssue) {
-            throw new ClientValidationError(pathIssue);
-          }
-          return { path: normalizeRepoPath(rawPath) };
-        });
-
-        // 4d. Execute createCommitOnBranch via GitHub GraphQL
-        const commitResult = await createCommitOnBranch(
-          owner,
-          repo,
-          resolvedBranch,
-          headOid,
-          commitMessage,
-          additions,
-          formattedDeletions,
-          githubToken
-        );
-
-        return jsonResponse({
-          success: true,
-          commit: commitResult,
-          branch: resolvedBranch,
-          repository: `${owner}/${repo}`,
-          filesChanged: additions.length + formattedDeletions.length
-        });
+        const commitRes = await handleCommitRequest(body, githubToken);
+        return jsonResponse(commitRes.body, commitRes.httpStatus);
       }
 
       // 5. V2 Mix Engine Endpoint (Stage 1)
@@ -278,8 +169,18 @@ export default {
       if (err instanceof ClientValidationError) {
         return errorResponse(err.message, 400);
       }
+      if (err instanceof UpstreamRequestError) {
+        return errorResponse(err.message, err.httpStatus, {
+          errorCode: err.errorCode,
+          retryable: err.retryable
+        });
+      }
+      const classified = classifyGitHubError(err);
       console.error('Request processing error:', err);
-      return errorResponse(err.message || 'Internal server error', 500);
+      return errorResponse(classified.message || 'Internal server error', 500, {
+        errorCode: classified.code,
+        retryable: classified.retryable
+      });
     }
   }
 };
