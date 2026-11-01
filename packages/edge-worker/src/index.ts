@@ -53,41 +53,37 @@ export function resolveGithubToken(env: WorkerEnv): string {
   return env.GITHUB_PAT || env.GITHUB_TOKEN || '';
 }
 
+function constantTimeEqual(provided: string, secret: string): boolean {
+  const enc = new TextEncoder();
+  const providedBytes = enc.encode(provided);
+  const secretBytes = enc.encode(secret);
+  if (secretBytes.length === 0) {
+    return false;
+  }
+  let diff = providedBytes.length ^ secretBytes.length;
+  for (let i = 0; i < secretBytes.length; i++) {
+    const pByte = i < providedBytes.length ? providedBytes[i] : 0;
+    diff |= pByte ^ secretBytes[i];
+  }
+  return diff === 0;
+}
+
 export function verifyAuth(request: Request, env: WorkerEnv): boolean {
   const secret = resolveSecret(env);
   if (!secret) {
     return false;
   }
 
-  const enc = new TextEncoder();
-  const secretBytes = enc.encode(secret);
-
   const customHeader = request.headers.get('x-bridge-secret');
-  if (customHeader) {
-    const headerBytes = enc.encode(customHeader);
-    if (headerBytes.length === secretBytes.length) {
-      let result = 0;
-      for (let i = 0; i < headerBytes.length; i++) {
-        result |= headerBytes[i] ^ secretBytes[i];
-      }
-      if (result === 0) {
-        return true;
-      }
-    }
+  if (customHeader && constantTimeEqual(customHeader, secret)) {
+    return true;
   }
 
   const authHeader = request.headers.get('Authorization');
   if (authHeader) {
-    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-    const tokenBytes = enc.encode(token);
-    if (tokenBytes.length === secretBytes.length) {
-      let result = 0;
-      for (let i = 0; i < tokenBytes.length; i++) {
-        result |= tokenBytes[i] ^ secretBytes[i];
-      }
-      if (result === 0) {
-        return true;
-      }
+    const token = authHeader.replace(/^Bearer\\s+/i, '').trim();
+    if (token && constantTimeEqual(token, secret)) {
+      return true;
     }
   }
 
@@ -112,7 +108,7 @@ export default {
       return jsonResponse({
         status: 'ok',
         service: 'gemini-git-bridge',
-        version: '0.80.8',
+        version: '0.80.9',
         timestamp: new Date().toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))

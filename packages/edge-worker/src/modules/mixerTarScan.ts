@@ -39,6 +39,7 @@ export function escapeCdata(content: string): string {
 }
 
 const MINIFIED_ASSET_PATTERN = /\.min\.(?:js|mjs|cjs|css)$/i;
+export const MAX_TOTAL_TAR_BYTES = 24 * 1024 * 1024; // 24 MB cumulative stream cap
 
 /**
  * Filter decision helper to avoid allocating buffer or string memory for ignored entries.
@@ -152,6 +153,7 @@ export async function scanTarGzipStream(
   const dynamicIgnorePatterns: string[] = [];
   const textDecoder = new TextDecoder();
   const skippedFiles: Array<{ path: string; reason: 'too_large'; bytes?: number; chars?: number }> = [];
+  let totalCollectedBytes = 0;
 
   // Read next chunk into buffer if needed
   async function ensureBytes(count: number): Promise<boolean> {
@@ -310,6 +312,14 @@ export async function scanTarGzipStream(
         continue;
       }
 
+      const isIgnoreConfig = relPath === '.repomixignore.cf' || relPath === '.repomixignore';
+      if (!isIgnoreConfig && totalCollectedBytes + size > MAX_TOTAL_TAR_BYTES) {
+        fileTreeEntries.push(`${relPath} [SKIPPED: total mix >24MB]`);
+        skippedFiles.push({ path: relPath, reason: 'too_large', bytes: size });
+        await discardBytes(paddedSize);
+        continue;
+      }
+
       // Read file content
       await ensureBytes(paddedSize);
       const fileBytes = buffer.subarray(0, size);
@@ -329,6 +339,7 @@ export async function scanTarGzipStream(
           dynamicIgnorePatterns.push(...newPatterns);
           for (let i = files.length - 1; i >= 0; i--) {
             if (matchesIgnorePattern(files[i].path, dynamicIgnorePatterns)) {
+              totalCollectedBytes = Math.max(0, totalCollectedBytes - files[i].content.length);
               files.splice(i, 1);
             }
           }
@@ -345,6 +356,7 @@ export async function scanTarGzipStream(
         continue;
       }
 
+      totalCollectedBytes += size;
       fileTreeEntries.push(relPath);
       files.push({ path: relPath, content });
     }

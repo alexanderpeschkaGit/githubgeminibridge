@@ -22,6 +22,10 @@ const RELATIVE_MODULES = [
     source: 'shared/repoPaths.ts',
   },
   {
+    specifier: '../../../../shared/patchPayloadParser',
+    source: 'shared/patchPayloadParser.ts',
+  },
+  {
     specifier: './pathHints',
     source: 'packages/userscript-hud/src/dom/pathHints.ts',
   },

@@ -17,8 +17,9 @@ function checkPlaceholderErrors(content, filePath) {
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const unquotedLine = line.replace(/(["'`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
     for (const pattern of LLM_PLACEHOLDER_PATTERNS) {
-      if (pattern.test(line)) {
+      if (pattern.test(unquotedLine)) {
         errors.push({
           file: filePath,
           stage: "CUSTOM_RULE",
@@ -185,6 +186,8 @@ async function validateSyntaxInWorker(filePath, content) {
   let stringStartCol = 1;
   let lastNonWhitespaceChar = "";
   let inRegexCharClass = false;
+  let lastTokenWasString = false;
+  let lastStringLine = 0;
   const len = content.length;
   let i = 0;
   while (i < len) {
@@ -241,6 +244,8 @@ async function validateSyntaxInWorker(filePath, content) {
       if (ch === quoteChar) {
         state = "CODE";
         lastNonWhitespaceChar = quoteChar;
+        lastTokenWasString = true;
+        lastStringLine = currentLine;
         i++;
         currentCol++;
         continue;
@@ -358,6 +363,7 @@ async function validateSyntaxInWorker(filePath, content) {
     if (ch === "/") {
       if (allowsJsx && lastNonWhitespaceChar === "<") {
         lastNonWhitespaceChar = ch;
+        lastTokenWasString = false;
         i++;
         currentCol++;
         continue;
@@ -378,21 +384,25 @@ async function validateSyntaxInWorker(filePath, content) {
       const prevChar = i > 0 ? content[i - 1] : "";
       if (/[A-Za-z0-9]/.test(prevChar) && /[A-Za-z0-9]/.test(nextCh)) {
         lastNonWhitespaceChar = ch;
+        lastTokenWasString = false;
         i++;
         currentCol++;
         continue;
       }
     }
-    if (ch === "'") {
-      state = "SINGLE_QUOTE";
-      stringStartLine = currentLine;
-      stringStartCol = currentCol;
-      i++;
-      currentCol++;
-      continue;
-    }
-    if (ch === '"') {
-      state = "DOUBLE_QUOTE";
+    if (ch === "'" || ch === '"') {
+      if (lastTokenWasString && lastStringLine === currentLine) {
+        errors.push({
+          file: filePath,
+          stage: "OXC_SYNTAX",
+          line: currentLine,
+          column: currentCol,
+          message: 'Unexpected adjacent string literal without operator or separator (missing "|" or ",").',
+          codeSnippet: getSnippet(currentLine)
+        });
+      }
+      lastTokenWasString = false;
+      state = ch === "'" ? "SINGLE_QUOTE" : "DOUBLE_QUOTE";
       stringStartLine = currentLine;
       stringStartCol = currentCol;
       i++;
@@ -400,6 +410,7 @@ async function validateSyntaxInWorker(filePath, content) {
       continue;
     }
     if (ch === "`") {
+      lastTokenWasString = false;
       state = "TEMPLATE";
       stringStartLine = currentLine;
       stringStartCol = currentCol;
@@ -407,8 +418,19 @@ async function validateSyntaxInWorker(filePath, content) {
       currentCol++;
       continue;
     }
+    if ((ch === ">" || ch === ")" || ch === "]" || ch === "," || ch === ";") && lastNonWhitespaceChar === "|") {
+      errors.push({
+        file: filePath,
+        stage: "OXC_SYNTAX",
+        line: currentLine,
+        column: currentCol,
+        message: `Unexpected trailing "|" operator before "${ch}".`,
+        codeSnippet: getSnippet(currentLine)
+      });
+    }
     if (ch === "(" || ch === "[" || ch === "{") {
       bracketStack.push({ char: ch, line: currentLine, col: currentCol });
+      lastTokenWasString = false;
       lastNonWhitespaceChar = ch;
       i++;
       currentCol++;
@@ -436,6 +458,7 @@ async function validateSyntaxInWorker(filePath, content) {
         });
       }
       lastNonWhitespaceChar = ch;
+      lastTokenWasString = false;
       i++;
       currentCol++;
       continue;
@@ -462,6 +485,7 @@ async function validateSyntaxInWorker(filePath, content) {
         });
       }
       lastNonWhitespaceChar = ch;
+      lastTokenWasString = false;
       i++;
       currentCol++;
       continue;
@@ -490,6 +514,7 @@ async function validateSyntaxInWorker(filePath, content) {
         });
       }
       lastNonWhitespaceChar = ch;
+      lastTokenWasString = false;
       i++;
       currentCol++;
       continue;
@@ -502,6 +527,7 @@ async function validateSyntaxInWorker(filePath, content) {
     }
     if (!/\s/.test(ch)) {
       lastNonWhitespaceChar = ch;
+      lastTokenWasString = false;
     }
     currentCol++;
     i++;
@@ -818,6 +844,106 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
   };
 }
 
+// ../../shared/patchPayloadParser.ts
+function isValidPatchBlock(b) {
+  return Boolean(b && typeof b === "object" && typeof b.search === "string" && typeof b.replace === "string");
+}
+function isValidPatchOperation(p) {
+  if (!p || typeof p.path !== "string") return false;
+  if (p.action === "modify") {
+    const hasValidBlocks = Array.isArray(p.blocks) && p.blocks.length > 0 && p.blocks.every(isValidPatchBlock);
+    return hasValidBlocks || typeof p.fullContent === "string";
+  }
+  if (p.action === "create") {
+    return typeof p.fullContent === "string";
+  }
+  return p.action === "delete";
+}
+function extractBalancedJsonObject(text, startIndex) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = startIndex; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(startIndex, i + 1);
+      }
+    }
+  }
+  return null;
+}
+function tryParseGeminiPayload(candidate) {
+  const trimmed = candidate.trim();
+  let searchFrom = 0;
+  while (searchFrom < trimmed.length) {
+    const startIdx = trimmed.indexOf("{", searchFrom);
+    if (startIdx === -1) break;
+    const balanced = extractBalancedJsonObject(trimmed, startIdx);
+    if (balanced) {
+      try {
+        const obj = JSON.parse(balanced);
+        if (obj && typeof obj === "object" && typeof obj.commitMessage === "string" && Array.isArray(obj.patches) && obj.patches.length > 0 && obj.patches.every(isValidPatchOperation)) {
+          return obj;
+        }
+      } catch {
+      }
+    }
+    searchFrom = startIdx + 1;
+  }
+  return null;
+}
+function parseV2PatchPayloadFromCode(codeText) {
+  if (!codeText || codeText.trim().length === 0) return null;
+  let textToParse = codeText.trim();
+  const fenceMatch = textToParse.match(/^```(?:json|md|markdown)?\s*([\s\S]*)\s*```$/i);
+  if (fenceMatch) {
+    textToParse = fenceMatch[1].trim();
+  }
+  const direct = tryParseGeminiPayload(textToParse);
+  if (direct) return direct;
+  const innerFenceOpen = textToParse.match(/```(?:json)?\s*\{/i);
+  if (innerFenceOpen && innerFenceOpen.index !== void 0) {
+    const fromBrace = textToParse.slice(innerFenceOpen.index + innerFenceOpen[0].length - 1);
+    const lastFenceIdx = fromBrace.lastIndexOf("```");
+    const innerCandidate = lastFenceIdx !== -1 ? fromBrace.slice(0, lastFenceIdx) : fromBrace;
+    const innerParsed = tryParseGeminiPayload(innerCandidate);
+    if (innerParsed) return innerParsed;
+  }
+  return null;
+}
+function extractJsonFromResponse(raw) {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return "";
+  const v2Parsed = parseV2PatchPayloadFromCode(trimmed);
+  if (v2Parsed) {
+    return JSON.stringify(v2Parsed);
+  }
+  const outerFenceMatch = trimmed.match(/^```(?:json|md|markdown)?\s*([\s\S]*)\s*```$/i);
+  const candidate = outerFenceMatch && outerFenceMatch[1] ? outerFenceMatch[1].trim() : trimmed;
+  const braceIdx = candidate.indexOf("{");
+  if (braceIdx !== -1) {
+    const balanced = extractBalancedJsonObject(candidate, braceIdx);
+    if (balanced) return balanced.trim();
+  }
+  return candidate;
+}
+
 // src/localRunner.ts
 function loadEnvFile(cwd) {
   const envPath = path.join(cwd, ".env");
@@ -842,14 +968,6 @@ function loadEnvFile(cwd) {
     }
   } catch {
   }
-}
-function extractJsonFromResponse(raw) {
-  const trimmed = raw.trim();
-  const jsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (jsonMatch && jsonMatch[1]) {
-    return jsonMatch[1].trim();
-  }
-  return trimmed;
 }
 async function callGeminiForPatch(prompt, contextFiles, apiKey, model = "gemini-2.0-flash") {
   const fileContextString = contextFiles.map((f) => `### File: ${f.path}
@@ -896,6 +1014,8 @@ ${fileContextString}`;
 ${userContent}`
       });
       const text = response.text || "";
+      const parsed2 = parseV2PatchPayloadFromCode(text);
+      if (parsed2) return parsed2;
       const jsonStr = extractJsonFromResponse(text);
       return JSON.parse(jsonStr);
     }
@@ -925,6 +1045,8 @@ ${userContent}` }]
   if (!rawText) {
     throw new Error("Gemini API returned empty response");
   }
+  const parsed = parseV2PatchPayloadFromCode(rawText);
+  if (parsed) return parsed;
   const jsonText = extractJsonFromResponse(rawText);
   return JSON.parse(jsonText);
 }

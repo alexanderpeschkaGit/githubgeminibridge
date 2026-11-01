@@ -1,4 +1,4 @@
-// packages/edge-worker/src/utils/encoding.ts
+// src/utils/encoding.ts
 function utf8ToBase64(str) {
   const bytes = new TextEncoder().encode(str);
   const CHUNK_SIZE = 32768;
@@ -10,7 +10,7 @@ function utf8ToBase64(str) {
   return btoa(binary);
 }
 
-// shared/repoPaths.ts
+// ../../shared/repoPaths.ts
 function normalizeRepoPath(input) {
   return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
 }
@@ -32,7 +32,7 @@ function findRepoPathIssue(input) {
   return null;
 }
 
-// packages/edge-worker/src/utils/githubRepo.ts
+// src/utils/githubRepo.ts
 function parseRepoOwner(repoInput, ownerInput) {
   if (ownerInput && repoInput && !repoInput.includes("/")) {
     return { owner: ownerInput.trim(), repo: repoInput.trim() };
@@ -47,7 +47,7 @@ function parseRepoOwner(repoInput, ownerInput) {
   };
 }
 
-// packages/edge-worker/src/utils/githubGraphQL.ts
+// src/utils/githubGraphQL.ts
 var GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql";
 var BranchNotFoundError = class extends Error {
   defaultBranch;
@@ -177,7 +177,7 @@ async function fetchFileContent(owner, repo, branch, path, token) {
   return await res.text();
 }
 
-// packages/edge-worker/src/utils/githubBatchRead.ts
+// src/utils/githubBatchRead.ts
 async function fetchMultipleFilesViaGraphQL(arg1, arg2, arg3, arg4, arg5) {
   let owner;
   let repo;
@@ -263,7 +263,7 @@ async function fetchMultipleFilesViaGraphQL(arg1, arg2, arg3, arg4, arg5) {
   return result;
 }
 
-// packages/edge-worker/src/utils/githubCommit.ts
+// src/utils/githubCommit.ts
 async function createCommitOnBranch(owner, repo, branch, expectedHeadOid, message, additions, deletions, token) {
   const mutation = `
     mutation CreateCommitOnBranch($input: CreateCommitOnBranchInput!) {
@@ -358,7 +358,7 @@ async function commitSingleFileViaGraphQL(arg1, arg2, arg3, arg4, arg5, arg6, ar
   );
 }
 
-// packages/edge-worker/src/modules/searchReplace.ts
+// src/modules/searchReplace.ts
 var LLM_PLACEHOLDER_PATTERNS = [
   /\/\/\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
   /#\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
@@ -454,7 +454,7 @@ function applySearchReplace(original, search, replace, filePath = "") {
 ${snippet}`);
 }
 
-// packages/edge-worker/src/modules/patchInMemory.ts
+// src/modules/patchInMemory.ts
 function runBuiltinPreflightRules(files, preflight) {
   const errors = [];
   if (!preflight) {
@@ -681,7 +681,7 @@ async function applyPatchesInMemory(patches, existingFiles, preflight, preflight
   };
 }
 
-// packages/edge-worker/src/modules/syntaxScanner.ts
+// src/modules/syntaxScanner.ts
 var registeredOxcParser = null;
 var SUPPORTED_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
 function validateJson(filePath, content, getSnippet) {
@@ -1157,7 +1157,7 @@ async function validateSyntaxInWorker(filePath, content) {
   return errors;
 }
 
-// packages/edge-worker/src/modules/linter.ts
+// src/modules/linter.ts
 async function validateSyntaxInWorker2(filePath, content) {
   return validateSyntaxInWorker(filePath, content);
 }
@@ -1199,7 +1199,7 @@ async function runPreflightLinter(files, preflight) {
   return deduplicated;
 }
 
-// packages/edge-worker/src/modules/patcher.ts
+// src/modules/patcher.ts
 async function applyPatchesInMemory2(patches, existingFiles, preflight, preflightHook = runPreflightLinter) {
   return applyPatchesInMemory(patches, existingFiles, preflight, preflightHook);
 }
@@ -1464,7 +1464,7 @@ async function resolveFileContent(fileInput, existingContentFetcher) {
   return resolved;
 }
 
-// packages/edge-worker/src/modules/mixSelection.ts
+// src/modules/mixSelection.ts
 var ROOT_CONFIG_FILES = /* @__PURE__ */ new Set([
   "package.json",
   "tsconfig.json",
@@ -1606,7 +1606,7 @@ function buildMixTruncation(params) {
   };
 }
 
-// packages/edge-worker/src/utils/tarUtils.ts
+// src/utils/tarUtils.ts
 function concatBuffers(a, b) {
   const result = new Uint8Array(a.length + b.length);
   result.set(a, 0);
@@ -1758,7 +1758,7 @@ var DEFAULT_IGNORED_EXTENSIONS = /* @__PURE__ */ new Set([
   ".tsbuildinfo"
 ]);
 
-// packages/edge-worker/src/modules/mixerTarScan.ts
+// src/modules/mixerTarScan.ts
 var TarScanError = class extends Error {
   headOid;
   constructor(message, headOid) {
@@ -1771,6 +1771,7 @@ function escapeCdata(content) {
   return content.replace(/\]\]>/g, "]]]]><![CDATA[>");
 }
 var MINIFIED_ASSET_PATTERN = /\.min\.(?:js|mjs|cjs|css)$/i;
+var MAX_TOTAL_TAR_BYTES = 24 * 1024 * 1024;
 function shouldSkipTarEntry(relPath, size, typeflag, includePaths) {
   if (typeflag === "5" || typeflag === "g" || typeflag === "x" || relPath.endsWith("/") || typeflag !== "0" && typeflag !== "" && typeflag !== "\0") {
     return { skip: true, reason: "DIR_OR_NON_FILE" };
@@ -1829,6 +1830,7 @@ async function scanTarGzipStream(stream, includePaths) {
   const dynamicIgnorePatterns = [];
   const textDecoder = new TextDecoder();
   const skippedFiles = [];
+  let totalCollectedBytes = 0;
   async function ensureBytes(count) {
     while (buffer.length < count) {
       const { value, done } = await reader.read();
@@ -1947,6 +1949,13 @@ async function scanTarGzipStream(stream, includePaths) {
         await discardBytes(paddedSize);
         continue;
       }
+      const isIgnoreConfig = relPath === ".repomixignore.cf" || relPath === ".repomixignore";
+      if (!isIgnoreConfig && totalCollectedBytes + size > MAX_TOTAL_TAR_BYTES) {
+        fileTreeEntries.push(`${relPath} [SKIPPED: total mix >24MB]`);
+        skippedFiles.push({ path: relPath, reason: "too_large", bytes: size });
+        await discardBytes(paddedSize);
+        continue;
+      }
       await ensureBytes(paddedSize);
       const fileBytes = buffer.subarray(0, size);
       buffer = buffer.subarray(paddedSize);
@@ -1960,6 +1969,7 @@ async function scanTarGzipStream(stream, includePaths) {
           dynamicIgnorePatterns.push(...newPatterns);
           for (let i = files.length - 1; i >= 0; i--) {
             if (matchesIgnorePattern(files[i].path, dynamicIgnorePatterns)) {
+              totalCollectedBytes = Math.max(0, totalCollectedBytes - files[i].content.length);
               files.splice(i, 1);
             }
           }
@@ -1974,6 +1984,7 @@ async function scanTarGzipStream(stream, includePaths) {
       if (dynamicIgnorePatterns.length > 0 && matchesIgnorePattern(relPath, dynamicIgnorePatterns)) {
         continue;
       }
+      totalCollectedBytes += size;
       fileTreeEntries.push(relPath);
       files.push({ path: relPath, content });
     }
@@ -1988,7 +1999,7 @@ async function scanTarGzipStream(stream, includePaths) {
   return { headOid, fileTreeEntries, files, skippedFiles: skippedFiles.length > 0 ? skippedFiles : void 0 };
 }
 
-// packages/edge-worker/src/modules/mixSerializer.ts
+// src/modules/mixSerializer.ts
 var CONTINUATION_MIX_INSTRUCTIONS = (partNum, totalParts) => `<instructions>
 # Part ${partNum}/${totalParts} Continuation: Refer to Part 1 for master file_tree and modification protocol.
 </instructions>`;
@@ -2172,7 +2183,7 @@ function packFilesIntoBuckets(params) {
   };
 }
 
-// packages/edge-worker/src/modules/mixContinuation.ts
+// src/modules/mixContinuation.ts
 var MAX_CONTINUATION_PARTS = 20;
 function packContinuationBuckets(params) {
   if (params.partBudget <= 0 || params.files.length === 0) {
@@ -2371,7 +2382,7 @@ ${bucket.map((b) => b.path).join("\n")}`;
   return { continuationParts, coveredFilesCount };
 }
 
-// packages/edge-worker/src/modules/mixChunker.ts
+// src/modules/mixChunker.ts
 var DEFAULT_MAX_CHUNK_CHARS = 85e3;
 var HARD_GEMINI_CHAR_LIMIT = 1e5;
 var MAX_GEMINI_PARTS = 10;
@@ -2697,7 +2708,7 @@ ${bucket.map((b) => b.path).join("\n")}`;
   };
 }
 
-// packages/edge-worker/src/modules/recentCommits.ts
+// src/modules/recentCommits.ts
 function escapeXml(str) {
   if (!str) return "";
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -2833,7 +2844,7 @@ async function fetchRecentCommitsAndVolatileFiles(owner, repo, branch, token, co
   }
 }
 
-// packages/edge-worker/src/modules/mixer.ts
+// src/modules/mixer.ts
 async function describeTarballNotFound(owner, repo, branch, token) {
   try {
     const branchInfo = await getBranchHeadOid(owner, repo, branch, token);
@@ -3030,7 +3041,107 @@ async function handleMixRequest(req, githubToken) {
   };
 }
 
-// packages/edge-worker/src/modules/webhookHandler.ts
+// ../../shared/patchPayloadParser.ts
+function isValidPatchBlock(b) {
+  return Boolean(b && typeof b === "object" && typeof b.search === "string" && typeof b.replace === "string");
+}
+function isValidPatchOperation(p) {
+  if (!p || typeof p.path !== "string") return false;
+  if (p.action === "modify") {
+    const hasValidBlocks = Array.isArray(p.blocks) && p.blocks.length > 0 && p.blocks.every(isValidPatchBlock);
+    return hasValidBlocks || typeof p.fullContent === "string";
+  }
+  if (p.action === "create") {
+    return typeof p.fullContent === "string";
+  }
+  return p.action === "delete";
+}
+function extractBalancedJsonObject(text, startIndex) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = startIndex; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(startIndex, i + 1);
+      }
+    }
+  }
+  return null;
+}
+function tryParseGeminiPayload(candidate) {
+  const trimmed = candidate.trim();
+  let searchFrom = 0;
+  while (searchFrom < trimmed.length) {
+    const startIdx = trimmed.indexOf("{", searchFrom);
+    if (startIdx === -1) break;
+    const balanced = extractBalancedJsonObject(trimmed, startIdx);
+    if (balanced) {
+      try {
+        const obj = JSON.parse(balanced);
+        if (obj && typeof obj === "object" && typeof obj.commitMessage === "string" && Array.isArray(obj.patches) && obj.patches.length > 0 && obj.patches.every(isValidPatchOperation)) {
+          return obj;
+        }
+      } catch {
+      }
+    }
+    searchFrom = startIdx + 1;
+  }
+  return null;
+}
+function parseV2PatchPayloadFromCode(codeText) {
+  if (!codeText || codeText.trim().length === 0) return null;
+  let textToParse = codeText.trim();
+  const fenceMatch = textToParse.match(/^```(?:json|md|markdown)?\s*([\s\S]*)\s*```$/i);
+  if (fenceMatch) {
+    textToParse = fenceMatch[1].trim();
+  }
+  const direct = tryParseGeminiPayload(textToParse);
+  if (direct) return direct;
+  const innerFenceOpen = textToParse.match(/```(?:json)?\s*\{/i);
+  if (innerFenceOpen && innerFenceOpen.index !== void 0) {
+    const fromBrace = textToParse.slice(innerFenceOpen.index + innerFenceOpen[0].length - 1);
+    const lastFenceIdx = fromBrace.lastIndexOf("```");
+    const innerCandidate = lastFenceIdx !== -1 ? fromBrace.slice(0, lastFenceIdx) : fromBrace;
+    const innerParsed = tryParseGeminiPayload(innerCandidate);
+    if (innerParsed) return innerParsed;
+  }
+  return null;
+}
+function extractJsonFromResponse(raw) {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return "";
+  const v2Parsed = parseV2PatchPayloadFromCode(trimmed);
+  if (v2Parsed) {
+    return JSON.stringify(v2Parsed);
+  }
+  const outerFenceMatch = trimmed.match(/^```(?:json|md|markdown)?\s*([\s\S]*)\s*```$/i);
+  const candidate = outerFenceMatch && outerFenceMatch[1] ? outerFenceMatch[1].trim() : trimmed;
+  const braceIdx = candidate.indexOf("{");
+  if (braceIdx !== -1) {
+    const balanced = extractBalancedJsonObject(candidate, braceIdx);
+    if (balanced) return balanced.trim();
+  }
+  return candidate;
+}
+
+// src/modules/webhookHandler.ts
 async function verifyGithubWebhookSignature(rawBody, signatureHeader, secret) {
   if (!signatureHeader || !secret) {
     return false;
@@ -3075,9 +3186,9 @@ async function postGithubComment(commentsUrl, body, token) {
   }
 }
 function extractPatchPayload(text) {
-  const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  const rawJson = match && match[1] ? match[1].trim() : text.trim();
-  return JSON.parse(rawJson);
+  const parsed = parseV2PatchPayloadFromCode(text);
+  if (parsed) return parsed;
+  return JSON.parse(extractJsonFromResponse(text));
 }
 async function executeWorkerWorkflow(payload, env) {
   const repo = payload.repository?.full_name;
@@ -3263,7 +3374,7 @@ async function handleGithubWebhookRequest(request, env, ctx) {
   );
 }
 
-// packages/edge-worker/src/index.ts
+// src/index.ts
 var ClientValidationError = class extends Error {
   constructor(message) {
     super(message);
@@ -3304,38 +3415,34 @@ function resolveSecret(env) {
 function resolveGithubToken(env) {
   return env.GITHUB_PAT || env.GITHUB_TOKEN || "";
 }
+function constantTimeEqual(provided, secret) {
+  const enc = new TextEncoder();
+  const providedBytes = enc.encode(provided);
+  const secretBytes = enc.encode(secret);
+  if (secretBytes.length === 0) {
+    return false;
+  }
+  let diff = providedBytes.length ^ secretBytes.length;
+  for (let i = 0; i < secretBytes.length; i++) {
+    const pByte = i < providedBytes.length ? providedBytes[i] : 0;
+    diff |= pByte ^ secretBytes[i];
+  }
+  return diff === 0;
+}
 function verifyAuth(request, env) {
   const secret = resolveSecret(env);
   if (!secret) {
     return false;
   }
-  const enc = new TextEncoder();
-  const secretBytes = enc.encode(secret);
   const customHeader = request.headers.get("x-bridge-secret");
-  if (customHeader) {
-    const headerBytes = enc.encode(customHeader);
-    if (headerBytes.length === secretBytes.length) {
-      let result = 0;
-      for (let i = 0; i < headerBytes.length; i++) {
-        result |= headerBytes[i] ^ secretBytes[i];
-      }
-      if (result === 0) {
-        return true;
-      }
-    }
+  if (customHeader && constantTimeEqual(customHeader, secret)) {
+    return true;
   }
   const authHeader = request.headers.get("Authorization");
   if (authHeader) {
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const tokenBytes = enc.encode(token);
-    if (tokenBytes.length === secretBytes.length) {
-      let result = 0;
-      for (let i = 0; i < tokenBytes.length; i++) {
-        result |= tokenBytes[i] ^ secretBytes[i];
-      }
-      if (result === 0) {
-        return true;
-      }
+    const token = authHeader.replace(/^Bearer\\s+/i, "").trim();
+    if (token && constantTimeEqual(token, secret)) {
+      return true;
     }
   }
   return false;
@@ -3354,7 +3461,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "0.80.8",
+        version: "0.80.9",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))

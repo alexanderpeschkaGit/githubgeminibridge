@@ -758,6 +758,16 @@ const {
   }
   siblingEnv.observer.callback();
   assert.equal(siblingEnv.harvested.length, 2, 'both sibling <pre> blocks in a shared container are harvested');
+
+  // 10. Plain non-diff code block with a path hint in chat is NOT harvested as an action: 'create' overwrite
+  const plainEnv = mountHarvester(startDomHarvester);
+  const plainPre = plainEnv.document.createElement('pre');
+  const plainCode = plainEnv.document.createElement('code');
+  plainCode.textContent = '// filepath: src/plain.ts\nexport function example() { return 42; }\n';
+  plainPre.appendChild(plainCode);
+  plainEnv.document.body.appendChild(plainPre);
+  plainEnv.observer.callback();
+  assert.equal(plainEnv.harvested.length, 0, 'plain code blocks in chat must never be harvested as file creates');
 }
 
 console.log(

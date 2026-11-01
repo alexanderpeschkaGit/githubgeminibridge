@@ -1,6 +1,6 @@
 import type { HudConfig, HudState } from '../types';
 import { saveHudConfig, sanitizeNoGithubPat, sanitizeRepo } from '../services/storage';
-import { pushRepoHistory } from '../services/repoHistory';
+
 import type { HudDomElements } from './hudStylesAndDom';
 
 let refreshRepoHistorySelect: (() => void) | null = null;
@@ -29,16 +29,6 @@ export function bindHudConfigInputs(deps: HudConfigBindingDeps): void {
   const { dom, config, state, resetPatchOidState, clearTargetOidState, renderState } = deps;
 
   const recordCurrentHistory = () => {
-    try {
-      pushRepoHistory({
-        owner: config.owner,
-        repo: config.repo,
-        branch: config.branch,
-        targetBranch: config.targetBranch || '',
-      });
-    } catch {
-      // History is best-effort and must never break config edits.
-    }
     refreshRepoHistorySelect?.();
   };
 

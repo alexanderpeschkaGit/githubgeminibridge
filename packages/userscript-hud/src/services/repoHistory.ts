@@ -1,5 +1,5 @@
 import type { HudConfig } from '../types';
-import { getActiveProfileId, getStoredValue, setStoredValue } from './storage';
+import { getActiveProfileId, getStoredValue, sanitizeRepo, setStoredValue } from './storage';
 
 export interface RepoHistoryEntry {
   owner: string;
@@ -21,9 +21,12 @@ function historyKey(): string {
 }
 
 function normalizeEntry(entry: RepoHistoryEntry): RepoHistoryEntry {
+  const cleanedRepo = sanitizeRepo(entry.repo || '');
+  const slashIdx = cleanedRepo.indexOf('/');
+  const derivedOwner = slashIdx > 0 ? cleanedRepo.slice(0, slashIdx).trim() : '';
   return {
-    owner: (entry.owner || '').trim(),
-    repo: (entry.repo || '').trim(),
+    owner: (entry.owner || '').trim() || derivedOwner,
+    repo: cleanedRepo,
     branch: (entry.branch || '').trim(),
     targetBranch: (entry.targetBranch || '').trim() || undefined,
   };
@@ -31,7 +34,7 @@ function normalizeEntry(entry: RepoHistoryEntry): RepoHistoryEntry {
 
 function entryKey(e: RepoHistoryEntry): string {
   const n = normalizeEntry(e);
-  return `${n.owner}|||${n.repo}|||${n.branch}|||${n.targetBranch || ''}`;
+  return `${n.owner.toLowerCase()}|||${n.repo.toLowerCase()}|||${n.branch.toLowerCase()}|||${(n.targetBranch || '').toLowerCase()}`;
 }
 
 export function loadRepoHistory(): RepoHistoryEntry[] {

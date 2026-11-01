@@ -6,6 +6,7 @@ import type {
 } from '../types';
 import { handleMixRequest } from './mixer';
 import { handlePatchRequest } from './patcher';
+import { parseV2PatchPayloadFromCode, extractJsonFromResponse } from '../../../../shared/patchPayloadParser';
 
 /**
  * Computes an HMAC-SHA256 signature in GitHub format ("sha256=<hex>").
@@ -99,9 +100,11 @@ export async function postGithubComment(
  * Parses Gemini response text and extracts JSON patch payload.
  */
 export function extractPatchPayload(text: string): GeminiPatchPayload {
-  const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  const rawJson = (match && match[1]) ? match[1].trim() : text.trim();
-  return JSON.parse(rawJson) as GeminiPatchPayload;
+  const parsed = parseV2PatchPayloadFromCode(text);
+  if (parsed) return parsed;
+  return JSON.parse(extractJsonFromResponse(text)) as GeminiPatchPayload;
+
+
 }
 
 /**

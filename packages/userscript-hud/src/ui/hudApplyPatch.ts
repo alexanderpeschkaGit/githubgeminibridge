@@ -22,6 +22,8 @@ import {
 import { removeHarvestedPatch, partitionQueueForHolisticCheck } from '../services/patchQueue';
 import { resolvePatchPaths } from '../services/patchPaths';
 import { classifyRepoOwner, ownerOfRepo } from '../services/accountProfiles';
+import { recordFromConfig } from '../services/repoHistory';
+import { refreshRepoHistorySelectNow } from './hudConfigBindings';
 
 export interface HudApplyPatchDeps {
   config: HudConfig;
@@ -176,6 +178,10 @@ export async function applyHudPatch(
 
       const res = await requestWorkerPatch(config, patchReq);
       if (res.status === 'COMMITTED') {
+        try {
+          recordFromConfig(config);
+          refreshRepoHistorySelectNow();
+        } catch {}
         state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
         applyPatchResponseOids(config, state, res);
         const branchLabel = res.targetBranch || config.branch;
@@ -209,6 +215,10 @@ export async function applyHudPatch(
       }
 
       if (res.status === 'NO_CHANGES_NEEDED') {
+        try {
+          recordFromConfig(config);
+          refreshRepoHistorySelectNow();
+        } catch {}
         state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
         applyPatchResponseOids(config, state, res);
         updateState({
@@ -325,6 +335,10 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
     }
 
     if (workerRes?.status === 'COMMITTED' || workerRes?.status === 'NO_CHANGES_NEEDED') {
+      try {
+        recordFromConfig(deps.config);
+        refreshRepoHistorySelectNow();
+      } catch {}
       deps.state.harvestedPatches = [];
       applyPatchResponseOids(deps.config, deps.state, workerRes);
       const branchLabel = workerRes.targetBranch || deps.config.targetBranch?.trim() || deps.config.branch;

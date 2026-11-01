@@ -150,17 +150,14 @@ export function startDomHarvester(
         payload: v2Payload,
         timestamp: new Date().toLocaleTimeString(),
       };
-    } else {
-      // Check for legacy diff or file (require diff markers or an explicit path hint so prose blocks are ignored)
+    } else if (isSearchReplace(codeText)) {
+      // Check for legacy diff blocks (plain non-diff code blocks in chat are never auto-harvested as file creates)
       const detectedPath = extractPathFromCode(codeText, pre);
       const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || undefined);
-      if (converted && (isSearchReplace(codeText) || Boolean(detectedPath))) {
-        const legacyMode: HarvestedPatch['mode'] = isSearchReplace(codeText)
-          ? 'v1_search_replace'
-          : 'v2_json';
+      if (converted) {
         harvested = {
-          id: createStablePatchId(legacyMode, converted.payload),
-          mode: legacyMode,
+          id: createStablePatchId('v1_search_replace', converted.payload),
+          mode: 'v1_search_replace',
           commitMessage: converted.payload.commitMessage,
           payload: converted.payload,
           legacyPayload: converted.legacyPayload,

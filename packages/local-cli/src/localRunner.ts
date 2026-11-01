@@ -10,6 +10,8 @@ import type {
 import { applyPatchesInMemory } from '../../edge-worker/src/modules/patchInMemory';
 import { findRepoPathIssue, normalizeRepoPath } from '../../../shared/repoPaths';
 export { applyPatchesInMemory };
+import { extractJsonFromResponse, parseV2PatchPayloadFromCode } from '../../../shared/patchPayloadParser';
+export { extractJsonFromResponse };
 
 export interface LocalRunnerOptions {
   apiKey?: string;
@@ -18,6 +20,7 @@ export interface LocalRunnerOptions {
   skipCommit?: boolean;
 }
 
+/**
 /**
  * Lightweight helper to load .env variables if not already set in process.env.
  */
@@ -45,18 +48,6 @@ export function loadEnvFile(cwd: string): void {
   } catch {
     // Ignore .env read errors
   }
-}
-
-/**
- * Extracts JSON content from LLM markdown code blocks (```json ... ```).
- */
-export function extractJsonFromResponse(raw: string): string {
-  const trimmed = raw.trim();
-  const jsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (jsonMatch && jsonMatch[1]) {
-    return jsonMatch[1].trim();
-  }
-  return trimmed;
 }
 
 /**
@@ -109,6 +100,8 @@ Schema:
         contents: `${systemInstruction}\n\n${userContent}`
       });
       const text = response.text || '';
+      const parsed = parseV2PatchPayloadFromCode(text);
+      if (parsed) return parsed;
       const jsonStr = extractJsonFromResponse(text);
       return JSON.parse(jsonStr) as GeminiPatchPayload;
     }
@@ -142,6 +135,8 @@ Schema:
     throw new Error('Gemini API returned empty response');
   }
 
+  const parsed = parseV2PatchPayloadFromCode(rawText);
+  if (parsed) return parsed;
   const jsonText = extractJsonFromResponse(rawText);
   return JSON.parse(jsonText) as GeminiPatchPayload;
 }

@@ -34,33 +34,40 @@ Damit das Userscript und der Worker die Änderungen automatisch erkennen und auf
 Ideal für Änderungen über mehrere Dateien hinweg in einem einzigen zusammenhängenden Commit.
 
 > **Minimaler Prompt für Gemini (ohne Kontext-Bloat):**
-> *"Gib die Änderungen ausschließlich als Patch-JSON mit branch, message und files (search/replace) aus."*
+> *"Gib die Änderungen ausschließlich als V2 Patch-JSON mit commitMessage und patches (action: modify/create/delete, blocks: [{ search, replace }]) aus."*
 
 Gemini antwortet dann in diesem Schema:
 ```json
 {
-  "branch": "main",
-  "message": "feat: button styling and layout fix",
-  "files": [
+  "commitMessage": "feat: button styling and layout fix",
+  "patches": [
     {
       "path": "src/components/Button.tsx",
-      "type": "modify",
-      "search": "const color = 'red';",
-      "replace": "const color = 'blue';"
+      "action": "modify",
+      "blocks": [
+        {
+          "search": "const color = 'red';",
+          "replace": "const color = 'blue';"
+        }
+      ]
     },
     {
       "path": "src/utils/helpers.ts",
-      "type": "modify",
-      "search": "export const MAX_ITEMS = 10;",
-      "replace": "export const MAX_ITEMS = 25;"
+      "action": "modify",
+      "blocks": [
+        {
+          "search": "export const MAX_ITEMS = 10;",
+          "replace": "export const MAX_ITEMS = 25;"
+        }
+      ]
     }
   ]
 }
 ```
 
-*Unterstützte `type`-Aktionen im JSON:*
-- `modify`: Teiländerung einer bestehenden Datei via `search` und `replace`
-- `create`: Neue Datei erzeugen via `content` (vollständiger Dateiinhalt)
+*Unterstützte `action`-Aktionen im JSON:*
+- `modify`: Teiländerung einer bestehenden Datei via `blocks: [{ search, replace }]` oder `fullContent`
+- `create`: Neue Datei erzeugen via `fullContent` (vollständiger Dateiinhalt)
 - `delete`: Datei im GitHub-Repository löschen
 
 #### Variante B: SEARCH / REPLACE Blöcke (Klassisch / Markdown)

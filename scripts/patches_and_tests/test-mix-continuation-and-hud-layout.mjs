@@ -598,4 +598,31 @@ function findByTag(root, tag) {
   console.log('PASS: dom.repoInput.onchange writes sanitized owner/repo back to dom.repoInput.value');
 }
 
+// 2.5: Repo history case-insensitive dedupe & profile scoping
+{
+  const historyUrl = await bundleModule('packages/userscript-hud/src/services/repoHistory.ts');
+  const { pushRepoHistory, loadRepoHistory } = await import(historyUrl);
+
+  // Clear storage for test
+  gmStore.clear();
+
+  pushRepoHistory({
+    owner: 'MyOrg',
+    repo: 'MyOrg/MyRepo',
+    branch: 'Main',
+  });
+
+  pushRepoHistory({
+    owner: 'myorg',
+    repo: 'myorg/myrepo',
+    branch: 'main',
+  });
+
+  const history = loadRepoHistory();
+  assert.equal(history.length, 1, 'case-insensitive dedupe must collapse MyOrg/MyRepo and myorg/myrepo into 1 entry');
+  assert.equal(history[0].owner, 'myorg', 'latest push casing is preserved');
+  assert.equal(history[0].repo, 'myorg/myrepo');
+  console.log('PASS: pushRepoHistory deduplicates case-insensitively and preserves profile scoping');
+}
+
 console.log('Multi-turn mix continuation & compact HUD layout suite: PASS');

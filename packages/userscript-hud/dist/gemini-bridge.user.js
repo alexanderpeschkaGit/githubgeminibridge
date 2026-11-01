@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.8
+// @version      0.80.9
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -41,7 +41,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
-  // packages/userscript-hud/src/services/storage.ts
+  // src/services/storage.ts
   var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
@@ -250,7 +250,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // packages/userscript-hud/src/services/runtimeInfo.ts
+  // src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
   function getRunningScriptVersion() {
     if (typeof GM_info === "undefined" || !GM_info || !GM_info.script) {
@@ -284,7 +284,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     document.body.appendChild(box);
   }
 
-  // packages/userscript-hud/src/services/patchOidState.ts
+  // src/services/patchOidState.ts
   var OID_REGEX = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
@@ -346,7 +346,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/services/patchOidStore.ts
+  // src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
       headOidScope: getStoredValue("head_oid_scope", ""),
@@ -386,7 +386,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
   }
 
-  // shared/repoPaths.ts
+  // ../../shared/repoPaths.ts
   function normalizeRepoPath(input) {
     return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
   }
@@ -408,7 +408,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return null;
   }
 
-  // packages/userscript-hud/src/services/patchIdentity.ts
+  // src/services/patchIdentity.ts
   function canonicalize(value) {
     if (Array.isArray(value)) {
       return value.map((entry) => canonicalize(entry));
@@ -439,7 +439,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
   }
 
-  // packages/userscript-hud/src/services/patchQueue.ts
+  // src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
   function findDuplicatePatchId(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
@@ -569,7 +569,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
+  // src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -758,7 +758,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return el;
   }
 
-  // packages/userscript-hud/src/ui/hudDomTree.ts
+  // src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -1015,7 +1015,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/services/updateChecker.ts
+  // src/services/updateChecker.ts
   var SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js";
   var LAST_CHECK_KEY = "script_update_last_check";
   var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
@@ -1114,7 +1114,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return evaluateUpdateState(getRunningScriptVersion(), latestVersion);
   }
 
-  // packages/userscript-hud/src/ui/updateBanner.ts
+  // src/ui/updateBanner.ts
   var TRANSIENT_MESSAGE_MS = 6e3;
   function initHudUpdateBanner(dom, deps = {}) {
     const check = deps.check ?? checkForScriptUpdate;
@@ -1209,77 +1209,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     void runCheck(false);
   }
 
-  // packages/userscript-hud/src/services/repoHistory.ts
-  var HISTORY_KEY = "repo_history_v1";
-  var MAX_ENTRIES = 4;
-  function historyKey() {
-    try {
-      return `${HISTORY_KEY}_${getActiveProfileId()}`;
-    } catch {
-      return HISTORY_KEY;
-    }
-  }
-  function normalizeEntry(entry) {
-    return {
-      owner: (entry.owner || "").trim(),
-      repo: (entry.repo || "").trim(),
-      branch: (entry.branch || "").trim(),
-      targetBranch: (entry.targetBranch || "").trim() || void 0
-    };
-  }
-  function entryKey(e) {
-    const n = normalizeEntry(e);
-    return `${n.owner}|||${n.repo}|||${n.branch}|||${n.targetBranch || ""}`;
-  }
-  function loadRepoHistory() {
-    try {
-      const raw = getStoredValue(historyKey(), "");
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      const out = [];
-      const seen = /* @__PURE__ */ new Set();
-      for (const p of parsed) {
-        if (!p) continue;
-        const n = normalizeEntry(p);
-        if (!n.repo) continue;
-        const key = entryKey(n);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push(n);
-      }
-      return out.slice(0, MAX_ENTRIES);
-    } catch {
-      return [];
-    }
-  }
-  function saveRepoHistory(entries) {
-    try {
-      const cleaned = entries.map(normalizeEntry).filter((e) => e.repo).slice(0, MAX_ENTRIES);
-      setStoredValue(historyKey(), JSON.stringify(cleaned));
-    } catch {
-    }
-  }
-  function pushRepoHistory(entry) {
-    const n = normalizeEntry(entry);
-    if (!n.repo) return loadRepoHistory();
-    const current = loadRepoHistory();
-    const key = entryKey(n);
-    const filtered = current.filter((e) => entryKey(e) !== key);
-    const next = [n, ...filtered].slice(0, MAX_ENTRIES);
-    saveRepoHistory(next);
-    return next;
-  }
-  function recordFromConfig(cfg) {
-    return pushRepoHistory({
-      owner: cfg.owner || "",
-      repo: cfg.repo || "",
-      branch: cfg.branch || "",
-      targetBranch: cfg.targetBranch || ""
-    });
-  }
-
-  // packages/userscript-hud/src/ui/hudConfigBindings.ts
+  // src/ui/hudConfigBindings.ts
   var refreshRepoHistorySelect = null;
   function setRepoHistorySelectRefresher(fn) {
     refreshRepoHistorySelect = fn;
@@ -1290,15 +1220,6 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   function bindHudConfigInputs(deps) {
     const { dom, config, state, resetPatchOidState, clearTargetOidState: clearTargetOidState2, renderState } = deps;
     const recordCurrentHistory = () => {
-      try {
-        pushRepoHistory({
-          owner: config.owner,
-          repo: config.repo,
-          branch: config.branch,
-          targetBranch: config.targetBranch || ""
-        });
-      } catch {
-      }
       refreshRepoHistorySelect?.();
     };
     dom.repoInput.onchange = () => {
@@ -1408,7 +1329,80 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/ui/hudRepoHistoryDropdown.ts
+  // src/services/repoHistory.ts
+  var HISTORY_KEY = "repo_history_v1";
+  var MAX_ENTRIES = 4;
+  function historyKey() {
+    try {
+      return `${HISTORY_KEY}_${getActiveProfileId()}`;
+    } catch {
+      return HISTORY_KEY;
+    }
+  }
+  function normalizeEntry(entry) {
+    const cleanedRepo = sanitizeRepo(entry.repo || "");
+    const slashIdx = cleanedRepo.indexOf("/");
+    const derivedOwner = slashIdx > 0 ? cleanedRepo.slice(0, slashIdx).trim() : "";
+    return {
+      owner: (entry.owner || "").trim() || derivedOwner,
+      repo: cleanedRepo,
+      branch: (entry.branch || "").trim(),
+      targetBranch: (entry.targetBranch || "").trim() || void 0
+    };
+  }
+  function entryKey(e) {
+    const n = normalizeEntry(e);
+    return `${n.owner.toLowerCase()}|||${n.repo.toLowerCase()}|||${n.branch.toLowerCase()}|||${(n.targetBranch || "").toLowerCase()}`;
+  }
+  function loadRepoHistory() {
+    try {
+      const raw = getStoredValue(historyKey(), "");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const out = [];
+      const seen = /* @__PURE__ */ new Set();
+      for (const p of parsed) {
+        if (!p) continue;
+        const n = normalizeEntry(p);
+        if (!n.repo) continue;
+        const key = entryKey(n);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(n);
+      }
+      return out.slice(0, MAX_ENTRIES);
+    } catch {
+      return [];
+    }
+  }
+  function saveRepoHistory(entries) {
+    try {
+      const cleaned = entries.map(normalizeEntry).filter((e) => e.repo).slice(0, MAX_ENTRIES);
+      setStoredValue(historyKey(), JSON.stringify(cleaned));
+    } catch {
+    }
+  }
+  function pushRepoHistory(entry) {
+    const n = normalizeEntry(entry);
+    if (!n.repo) return loadRepoHistory();
+    const current = loadRepoHistory();
+    const key = entryKey(n);
+    const filtered = current.filter((e) => entryKey(e) !== key);
+    const next = [n, ...filtered].slice(0, MAX_ENTRIES);
+    saveRepoHistory(next);
+    return next;
+  }
+  function recordFromConfig(cfg) {
+    return pushRepoHistory({
+      owner: cfg.owner || "",
+      repo: cfg.repo || "",
+      branch: cfg.branch || "",
+      targetBranch: cfg.targetBranch || ""
+    });
+  }
+
+  // src/ui/hudRepoHistoryDropdown.ts
   var activeDocumentClickHandler = null;
   var activeDocumentKeydownHandler = null;
   function formatRepoHistoryLabel(entry) {
@@ -1542,7 +1536,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return refresher;
   }
 
-  // packages/userscript-hud/src/services/accountProfiles.ts
+  // src/services/accountProfiles.ts
   var ACCOUNT_PROFILES = [
     { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
     { id: "account2", label: "Account 2", workerName: "gemini-git-bridge-account2" }
@@ -1575,7 +1569,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return "foreign";
   }
 
-  // packages/userscript-hud/src/ui/hudAccountSwitch.ts
+  // src/ui/hudAccountSwitch.ts
   var activeDeps = null;
   function profileInfo(id) {
     return ACCOUNT_PROFILES.find((p) => p.id === id) ?? ACCOUNT_PROFILES[0];
@@ -1679,7 +1673,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/dom/injector.ts
+  // src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
     const geminiSelectors = [
@@ -1789,7 +1783,7 @@ ${promptText}` : promptText).replace(/\u200B/g, "");
     return true;
   }
 
-  // packages/userscript-hud/src/services/selfHealing.ts
+  // src/services/selfHealing.ts
   var MAX_SELF_HEALING_RETRIES = 3;
   function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt, options) {
     const formattedErrors = errors.map((err, idx) => {
@@ -1904,7 +1898,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/hudRender.ts
+  // src/ui/hudRender.ts
   function renderHudState({ dom, state, config, updateState, onApplyPatch }) {
     dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
     dom.triggerBadge.textContent = state.status;
@@ -2018,7 +2012,7 @@ Fix Instructions:
     }
   }
 
-  // packages/userscript-hud/src/services/workerClient.ts
+  // src/services/workerClient.ts
   function isV2ErrorPayload(data) {
     if (!data || typeof data !== "object") {
       return false;
@@ -2188,7 +2182,7 @@ Fix Instructions:
     return gmRequestJson(url, "POST", cfg.workerSecret, req);
   }
 
-  // packages/userscript-hud/src/services/batchFormula.ts
+  // src/services/batchFormula.ts
   function buildBatchFormulaPrompt(config, state) {
     const sourceBranch = config.branch?.trim() || "main";
     const branchLabel = config.targetBranch?.trim() || sourceBranch;
@@ -2211,7 +2205,7 @@ Fix Instructions:
     ].join("\n");
   }
 
-  // packages/userscript-hud/src/ui/hudMixAction.ts
+  // src/ui/hudMixAction.ts
   function bindMixAction({ dom, config, state, updateState }) {
     dom.mixBtn.onclick = async () => {
       try {
@@ -2324,7 +2318,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/patchPaths.ts
+  // src/services/patchPaths.ts
   function resolvePatchPaths(payload, prompt) {
     const patches = (payload.patches || []).map((patch) => ({
       ...patch,
@@ -2350,7 +2344,7 @@ Fix Instructions:
     return { payload: { ...payload, patches }, cancelled: false };
   }
 
-  // packages/userscript-hud/src/ui/hudApplyPatch.ts
+  // src/ui/hudApplyPatch.ts
   function checkForeignOwnerBlocked(config, updateState) {
     if (classifyRepoOwner(config) !== "foreign") return false;
     updateState({
@@ -2451,6 +2445,11 @@ Fix Instructions:
         const patchReq = buildWorkerPatchRequest(config, state, effectivePayload);
         const res = await requestWorkerPatch(config, patchReq);
         if (res.status === "COMMITTED") {
+          try {
+            recordFromConfig(config);
+            refreshRepoHistorySelectNow();
+          } catch {
+          }
           state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
           applyPatchResponseOids(config, state, res);
           const branchLabel = res.targetBranch || config.branch;
@@ -2481,6 +2480,11 @@ Fix Instructions:
           return handleConflictOrError(res, config, state, updateState);
         }
         if (res.status === "NO_CHANGES_NEEDED") {
+          try {
+            recordFromConfig(config);
+            refreshRepoHistorySelectNow();
+          } catch {
+          }
           state.harvestedPatches = removeHarvestedPatch(state.harvestedPatches, patch.id);
           applyPatchResponseOids(config, state, res);
           updateState({
@@ -2570,6 +2574,11 @@ Fix Instructions:
         return true;
       }
       if (workerRes?.status === "COMMITTED" || workerRes?.status === "NO_CHANGES_NEEDED") {
+        try {
+          recordFromConfig(deps.config);
+          refreshRepoHistorySelectNow();
+        } catch {
+        }
         deps.state.harvestedPatches = [];
         applyPatchResponseOids(deps.config, deps.state, workerRes);
         const branchLabel = workerRes.targetBranch || deps.config.targetBranch?.trim() || deps.config.branch;
@@ -2597,7 +2606,7 @@ Fix Instructions:
     }
   }
 
-  // packages/userscript-hud/src/ui/shadowHud.ts
+  // src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -2775,7 +2784,7 @@ Fix Instructions:
     return controller;
   }
 
-  // packages/userscript-hud/src/dom/pathHints.ts
+  // src/dom/pathHints.ts
   var FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
   var LABELED_HEADER_PATH = /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
   var PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
@@ -2890,10 +2899,7 @@ Fix Instructions:
     fillMissingPatchPaths(patch, extractPathFromCode(codeText, element));
   }
 
-  // packages/userscript-hud/src/dom/patchParser.ts
-  function isSearchReplace(text) {
-    return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
-  }
+  // ../../shared/patchPayloadParser.ts
   function isValidPatchBlock(b) {
     return Boolean(b && typeof b === "object" && typeof b.search === "string" && typeof b.replace === "string");
   }
@@ -2975,6 +2981,11 @@ Fix Instructions:
       if (innerParsed) return innerParsed;
     }
     return null;
+  }
+
+  // src/dom/patchParser.ts
+  function isSearchReplace(text) {
+    return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
   }
   function extractSectionPath(sectionText) {
     if (!sectionText || !sectionText.trim()) return "";
@@ -3091,7 +3102,7 @@ Fix Instructions:
     return { payload, legacyPayload };
   }
 
-  // packages/userscript-hud/src/dom/harvester.ts
+  // src/dom/harvester.ts
   function hasInlineBtn(root) {
     if (!root || typeof root.querySelector !== "function") return false;
     return Boolean(root.querySelector(".ggb-inline-btn"));
@@ -3185,14 +3196,13 @@ Fix Instructions:
           payload: v2Payload,
           timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString()
         };
-      } else {
+      } else if (isSearchReplace(codeText)) {
         const detectedPath = extractPathFromCode(codeText, pre);
         const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || void 0);
-        if (converted && (isSearchReplace(codeText) || Boolean(detectedPath))) {
-          const legacyMode = isSearchReplace(codeText) ? "v1_search_replace" : "v2_json";
+        if (converted) {
           harvested = {
-            id: createStablePatchId(legacyMode, converted.payload),
-            mode: legacyMode,
+            id: createStablePatchId("v1_search_replace", converted.payload),
+            mode: "v1_search_replace",
             commitMessage: converted.payload.commitMessage,
             payload: converted.payload,
             legacyPayload: converted.legacyPayload,
@@ -3368,7 +3378,7 @@ Fix Instructions:
     return observer;
   }
 
-  // packages/userscript-hud/src/index.ts
+  // src/index.ts
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {

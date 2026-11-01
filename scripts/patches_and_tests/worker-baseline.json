@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-01T10:54:34.002Z",
+  "timestamp": "2026-11-01T12:35:28.270Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -111,7 +111,7 @@
       "warningZoneFilesCount": 10,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 141262,
+      "bundleSize": 140952,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
@@ -121,7 +121,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixerTarScan.ts",
-          "lines": 363
+          "lines": 375
         },
         {
           "file": "packages/edge-worker/src/modules/patcher.ts",
@@ -137,15 +137,15 @@
         },
         {
           "file": "packages/edge-worker/src/modules/webhookHandler.ts",
-          "lines": 348
+          "lines": 351
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
-          "lines": 371
+          "lines": 368
         },
         {
           "file": "packages/userscript-hud/src/ui/hudApplyPatch.ts",
-          "lines": 358
+          "lines": 372
         },
         {
           "file": "packages/userscript-hud/src/ui/hudDomTree.ts",
@@ -153,14 +153,14 @@
         },
         {
           "file": "packages/local-cli/src/localRunner.ts",
-          "lines": 341
+          "lines": 336
         }
       ],
       "overLimitZone": [],
       "audit": [
         {
           "file": "packages/edge-worker/src/index.ts",
-          "lines": 290
+          "lines": 286
         },
         {
           "file": "packages/edge-worker/src/modules/linter.ts",
@@ -180,7 +180,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/mixerTarScan.ts",
-          "lines": 363
+          "lines": 375
         },
         {
           "file": "packages/edge-worker/src/modules/mixSelection.ts",
@@ -212,7 +212,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/webhookHandler.ts",
-          "lines": 348
+          "lines": 351
         },
         {
           "file": "packages/edge-worker/src/types.ts",
@@ -248,7 +248,7 @@
         },
         {
           "file": "packages/userscript-hud/src/dom/harvester.ts",
-          "lines": 371
+          "lines": 368
         },
         {
           "file": "packages/userscript-hud/src/dom/injector.ts",
@@ -256,7 +256,7 @@
         },
         {
           "file": "packages/userscript-hud/src/dom/patchParser.ts",
-          "lines": 267
+          "lines": 167
         },
         {
           "file": "packages/userscript-hud/src/dom/pathHints.ts",
@@ -296,7 +296,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/repoHistory.ts",
-          "lines": 91
+          "lines": 94
         },
         {
           "file": "packages/userscript-hud/src/services/runtimeInfo.ts",
@@ -328,11 +328,11 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudApplyPatch.ts",
-          "lines": 358
+          "lines": 372
         },
         {
           "file": "packages/userscript-hud/src/ui/hudConfigBindings.ts",
-          "lines": 160
+          "lines": 150
         },
         {
           "file": "packages/userscript-hud/src/ui/hudDomTree.ts",
@@ -372,7 +372,7 @@
         },
         {
           "file": "packages/local-cli/src/localRunner.ts",
-          "lines": 341
+          "lines": 336
         }
       ]
     },
