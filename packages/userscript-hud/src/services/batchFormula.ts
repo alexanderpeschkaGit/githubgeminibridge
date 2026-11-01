@@ -25,5 +25,6 @@ export function buildBatchFormulaPrompt(
     '   - Deleted files: { "path": "repo/relative/old.ts", "action": "delete" }',
     '3. Every "search" string MUST include 2-4 lines of unique verbatim surrounding context from the RepoMix snapshot.',
     '4. NEVER use placeholders ("// ... existing code ...", "/* rest unchanged */") or unclosed brackets/JSX tags.',
+    '5. Preserve existing API/behavior: do not rename exports, reorder union types, or change function/type signatures unless explicitly required; prefer minimal, localized edits without reordering union types.',
   ].join('\n');
 }

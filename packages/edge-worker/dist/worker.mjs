@@ -278,7 +278,7 @@ async function createBranchRef(owner, repo, branchName, oid, token, repositoryId
   });
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Failed to create branch "${cleanBranch}" on "${owner}/${repo}": HTTP ${res.status} - ${errText}`);
+    throw createGitHubHttpError(res.status, res.statusText, errText);
   }
   const json = await res.json();
   return { refName: json.ref, oid: json.object?.sha || oid };
@@ -501,6 +501,58 @@ async function commitSingleFileViaGraphQL(arg1, arg2, arg3, arg4, arg5, arg6, ar
   );
 }
 
+// src/modules/branchResolver.ts
+var normalizeBranch = (branch) => branch.replace(/^refs\/heads\//, "");
+async function resolveOrCreateTarget(params) {
+  let targetInfo = params.sourceInfo;
+  let createdBranch = false;
+  try {
+    targetInfo = await getBranchHeadOid(params.owner, params.repo, params.effectiveTargetBranch, params.githubToken);
+    return { targetInfo, createdBranch };
+  } catch (err) {
+    if (!(err instanceof BranchNotFoundError)) {
+      throw err;
+    }
+    if (params.expectedTargetHeadOid) {
+      throw err;
+    } else if (params.dryRun) {
+      targetInfo = {
+        headOid: params.baseOidForCreate,
+        resolvedBranch: normalizeBranch(params.effectiveTargetBranch),
+        repositoryId: params.sourceInfo.repositoryId
+      };
+      return { targetInfo, createdBranch: false };
+    } else if (params.createBranchIfNeeded === false) {
+      throw err;
+    } else {
+      try {
+        const createdRef = await createBranchRef(
+          params.owner,
+          params.repo,
+          params.effectiveTargetBranch,
+          params.baseOidForCreate,
+          params.githubToken,
+          params.sourceInfo.repositoryId
+        );
+        createdBranch = true;
+        targetInfo = {
+          headOid: createdRef.oid || params.baseOidForCreate,
+          resolvedBranch: normalizeBranch(params.effectiveTargetBranch),
+          repositoryId: params.sourceInfo.repositoryId
+        };
+        return { targetInfo, createdBranch };
+      } catch (createErr) {
+        try {
+          targetInfo = await getBranchHeadOid(params.owner, params.repo, params.effectiveTargetBranch, params.githubToken);
+          return { targetInfo, createdBranch: false };
+        } catch (resolveErr) {
+          throw createErr;
+        }
+      }
+    }
+  }
+}
+
 // src/modules/searchReplace.ts
 var LLM_PLACEHOLDER_PATTERNS = [
   /\/\/\s*\.{3,}\s*(?:existing|rest of|remaining|other)?\s*code\s*\.{0,3}/i,
@@ -692,10 +744,10 @@ async function handleCommitRequest(body, githubToken) {
     if (pathIssue) throw new ClientValidationError(pathIssue);
     return { path: normalizeRepoPath(rawPath) };
   });
-  const normalizeBranch = (branch) => branch.replace(/^refs\/heads\//, "");
+  const normalizeBranch2 = (branch) => branch.replace(/^refs\/heads\//, "");
   const effectiveTargetBranch = (body.targetBranch || body.branch || "main").trim();
   const baseBranch = (body.baseBranch || body.branch || effectiveTargetBranch).trim();
-  const isDistinctTarget = normalizeBranch(effectiveTargetBranch) !== normalizeBranch(baseBranch);
+  const isDistinctTarget = normalizeBranch2(effectiveTargetBranch) !== normalizeBranch2(baseBranch);
   let sourceInfo;
   try {
     sourceInfo = await getBranchHeadOid(owner, repo, baseBranch, githubToken);
@@ -722,7 +774,20 @@ async function handleCommitRequest(body, githubToken) {
   let createdBranch = false;
   if (isDistinctTarget) {
     try {
-      targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+      const resolved = await resolveOrCreateTarget({
+        owner,
+        repo,
+        baseBranch,
+        effectiveTargetBranch,
+        sourceInfo,
+        expectedTargetHeadOid: body.expectedTargetHeadOid,
+        createBranchIfNeeded: body.createBranchIfNeeded,
+        dryRun: false,
+        githubToken,
+        baseOidForCreate: body.expectedHeadOid || sourceInfo.headOid
+      });
+      targetInfo = resolved.targetInfo;
+      createdBranch = resolved.createdBranch;
     } catch (err) {
       if (!(err instanceof BranchNotFoundError)) {
         const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });
@@ -738,7 +803,7 @@ async function handleCommitRequest(body, githubToken) {
             status: "GIT_CONFLICT",
             errorCode: "GIT_CONFLICT",
             retryable: true,
-            targetBranch: normalizeBranch(effectiveTargetBranch),
+            targetBranch: normalizeBranch2(effectiveTargetBranch),
             errorMessage
           }
         };
@@ -761,7 +826,7 @@ async function handleCommitRequest(body, githubToken) {
         createdBranch = true;
         targetInfo = {
           headOid: createdRef.oid || baseOidForCreate,
-          resolvedBranch: normalizeBranch(effectiveTargetBranch),
+          resolvedBranch: normalizeBranch2(effectiveTargetBranch),
           repositoryId: sourceInfo.repositoryId
         };
       } catch (createErr) {
@@ -1662,8 +1727,8 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
   }
   const baseBranch = req.branch.trim();
   const effectiveTargetBranch = (req.targetBranch || req.branch).trim();
-  const normalizeBranch = (branch) => branch.replace(/^refs\/heads\//, "");
-  const isDistinctTarget = normalizeBranch(effectiveTargetBranch) !== normalizeBranch(baseBranch);
+  const normalizeBranch2 = (branch) => branch.replace(/^refs\/heads\//, "");
+  const isDistinctTarget = normalizeBranch2(effectiveTargetBranch) !== normalizeBranch2(baseBranch);
   if (req.expectedTargetHeadOid !== void 0 && (typeof req.expectedTargetHeadOid !== "string" || !/^[0-9a-f]{40}$/i.test(req.expectedTargetHeadOid))) {
     return { status: "ERROR", errorMessage: "expectedTargetHeadOid must be a 40-character Git commit OID." };
   }
@@ -1754,7 +1819,20 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
   let createdBranch = false;
   if (isDistinctTarget) {
     try {
-      targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+      const resolved = await resolveOrCreateTarget({
+        owner,
+        repo,
+        baseBranch,
+        effectiveTargetBranch,
+        sourceInfo,
+        expectedTargetHeadOid: req.expectedTargetHeadOid,
+        createBranchIfNeeded: req.createBranchIfNeeded,
+        dryRun: req.dryRun,
+        githubToken,
+        baseOidForCreate: req.expectedHeadOid
+      });
+      targetInfo = resolved.targetInfo;
+      createdBranch = resolved.createdBranch;
     } catch (err) {
       if (!(err instanceof BranchNotFoundError)) {
         const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });
@@ -1770,13 +1848,13 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
           status: "GIT_CONFLICT",
           errorCode: "GIT_CONFLICT",
           retryable: true,
-          targetBranch: normalizeBranch(effectiveTargetBranch),
+          targetBranch: normalizeBranch2(effectiveTargetBranch),
           errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${req.expectedTargetHeadOid}".`
         };
       } else if (req.dryRun) {
         targetInfo = {
           headOid: req.expectedHeadOid,
-          resolvedBranch: normalizeBranch(effectiveTargetBranch),
+          resolvedBranch: normalizeBranch2(effectiveTargetBranch),
           repositoryId: sourceInfo.repositoryId
         };
       } else if (req.createBranchIfNeeded === false) {
@@ -1792,7 +1870,7 @@ async function handlePatchRequest(req, githubToken, preflightHook = runPreflight
           createdBranch = true;
           targetInfo = {
             headOid: createdRef.oid || req.expectedHeadOid,
-            resolvedBranch: normalizeBranch(effectiveTargetBranch),
+            resolvedBranch: normalizeBranch2(effectiveTargetBranch),
             repositoryId: sourceInfo.repositoryId
           };
         } catch (createErr) {
@@ -3911,7 +3989,7 @@ var index_default = {
       return jsonResponse({
         status: "ok",
         service: "gemini-git-bridge",
-        version: "0.80.11",
+        version: "0.80.13",
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         hasBridgeSecret: Boolean(resolveSecret(env)),
         hasGithubToken: Boolean(resolveGithubToken(env))
