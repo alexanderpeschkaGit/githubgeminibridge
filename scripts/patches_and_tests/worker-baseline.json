@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-01T16:43:25.379Z",
+  "timestamp": "2026-11-01T16:54:11.855Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -42,7 +42,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "0.80.10",
+      "version": "0.80.11",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },
@@ -111,13 +111,13 @@
       "warningZoneFilesCount": 11,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 141843,
+      "bundleSize": 142169,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
         {
           "file": "packages/edge-worker/src/modules/commitLegacy.ts",
-          "lines": 359
+          "lines": 370
         },
         {
           "file": "packages/edge-worker/src/modules/mixChunker.ts",
@@ -168,7 +168,7 @@
         },
         {
           "file": "packages/edge-worker/src/modules/commitLegacy.ts",
-          "lines": 359
+          "lines": 370
         },
         {
           "file": "packages/edge-worker/src/modules/linter.ts",
@@ -328,7 +328,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/workerClient.ts",
-          "lines": 253
+          "lines": 263
         },
         {
           "file": "packages/userscript-hud/src/types.ts",

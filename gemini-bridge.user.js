@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.10
+// @version      0.80.11
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -2033,12 +2033,16 @@ Fix Instructions:
       return false;
     }
     const payload = data;
+    if (payload.success === false) {
+      return false;
+    }
     return typeof payload.status === "string" || typeof payload.errorMessage === "string" || Array.isArray(payload.errors);
   }
-  function shouldResolveV2Error(status, data) {
-    return status >= 400 && status < 500 && isV2ErrorPayload(data);
+  function shouldResolveV2Error(status, data, resolveV2Errors = true) {
+    return resolveV2Errors && status >= 400 && status < 500 && isV2ErrorPayload(data);
   }
-  async function gmRequestJson(url, method, secret, body) {
+  async function gmRequestJson(url, method, secret, body, options) {
+    const resolveV2Errors = options?.resolveV2Errors ?? true;
     const headers = {
       "Accept": "application/json",
       "Authorization": `Bearer ${secret}`,
@@ -2061,7 +2065,7 @@ Fix Instructions:
               const data = JSON.parse(res.responseText);
               if (res.status >= 200 && res.status < 300) {
                 resolve(data);
-              } else if (shouldResolveV2Error(res.status, data)) {
+              } else if (shouldResolveV2Error(res.status, data, resolveV2Errors)) {
                 resolve(data);
               } else {
                 const errMsg = data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`;
@@ -2096,7 +2100,7 @@ Fix Instructions:
         if (res.status >= 200 && res.status < 300) {
           return data;
         }
-        if (shouldResolveV2Error(res.status, data)) {
+        if (shouldResolveV2Error(res.status, data, resolveV2Errors)) {
           return data;
         }
         throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`);
@@ -2123,7 +2127,7 @@ Fix Instructions:
       if (res.ok) {
         return data;
       }
-      if (shouldResolveV2Error(res.status, data)) {
+      if (shouldResolveV2Error(res.status, data, resolveV2Errors)) {
         return data;
       }
       throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${text}`);
@@ -2132,7 +2136,7 @@ Fix Instructions:
   }
   async function checkWorkerHealth(cfg) {
     const url = `${cfg.workerUrl}/health`;
-    return gmRequestJson(url, "GET", cfg.workerSecret);
+    return gmRequestJson(url, "GET", cfg.workerSecret, void 0, { resolveV2Errors: false });
   }
   async function requestRepoMix(cfg, req) {
     const url = `${cfg.workerUrl}/api/mix`;
@@ -2184,7 +2188,8 @@ Fix Instructions:
       `${cfg.workerUrl}/graphql`,
       "POST",
       cfg.workerSecret,
-      body
+      body,
+      { resolveV2Errors: false }
     );
     const oid = extractBranchHeadOid(payload);
     if (!oid) {
@@ -2194,7 +2199,7 @@ Fix Instructions:
   }
   async function requestLegacyCommit(cfg, req) {
     const url = `${cfg.workerUrl}/push`;
-    return gmRequestJson(url, "POST", cfg.workerSecret, req);
+    return gmRequestJson(url, "POST", cfg.workerSecret, req, { resolveV2Errors: false });
   }
 
   // src/services/batchFormula.ts
