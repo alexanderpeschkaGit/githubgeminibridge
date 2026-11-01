@@ -313,12 +313,12 @@ export async function scanTarGzipStream(
       }
 
       const isIgnoreConfig = relPath === '.repomixignore.cf' || relPath === '.repomixignore';
-      if (!isIgnoreConfig && totalCollectedBytes + size > MAX_TOTAL_TAR_BYTES) {
-        fileTreeEntries.push(`${relPath} [SKIPPED: total mix >24MB]`);
-        skippedFiles.push({ path: relPath, reason: 'too_large', bytes: size });
-        await discardBytes(paddedSize);
-        continue;
-      }
+        if (!isIgnoreConfig && totalCollectedBytes + size > MAX_TOTAL_TAR_BYTES) {
+          fileTreeEntries.push(`${relPath} [SKIPPED: total mix >24MB]`);
+          skippedFiles.push({ path: relPath, reason: 'stream_cap', bytes: size });
+          await discardBytes(paddedSize);
+          continue;
+        }
 
       // Read file content
       await ensureBytes(paddedSize);

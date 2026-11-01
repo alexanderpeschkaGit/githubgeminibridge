@@ -47,6 +47,7 @@ export function sanitizeRepo(repoStr: string): string {
   cleaned = cleaned.replace(/^https?:\/\/github\.com\//i, '');
   cleaned = cleaned.replace(/^git@github\.com:/i, '');
   cleaned = cleaned.replace(/https?:?$/i, '');
+  cleaned = cleaned.replace(/\.git$/i, '');
   cleaned = cleaned.replace(/\/+$/, '');
   return cleaned.trim();
 }

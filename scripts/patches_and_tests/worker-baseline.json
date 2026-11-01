@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-01T12:35:28.270Z",
+  "timestamp": "2026-11-01T14:24:02.035Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -111,7 +111,7 @@
       "warningZoneFilesCount": 10,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 140952,
+      "bundleSize": 140998,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
@@ -308,7 +308,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/storage.ts",
-          "lines": 250
+          "lines": 251
         },
         {
           "file": "packages/userscript-hud/src/services/updateChecker.ts",
