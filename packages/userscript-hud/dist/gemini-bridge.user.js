@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.11
+// @version      0.80.13
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -41,7 +41,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
-  // packages/userscript-hud/src/services/storage.ts
+  // src/services/storage.ts
   var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
@@ -251,7 +251,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return updated;
   }
 
-  // packages/userscript-hud/src/services/runtimeInfo.ts
+  // src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
   function getRunningScriptVersion() {
     if (typeof GM_info === "undefined" || !GM_info || !GM_info.script) {
@@ -285,7 +285,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     document.body.appendChild(box);
   }
 
-  // packages/userscript-hud/src/services/patchOidState.ts
+  // src/services/patchOidState.ts
   var OID_REGEX = /^[0-9a-f]{40}$/i;
   function normalizeBranch(branch) {
     return (branch || "").trim().replace(/^refs\/heads\//, "");
@@ -357,7 +357,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/services/patchOidStore.ts
+  // src/services/patchOidStore.ts
   function loadPatchOidState(config) {
     return resolvePatchOidState(config, {
       headOidScope: getStoredValue("head_oid_scope", ""),
@@ -401,7 +401,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
   }
 
-  // shared/repoPaths.ts
+  // ../../shared/repoPaths.ts
   function normalizeRepoPath(input) {
     return (input || "").trim().replace(/\\/g, "/").replace(/^(?:\.\/|\/)+/, "").replace(/\/{2,}/g, "/").replace(/\/+$/, "");
   }
@@ -423,7 +423,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return null;
   }
 
-  // packages/userscript-hud/src/services/patchIdentity.ts
+  // src/services/patchIdentity.ts
   function canonicalize(value) {
     if (Array.isArray(value)) {
       return value.map((entry) => canonicalize(entry));
@@ -454,7 +454,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return "patch-" + djb2Hash(computePatchSignature(mode, payload)).toString(36);
   }
 
-  // packages/userscript-hud/src/services/patchQueue.ts
+  // src/services/patchQueue.ts
   var MAX_QUEUED_PATCHES = 20;
   function findDuplicatePatchId(queue, candidate) {
     const signature = computePatchSignature(candidate.mode, candidate.payload);
@@ -475,6 +475,54 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   }
   function fifoQueue(queue) {
     return [...queue].reverse();
+  }
+  function coalescePatchesIntoBatch(queue) {
+    const ordered = fifoQueue(queue);
+    if (ordered.length < 2) return null;
+    const patches = [];
+    const forbidPatterns = [];
+    const requireExports = {};
+    const commitMessages = [];
+    for (const entry of ordered) {
+      const operations = entry.payload?.patches ?? [];
+      if (operations.length === 0) return null;
+      for (const operation of operations) {
+        if (findRepoPathIssue(operation.path) !== null) return null;
+        patches.push({
+          ...operation,
+          path: normalizeRepoPath(operation.path)
+        });
+      }
+      for (const pattern of entry.payload.preflight?.forbidPatterns ?? []) {
+        if (!forbidPatterns.includes(pattern)) forbidPatterns.push(pattern);
+      }
+      for (const [filePath, symbols] of Object.entries(entry.payload.preflight?.requireExports ?? {})) {
+        const normExportPath = normalizeRepoPath(filePath) || filePath;
+        const merged = requireExports[normExportPath] ?? [];
+        for (const symbol of symbols) {
+          if (!merged.includes(symbol)) merged.push(symbol);
+        }
+        requireExports[normExportPath] = merged;
+      }
+      if (entry.commitMessage) commitMessages.push(entry.commitMessage);
+    }
+    if (patches.length === 0) return null;
+    const payload = {
+      commitMessage: `batch: ${commitMessages.join(" | ") || `${ordered.length} harvested patches`}`,
+      patches
+    };
+    if (forbidPatterns.length > 0 || Object.keys(requireExports).length > 0) {
+      payload.preflight = {};
+      if (forbidPatterns.length > 0) payload.preflight.forbidPatterns = forbidPatterns;
+      if (Object.keys(requireExports).length > 0) payload.preflight.requireExports = requireExports;
+    }
+    return {
+      id: createStablePatchId("v2_json", payload),
+      mode: "v2_json",
+      commitMessage: payload.commitMessage,
+      payload,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    };
   }
   async function runPatchQueue(queue, apply, onProgress) {
     const ordered = fifoQueue(queue);
@@ -584,7 +632,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/ui/hudStylesAndDom.ts
+  // src/ui/hudStylesAndDom.ts
   var HUD_STYLES = `
   :host {
     all: initial;
@@ -773,7 +821,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return el;
   }
 
-  // packages/userscript-hud/src/ui/hudDomTree.ts
+  // src/ui/hudDomTree.ts
   function buildHudDomTree(config, state) {
     const existing = document.getElementById("gemini-edge-hud-root");
     if (existing) {
@@ -1016,8 +1064,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       maxChunkCharsInput,
       oidBadge,
       mixBtn,
-      continueMixBtn,
       batchFormulaBtn,
+      continueMixBtn,
       autoPilotCheck,
       recentCommitsCheck,
       retryIndicator,
@@ -1030,7 +1078,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/services/updateChecker.ts
+  // src/services/updateChecker.ts
   var SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js";
   var LAST_CHECK_KEY = "script_update_last_check";
   var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
@@ -1129,7 +1177,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return evaluateUpdateState(getRunningScriptVersion(), latestVersion);
   }
 
-  // packages/userscript-hud/src/ui/updateBanner.ts
+  // src/ui/updateBanner.ts
   var TRANSIENT_MESSAGE_MS = 6e3;
   function initHudUpdateBanner(dom, deps = {}) {
     const check = deps.check ?? checkForScriptUpdate;
@@ -1224,7 +1272,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     void runCheck(false);
   }
 
-  // packages/userscript-hud/src/ui/hudConfigBindings.ts
+  // src/ui/hudConfigBindings.ts
   var refreshRepoHistorySelect = null;
   function setRepoHistorySelectRefresher(fn) {
     refreshRepoHistorySelect = fn;
@@ -1344,7 +1392,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/services/repoHistory.ts
+  // src/services/repoHistory.ts
   var HISTORY_KEY = "repo_history_v1";
   var MAX_ENTRIES = 4;
   function historyKey() {
@@ -1417,7 +1465,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     });
   }
 
-  // packages/userscript-hud/src/ui/hudRepoHistoryDropdown.ts
+  // src/ui/hudRepoHistoryDropdown.ts
   var activeDocumentClickHandler = null;
   var activeDocumentKeydownHandler = null;
   function formatRepoHistoryLabel(entry) {
@@ -1551,7 +1599,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return refresher;
   }
 
-  // packages/userscript-hud/src/services/accountProfiles.ts
+  // src/services/accountProfiles.ts
   var ACCOUNT_PROFILES = [
     { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
     { id: "account2", label: "Account 2", workerName: "gemini-git-bridge-account2" }
@@ -1584,7 +1632,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return "foreign";
   }
 
-  // packages/userscript-hud/src/ui/hudAccountSwitch.ts
+  // src/ui/hudAccountSwitch.ts
   var activeDeps = null;
   function profileInfo(id) {
     return ACCOUNT_PROFILES.find((p) => p.id === id) ?? ACCOUNT_PROFILES[0];
@@ -1688,7 +1736,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
-  // packages/userscript-hud/src/dom/injector.ts
+  // src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
     const geminiSelectors = [
@@ -1798,7 +1846,7 @@ ${promptText}` : promptText).replace(/\u200B/g, "");
     return true;
   }
 
-  // packages/userscript-hud/src/services/selfHealing.ts
+  // src/services/selfHealing.ts
   var MAX_SELF_HEALING_RETRIES = 3;
   function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt, options) {
     const formattedErrors = errors.map((err, idx) => {
@@ -1913,7 +1961,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/ui/hudRender.ts
+  // src/ui/hudRender.ts
   function renderHudState({ dom, state, config, updateState, onApplyPatch }) {
     dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
     dom.triggerBadge.textContent = state.status;
@@ -2027,7 +2075,27 @@ Fix Instructions:
     }
   }
 
-  // packages/userscript-hud/src/services/workerClient.ts
+  // src/services/batchFormula.ts
+  function buildBatchFormulaPrompt(config, state) {
+    const branchLabel = config.targetBranch?.trim() || config.branch || "main";
+    const headLabel = state.headOid ? ` (base headOid: ${state.headOid.slice(0, 7)})` : "";
+    const scopeLabel = config.includePaths?.length ? `
+- Active path scope: ${config.includePaths.join(", ")}` : "";
+    return [
+      `Output all code changes for this batch as a SINGLE atomic V2 GeminiPatchPayload JSON code block targeting ${config.repo}@${branchLabel}${headLabel}.${scopeLabel}`,
+      "Batch Integration Rules:",
+      '1. Emit exactly ONE ```json block with top-level keys "commitMessage" and "patches" (do NOT include worker request fields like branch or expectedHeadOid).',
+      '2. Consolidate edits so each file path appears at most ONCE in "patches":',
+      '   - Existing files: { "path": "repo/relative/path.ts", "action": "modify", "blocks": [{ "search": "...", "replace": "..." }] }',
+      '   - New files: { "path": "repo/relative/new.ts", "action": "create", "fullContent": "..." }',
+      '   - Deleted files: { "path": "repo/relative/old.ts", "action": "delete" }',
+      '3. Every "search" string MUST include 2-4 lines of unique verbatim surrounding context from the RepoMix snapshot.',
+      '4. NEVER use placeholders ("// ... existing code ...", "/* rest unchanged */") or unclosed brackets/JSX tags.',
+      "5. Preserve existing API/behavior: do not rename exports, reorder union types, or change function/type signatures unless explicitly required; prefer minimal, localized edits without reordering union types."
+    ].join("\n");
+  }
+
+  // src/services/workerClient.ts
   function isV2ErrorPayload(data) {
     if (!data || typeof data !== "object") {
       return false;
@@ -2202,30 +2270,7 @@ Fix Instructions:
     return gmRequestJson(url, "POST", cfg.workerSecret, req, { resolveV2Errors: false });
   }
 
-  // packages/userscript-hud/src/services/batchFormula.ts
-  function buildBatchFormulaPrompt(config, state) {
-    const sourceBranch = config.branch?.trim() || "main";
-    const branchLabel = config.targetBranch?.trim() || sourceBranch;
-    const sourceHint = branchLabel !== sourceBranch ? `, source branch: ${sourceBranch}` : "";
-    const headLabel = state.headOid ? ` (base headOid: ${state.headOid.slice(0, 7)}${sourceHint})` : "";
-    const scopeLabel = config.includePaths?.length ? `
-- Active path scope: ${config.includePaths.join(", ")}` : "";
-    const placeholderExample = "// ... existing code ...";
-    return [
-      `Output all code changes for this batch as a SINGLE atomic V2 GeminiPatchPayload JSON code block targeting ${config.repo}@${branchLabel}${headLabel}.${scopeLabel}`,
-      "Batch Integration Rules:",
-      '1. Emit exactly ONE ```json block with top-level keys "commitMessage" and "patches" (do NOT include worker request fields like branch or expectedHeadOid, and do NOT emit any other fenced code blocks in your response).',
-      '2. Consolidate edits so each file path appears at most ONCE in "patches":',
-      '   - Existing files: { "path": "repo/relative/path.ts", "action": "modify", "blocks": [{ "search": "...", "replace": "..." }] }',
-      '   - New files: { "path": "repo/relative/new.ts", "action": "create", "fullContent": "..." }',
-      '   - Deleted files: { "path": "repo/relative/old.ts", "action": "delete" }',
-      '3. Every "search" string MUST include 2-4 lines of unique verbatim surrounding context from the RepoMix snapshot (order multiple blocks top-to-bottom; start "search" anchors BELOW unchanged function/type signatures or copy unchanged lines 1:1 without reordering union types).',
-      `4. NEVER use placeholders ("${placeholderExample}", "/* rest unchanged */") or unclosed brackets/JSX tags.`,
-      "5. NEVER patch paths listed in <omitted_files>, read-only legacy trees (_v1_backup/, cf-gemini-git-bridge/), or generated bundles (gemini-bridge.user.js, dist/)."
-    ].join("\n");
-  }
-
-  // packages/userscript-hud/src/ui/hudMixAction.ts
+  // src/ui/hudMixAction.ts
   function bindMixAction({ dom, config, state, updateState }) {
     dom.mixBtn.onclick = async () => {
       try {
@@ -2339,7 +2384,7 @@ Fix Instructions:
     };
   }
 
-  // packages/userscript-hud/src/services/patchPaths.ts
+  // src/services/patchPaths.ts
   function resolvePatchPaths(payload, prompt) {
     const patches = (payload.patches || []).map((patch) => ({
       ...patch,
@@ -2365,7 +2410,7 @@ Fix Instructions:
     return { payload: { ...payload, patches }, cancelled: false };
   }
 
-  // packages/userscript-hud/src/ui/hudApplyPatch.ts
+  // src/ui/hudApplyPatch.ts
   function checkForeignOwnerBlocked(config, updateState) {
     if (classifyRepoOwner(config) !== "foreign") return false;
     updateState({
@@ -2629,7 +2674,7 @@ Fix Instructions:
     }
   }
 
-  // packages/userscript-hud/src/ui/shadowHud.ts
+  // src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -2749,6 +2794,26 @@ Fix Instructions:
     };
     dom.applyAllBtn.onclick = async () => {
       if (state.harvestedPatches.length === 0 || state.status === "PATCHING" || state.status === "MIXING") return;
+      if (state.harvestedPatches.length > 1 && !onApplyPatchCustom) {
+        const batch = coalescePatchesIntoBatch(state.harvestedPatches);
+        if (batch) {
+          const total = state.harvestedPatches.length;
+          const fileCount = new Set(batch.payload.patches.map((entry) => entry.path)).size;
+          updateState({
+            status: "PATCHING",
+            statusMessage: `\u23F3 Applying atomic batch of ${total} patches across ${fileCount} file(s) in 1 commit...`
+          });
+          const committed = await handleApplyPatch(batch);
+          if (committed) {
+            state.harvestedPatches = [];
+            updateState({
+              status: "COMMITTED",
+              statusMessage: `\u{1F389} Atomic batch (${total} patches across ${fileCount} files) committed in 1 commit!`
+            });
+          }
+          return;
+        }
+      }
       if (onApplyPatchCustom) {
         const { applied, total } = await runPatchQueue(
           state.harvestedPatches,
@@ -2807,7 +2872,7 @@ Fix Instructions:
     return controller;
   }
 
-  // packages/userscript-hud/src/dom/pathHints.ts
+  // src/dom/pathHints.ts
   var FILE_PATH_TOKEN = /^[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+$/;
   var LABELED_HEADER_PATH = /(?:filepath|file[\s_-]?path|filename|dateiname|file|datei|pfad|path)\s*[:=]\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)/i;
   var PATH_COMMENT_LINE = /^(?:\/\/|#|\/\*+)\s*([A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]+)\s*\*?\/?$/;
@@ -2922,7 +2987,7 @@ Fix Instructions:
     fillMissingPatchPaths(patch, extractPathFromCode(codeText, element));
   }
 
-  // shared/patchPayloadParser.ts
+  // ../../shared/patchPayloadParser.ts
   function isValidPatchBlock(b) {
     return Boolean(b && typeof b === "object" && typeof b.search === "string" && typeof b.replace === "string");
   }
@@ -3006,7 +3071,7 @@ Fix Instructions:
     return null;
   }
 
-  // packages/userscript-hud/src/dom/patchParser.ts
+  // src/dom/patchParser.ts
   function isSearchReplace(text) {
     return text.includes("<<<<<<<") && text.includes("=======") && text.includes(">>>>>>>");
   }
@@ -3125,7 +3190,7 @@ Fix Instructions:
     return { payload, legacyPayload };
   }
 
-  // packages/userscript-hud/src/dom/harvester.ts
+  // src/dom/harvester.ts
   function hasInlineBtn(root) {
     if (!root || typeof root.querySelector !== "function") return false;
     return Boolean(root.querySelector(".ggb-inline-btn"));
@@ -3401,7 +3466,7 @@ Fix Instructions:
     return observer;
   }
 
-  // packages/userscript-hud/src/index.ts
+  // src/index.ts
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-01T18:04:21.994Z",
+  "timestamp": "2026-11-01T20:41:22.611Z",
   "overallStatus": "PASS",
   "passedCount": 14,
   "totalProbes": 14,
@@ -42,7 +42,7 @@
       "pass": true,
       "status": 200,
       "service": "gemini-git-bridge",
-      "version": "0.80.11",
+      "version": "0.80.13",
       "hasBridgeSecret": true,
       "hasGithubToken": true
     },
@@ -111,7 +111,7 @@
       "warningZoneFilesCount": 11,
       "overLimitFilesCount": 0,
       "bundleContentIdentical": true,
-      "bundleSize": 142829,
+      "bundleSize": 144617,
       "bundleFresh": true,
       "bundleStalenessDetails": null,
       "warningZone": [
@@ -288,7 +288,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/batchFormula.ts",
-          "lines": 34
+          "lines": 31
         },
         {
           "file": "packages/userscript-hud/src/services/patchIdentity.ts",
@@ -308,7 +308,7 @@
         },
         {
           "file": "packages/userscript-hud/src/services/patchQueue.ts",
-          "lines": 260
+          "lines": 261
         },
         {
           "file": "packages/userscript-hud/src/services/repoHistory.ts",
@@ -356,7 +356,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/hudMixAction.ts",
-          "lines": 168
+          "lines": 164
         },
         {
           "file": "packages/userscript-hud/src/ui/hudRender.ts",
@@ -372,7 +372,7 @@
         },
         {
           "file": "packages/userscript-hud/src/ui/shadowHud.ts",
-          "lines": 250
+          "lines": 273
         },
         {
           "file": "packages/userscript-hud/src/ui/updateBanner.ts",
