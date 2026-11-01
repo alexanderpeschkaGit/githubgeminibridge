@@ -167,14 +167,17 @@ export async function handleCommitRequest(
   }
 
   if (body.expectedHeadOid && sourceInfo.headOid !== body.expectedHeadOid) {
+    const errorMessage = `Expected HEAD "${body.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`;
     return {
       httpStatus: 409,
       body: {
+        success: false,
+        error: errorMessage,
         status: 'GIT_CONFLICT',
         errorCode: 'GIT_CONFLICT',
         retryable: true,
         newHeadOid: sourceInfo.headOid,
-        errorMessage: `Expected HEAD "${body.expectedHeadOid}" but branch "${sourceInfo.resolvedBranch}" is at "${sourceInfo.headOid}". Fetch the latest repo mix and retry.`
+        errorMessage
       }
     };
   }
@@ -190,14 +193,17 @@ export async function handleCommitRequest(
         throw new UpstreamRequestError(classified.message, classified.httpStatus, classified.code, classified.retryable);
       }
       if (body.expectedTargetHeadOid) {
+        const errorMessage = `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${body.expectedTargetHeadOid}".`;
         return {
           httpStatus: 409,
           body: {
+            success: false,
+            error: errorMessage,
             status: 'GIT_CONFLICT',
             errorCode: 'GIT_CONFLICT',
             retryable: true,
             targetBranch: normalizeBranch(effectiveTargetBranch),
-            errorMessage: `Target branch "${effectiveTargetBranch}" no longer exists at expected HEAD "${body.expectedTargetHeadOid}".`
+            errorMessage
           }
         };
       }
@@ -233,15 +239,18 @@ export async function handleCommitRequest(
     }
 
     if (body.expectedTargetHeadOid && targetInfo.headOid !== body.expectedTargetHeadOid) {
+      const errorMessage = `Expected target HEAD "${body.expectedTargetHeadOid}" but branch "${targetInfo.resolvedBranch}" is at "${targetInfo.headOid}".`;
       return {
         httpStatus: 409,
         body: {
+          success: false,
+          error: errorMessage,
           status: 'GIT_CONFLICT',
           errorCode: 'GIT_CONFLICT',
           retryable: true,
           newHeadOid: targetInfo.headOid,
           targetBranch: targetInfo.resolvedBranch,
-          errorMessage: `Expected target HEAD "${body.expectedTargetHeadOid}" but branch "${targetInfo.resolvedBranch}" is at "${targetInfo.headOid}".`
+          errorMessage
         }
       };
     }
@@ -339,6 +348,8 @@ export async function handleCommitRequest(
       return {
         httpStatus: 409,
         body: {
+          success: false,
+          error: classified.message,
           status: 'GIT_CONFLICT',
           errorCode: 'GIT_CONFLICT',
           retryable: true,

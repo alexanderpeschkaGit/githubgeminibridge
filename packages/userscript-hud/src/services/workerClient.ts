@@ -19,6 +19,9 @@ export function isV2ErrorPayload(data: unknown): boolean {
     return false;
   }
   const payload = data as Record<string, unknown>;
+  if (payload.success === false) {
+    return false;
+  }
   return (
     typeof payload.status === 'string' ||
     typeof payload.errorMessage === 'string' ||
@@ -26,8 +29,12 @@ export function isV2ErrorPayload(data: unknown): boolean {
   );
 }
 
-function shouldResolveV2Error(status: number, data: unknown): boolean {
-  return status >= 400 && status < 500 && isV2ErrorPayload(data);
+function shouldResolveV2Error(
+  status: number,
+  data: unknown,
+  resolveV2Errors = true
+): boolean {
+  return resolveV2Errors && status >= 400 && status < 500 && isV2ErrorPayload(data);
 }
 
 /**
@@ -39,8 +46,10 @@ export async function gmRequestJson<T>(
   url: string,
   method: 'GET' | 'POST',
   secret: string,
-  body?: unknown
+  body?: unknown,
+  options?: { resolveV2Errors?: boolean }
 ): Promise<T> {
+  const resolveV2Errors = options?.resolveV2Errors ?? true;
   const headers: Record<string, string> = {
     'Accept': 'application/json',
     'Authorization': `Bearer ${secret}`,
@@ -66,7 +75,7 @@ export async function gmRequestJson<T>(
             const data = JSON.parse(res.responseText);
             if (res.status >= 200 && res.status < 300) {
               resolve(data as T);
-            } else if (shouldResolveV2Error(res.status, data)) {
+            } else if (shouldResolveV2Error(res.status, data, resolveV2Errors)) {
               resolve(data as T);
             } else {
               const errMsg =
@@ -104,7 +113,7 @@ export async function gmRequestJson<T>(
       if (res.status >= 200 && res.status < 300) {
         return data as T;
       }
-      if (shouldResolveV2Error(res.status, data)) {
+      if (shouldResolveV2Error(res.status, data, resolveV2Errors)) {
         return data as T;
       }
       throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${res.responseText}`);
@@ -133,7 +142,7 @@ export async function gmRequestJson<T>(
     if (res.ok) {
       return data as T;
     }
-    if (shouldResolveV2Error(res.status, data)) {
+    if (shouldResolveV2Error(res.status, data, resolveV2Errors)) {
       return data as T;
     }
     throw new Error(data?.error || data?.errorMessage || `HTTP ${res.status}: ${text}`);
@@ -146,7 +155,7 @@ export async function checkWorkerHealth(
   cfg: HudConfig
 ): Promise<{ status: string; version?: string; hasBridgeSecret?: boolean; hasGithubToken?: boolean }> {
   const url = `${cfg.workerUrl}/health`;
-  return gmRequestJson(url, 'GET', cfg.workerSecret);
+  return gmRequestJson(url, 'GET', cfg.workerSecret, undefined, { resolveV2Errors: false });
 }
 
 export async function requestRepoMix(
@@ -233,7 +242,8 @@ export async function requestBranchHead(
     `${cfg.workerUrl}/graphql`,
     'POST',
     cfg.workerSecret,
-    body
+    body,
+    { resolveV2Errors: false }
   );
   const oid = extractBranchHeadOid(payload);
   if (!oid) {
@@ -248,5 +258,5 @@ export async function requestLegacyCommit(
 ): Promise<any> {
   // Support both /push and /commit on the worker
   const url = `${cfg.workerUrl}/push`;
-  return gmRequestJson<any>(url, 'POST', cfg.workerSecret, req);
+  return gmRequestJson<any>(url, 'POST', cfg.workerSecret, req, { resolveV2Errors: false });
 }

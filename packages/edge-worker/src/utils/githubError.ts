@@ -106,22 +106,7 @@ export function classifyGitHubError(
     };
   }
 
-  // 3. Optimistic Concurrency / Stale HEAD / Non-Fast-Forward Conflict
-  if (
-    (err instanceof GitHubApiError && err.code === 'GIT_CONFLICT') ||
-    GIT_CONFLICT_PATTERN.test(rawMessage)
-  ) {
-    return {
-      code: 'GIT_CONFLICT',
-      httpStatus: 409,
-      patchStatus: 'GIT_CONFLICT',
-      message: rawMessage,
-      actualHeadOid,
-      retryable: true,
-    };
-  }
-
-  // 4. Rate Limits
+  // 3. Rate Limits
   if (graphqlTypes.includes('RATE_LIMITED') || RATE_LIMIT_PATTERN.test(rawMessage)) {
     const hint = ' [Actionable Fix: GitHub API rate limit reached. Wait 30-60 seconds and retry.]';
     return {
@@ -133,7 +118,7 @@ export function classifyGitHubError(
     };
   }
 
-  // 5. Repository Not Found or Token Cannot See Private Repo
+  // 4. Repository Not Found or Token Cannot See Private Repo
   if (graphqlTypes.includes('NOT_FOUND') || REPO_NOT_FOUND_PATTERN.test(rawMessage)) {
     return {
       code: 'REPO_NOT_FOUND',
@@ -144,7 +129,7 @@ export function classifyGitHubError(
     };
   }
 
-  // 6. Authentication / Fine-Grained PAT Permission Scope
+  // 5. Authentication / Fine-Grained PAT Permission Scope
   if (
     graphqlTypes.includes('INSUFFICIENT_SCOPES') ||
     graphqlTypes.includes('FORBIDDEN') ||
@@ -158,6 +143,21 @@ export function classifyGitHubError(
       patchStatus: 'ERROR',
       message: rawMessage.includes('Actionable Fix:') ? rawMessage : `${rawMessage}${hint}`,
       retryable: false,
+    };
+  }
+
+  // 6. Optimistic Concurrency / Stale HEAD / Non-Fast-Forward Conflict
+  if (
+    (err instanceof GitHubApiError && err.code === 'GIT_CONFLICT') ||
+    GIT_CONFLICT_PATTERN.test(rawMessage)
+  ) {
+    return {
+      code: 'GIT_CONFLICT',
+      httpStatus: 409,
+      patchStatus: 'GIT_CONFLICT',
+      message: rawMessage,
+      actualHeadOid,
+      retryable: true,
     };
   }
 

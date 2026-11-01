@@ -404,7 +404,7 @@ function request(overrides = {}) {
 
   reset({ main: sourceEntry, feature: targetEntry });
   globalThis.__patchMocks.commitError = new Error(
-    'GitHub GraphQL error: Resource not accessible by personal access token'
+    'GitHub GraphQL HTTP error 403 (Forbidden): Write access to HEAD ref not granted'
   );
   const authRes = await handlePatchRequest(request(), 'token', async () => []);
   assert.equal(authRes.status, 'ERROR');
@@ -450,5 +450,21 @@ function request(overrides = {}) {
   assert.equal(v1Res.body.createdBranch, true);
   assert.equal(branches.get('feature').files['src/file.txt'], 'line1_chained\nline2\n');
   assert.equal(calls.filter((c) => c.kind === 'fetch').length, 1, 'V1 batch-fetches in 1 GraphQL call');
+
+  const v1Conflict = await handleCommitRequest(
+    {
+      repo: 'test/repo',
+      branch: 'main',
+      expectedHeadOid: OID_SOURCE_NEXT,
+      commitMessage: 'feat(v1): stale head check',
+      changes: [{ path: 'src/file.txt', search: 'line1', replace: 'line1_x' }],
+    },
+    'token'
+  );
+  assert.equal(v1Conflict.httpStatus, 409);
+  assert.equal(v1Conflict.body.success, false);
+  assert.equal(v1Conflict.body.status, 'GIT_CONFLICT');
+  assert.equal(v1Conflict.body.errorCode, 'GIT_CONFLICT');
+  assert.ok(typeof v1Conflict.body.error === 'string' && v1Conflict.body.error.length > 0);
   console.log('PASS: unified V1 handleCommitRequest batch-reads at target OID and chains multi-entry file edits');
 }
