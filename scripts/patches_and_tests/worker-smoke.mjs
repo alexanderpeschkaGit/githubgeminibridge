@@ -869,13 +869,13 @@ async function main() {
 
   // Probe 14: Target-Branch Snapshot and Independent Source/Target OID Contracts
   results.push(await runProbe(14, 'Target-Branch Snapshot and Independent OID Contracts', async () => {
-    const patcher = fs.readFileSync(path.join(ROOT_DIR, 'packages/edge-worker/src/modules/patcher.ts'), 'utf-8').replace(/\r\n/g, '\n');
-    const types = fs.readFileSync(path.join(ROOT_DIR, 'shared/types.ts'), 'utf-8').replace(/\r\n/g, '\n');
-    const hudState = fs.readFileSync(path.join(ROOT_DIR, 'packages/userscript-hud/src/services/patchOidState.ts'), 'utf-8').replace(/\r\n/g, '\n');
+    const patcher = fs.readFileSync(path.join(ROOT_DIR, 'packages/edge-worker/src/modules/patcher.ts'), 'utf-8');
+    const types = fs.readFileSync(path.join(ROOT_DIR, 'shared/types.ts'), 'utf-8');
+    const hudState = fs.readFileSync(path.join(ROOT_DIR, 'packages/userscript-hud/src/services/patchOidState.ts'), 'utf-8');
     const sourceFreshness = patcher.includes('sourceInfo.headOid !== req.expectedHeadOid');
     const targetSnapshotRead = /fetchMultipleFilesViaGraphQL\(\s*owner,\s*repo,\s*commitExpectedHeadOid,\s*allTargetPaths/.test(patcher);
     const exactTargetCommit = patcher.includes('commitExpectedHeadOid = targetInfo.headOid') &&
-      /commitBranch,\s*commitExpectedHeadOid,/.test(patcher);
+      patcher.includes('commitBranch,\n      commitExpectedHeadOid,');
     const notFoundIsSpecific = patcher.includes('err instanceof BranchNotFoundError');
     const separateTargetOidContract = types.includes('expectedTargetHeadOid?: string');
     const independentHudOids = hudState.includes('expectedTargetHeadOid: targetOidIsCurrent') &&

@@ -1,5 +1,5 @@
 import type { HudConfig } from '../types';
-import { getActiveProfileId, getStoredValue, sanitizeRepo, setStoredValue } from './storage';
+import { getActiveProfileId, getStoredValue, setStoredValue } from './storage';
 
 export interface RepoHistoryEntry {
   owner: string;
@@ -22,20 +22,16 @@ function historyKey(): string {
 
 function normalizeEntry(entry: RepoHistoryEntry): RepoHistoryEntry {
   return {
-    owner: (entry.owner || '').trim().replace(/^\/+|\/+$/g, ''),
-    repo: sanitizeRepo(entry.repo || '').replace(/^\/+|\/+$/g, ''),
+    owner: (entry.owner || '').trim(),
+    repo: (entry.repo || '').trim(),
     branch: (entry.branch || '').trim(),
     targetBranch: (entry.targetBranch || '').trim() || undefined,
   };
 }
 
-export function repoSlug(entry: RepoHistoryEntry): string {
-  const n = normalizeEntry(entry);
-  const owner = n.owner.toLowerCase();
-  const repo = n.repo.toLowerCase();
-  if (!repo) return '';
-  if (repo.includes('/')) return repo;
-  return owner ? `${owner}/${repo}` : repo;
+function entryKey(e: RepoHistoryEntry): string {
+  const n = normalizeEntry(e);
+  return `${n.owner}|||${n.repo}|||${n.branch}|||${n.targetBranch || ''}`;
 }
 
 export function loadRepoHistory(): RepoHistoryEntry[] {
@@ -45,13 +41,14 @@ export function loadRepoHistory(): RepoHistoryEntry[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const out: RepoHistoryEntry[] = [];
-    const seenSlugs = new Set<string>();
+    const seen = new Set<string>();
     for (const p of parsed) {
       if (!p) continue;
       const n = normalizeEntry(p);
-      const slug = repoSlug(n);
-      if (!slug || seenSlugs.has(slug)) continue;
-      seenSlugs.add(slug);
+      if (!n.repo) continue;
+      const key = entryKey(n);
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(n);
     }
     return out.slice(0, MAX_ENTRIES);
@@ -64,7 +61,7 @@ export function saveRepoHistory(entries: RepoHistoryEntry[]): void {
   try {
     const cleaned = entries
       .map(normalizeEntry)
-      .filter((e) => Boolean(repoSlug(e)))
+      .filter((e) => e.repo)
       .slice(0, MAX_ENTRIES);
     setStoredValue(historyKey(), JSON.stringify(cleaned));
   } catch {
@@ -74,10 +71,10 @@ export function saveRepoHistory(entries: RepoHistoryEntry[]): void {
 
 export function pushRepoHistory(entry: RepoHistoryEntry): RepoHistoryEntry[] {
   const n = normalizeEntry(entry);
-  const targetSlug = repoSlug(n);
-  if (!targetSlug) return loadRepoHistory();
+  if (!n.repo) return loadRepoHistory();
   const current = loadRepoHistory();
-  const filtered = current.filter((e) => repoSlug(e) !== targetSlug);
+  const key = entryKey(n);
+  const filtered = current.filter((e) => entryKey(e) !== key);
   const next = [n, ...filtered].slice(0, MAX_ENTRIES);
   saveRepoHistory(next);
   return next;

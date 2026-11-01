@@ -21,7 +21,15 @@ export type RepoHistoryDropdownRefresher = (() => void) & {
 let activeDocumentClickHandler: ((event: Event) => void) | null = null;
 let activeDocumentKeydownHandler: ((event: Event) => void) | null = null;
 
-export function unbindRepoHistoryDropdownListeners(): void {
+function formatRepoHistoryLabel(entry: RepoHistoryEntry): string {
+  const repoLabel = entry.repo.includes('/') ? entry.repo : `${entry.owner}/${entry.repo}`;
+  const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : '';
+  return `${repoLabel} @ ${entry.branch}${target}`;
+}
+
+export function bindRepoHistoryDropdown(deps: RepoHistoryDropdownDeps): RepoHistoryDropdownRefresher {
+  const { dom, config, state, resetPatchOidState, clearTargetOidState, refreshAccountHint, renderState } = deps;
+
   if (activeDocumentClickHandler) {
     document.removeEventListener('click', activeDocumentClickHandler);
     activeDocumentClickHandler = null;
@@ -30,18 +38,6 @@ export function unbindRepoHistoryDropdownListeners(): void {
     document.removeEventListener('keydown', activeDocumentKeydownHandler);
     activeDocumentKeydownHandler = null;
   }
-}
-
-function formatRepoHistoryLabel(entry: RepoHistoryEntry): string {
-  const repoLabel = entry.repo.includes('/') || !entry.owner ? entry.repo : `${entry.owner}/${entry.repo}`;
-  const target = entry.targetBranch ? ` -> ${entry.targetBranch}` : '';
-  return `${repoLabel} @ ${entry.branch}${target}`;
-}
-
-export function bindRepoHistoryDropdown(deps: RepoHistoryDropdownDeps): RepoHistoryDropdownRefresher {
-  const { dom, config, state, resetPatchOidState, clearTargetOidState, refreshAccountHint, renderState } = deps;
-
-  unbindRepoHistoryDropdownListeners();
 
   const closeMenu = () => {
     dom.repoHistoryMenu.style.display = 'none';

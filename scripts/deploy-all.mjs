@@ -47,7 +47,7 @@ async function main() {
 
   // Step 6: Git Commit & Push
   console.log('\n[6/6] Committing & Pushing to GitHub (main)...');
-  run('git add gemini-bridge.user.js packages/userscript-hud/dist/gemini-bridge.user.js packages/userscript-hud/package.json packages/edge-worker/package.json packages/edge-worker/src/index.ts packages/edge-worker/dist/worker.mjs scripts/patches_and_tests/worker-baseline.json');
+  run('git add gemini-bridge.user.js packages/userscript-hud/dist/gemini-bridge.user.js packages/userscript-hud/package.json packages/edge-worker/package.json packages/edge-worker/src/index.ts scripts/patches_and_tests/worker-baseline.json');
   try {
     run(`git commit -m "chore(release): bump version to ${version} and lockstep build"`);
   } catch {
