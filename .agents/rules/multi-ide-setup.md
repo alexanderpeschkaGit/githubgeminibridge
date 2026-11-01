@@ -41,7 +41,7 @@ Dieses Regelwerk definiert die standardisierten Betriebsmodi zur Ausführung von
 ### Mode E: Kilo Code (native `task`-Subagenten und Skill-Tags)
 - **Architektur:** Subagenten laufen über das `task`-Tool (`subagent_type: explore` für Read-Only-Audits, `general` für Implementierer); `background: true` nur für disjunkte, nicht blockierende Arbeit.
 - **Modell-Vererbung:** `model`, `provider` und `variant` werden weggelassen, damit der Subagent das aktive Modell erbt (entspricht `Model: 'inherit'`). Overrides ausschließlich auf ausdrücklichen Nutzerwunsch; `TypeName`- und `Model`-Enums existieren nicht.
-- **Tag-Routing:** Die `#...`-Tags sind Prompt-Marker, keine eigenen Slash-Commands. Das Skill selbst ist als `/flash` verfügbar und wird über das `skill`-Tool geladen; Routing siehe `.agents/WORKFLOWS.md`.
+- **Tag-Routing:** Die `#...`-Tags sind Prompt-Marker, keine eigenen Slash-Commands. Das Skill selbst ist als `/flash` verfügbar und wird über das `skill`-Tool geladen; Routing siehe [.agents/WORKFLOWS.md](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/.agents/WORKFLOWS.md). **Details:** siehe [.agents/rules/kilo-code.md](file:///y:/projekte2026/website/gitTrans/githubgeminibridge/.agents/rules/kilo-code.md)
 - **Verlinkung:** Kein `conversation://` und kein Transcript-Pfad-Fallback. Der `task`-Aufruf liefert eine `task_id`; Agent-Manager-Sessions (`ses_...`) nur nutzen, wenn der Nutzer sie ausdrücklich startet.
 - **Shell:** PowerShell 5.1 unterstützt kein `&&`. Zustandsändernde Befehle strikt einzeln ausführen, keine Verkettung mit `;` (Projektregel).
 

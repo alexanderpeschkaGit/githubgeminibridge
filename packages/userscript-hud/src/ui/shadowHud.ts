@@ -14,6 +14,7 @@ import {
 import {
   enqueueHarvestedPatch,
   findDuplicatePatchId,
+  coalescePatchesIntoBatch,
   runPatchQueue,
 } from '../services/patchQueue';
 import { HUD_STYLES, HUD_SHADOW_STYLES, createHudElement, type HudDomElements } from './hudStylesAndDom';
@@ -186,6 +187,28 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
   dom.applyAllBtn.onclick = async () => {
     if (state.harvestedPatches.length === 0 || state.status === 'PATCHING' || state.status === 'MIXING') return;
+
+    if (state.harvestedPatches.length > 1 && !onApplyPatchCustom) {
+      const batch = coalescePatchesIntoBatch(state.harvestedPatches);
+      if (batch) {
+        const total = state.harvestedPatches.length;
+        const fileCount = new Set(batch.payload.patches.map((entry) => entry.path)).size;
+        updateState({
+          status: 'PATCHING',
+          statusMessage: `⏳ Applying atomic batch of ${total} patches across ${fileCount} file(s) in 1 commit...`,
+        });
+
+        const committed = await handleApplyPatch(batch);
+        if (committed) {
+          state.harvestedPatches = [];
+          updateState({
+            status: 'COMMITTED',
+            statusMessage: `🎉 Atomic batch (${total} patches across ${fileCount} files) committed in 1 commit!`,
+          });
+        }
+        return;
+      }
+    }
 
     if (onApplyPatchCustom) {
       const { applied, total } = await runPatchQueue(

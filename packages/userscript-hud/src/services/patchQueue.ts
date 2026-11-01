@@ -1,6 +1,7 @@
-import type { HarvestedPatch, FilePatchOperation, GeminiPatchPayload, LinterError } from '../types';
+import type { HarvestedPatch } from '../types';
 import { findRepoPathIssue, normalizeRepoPath } from '../../../../shared/repoPaths';
-import { computePatchSignature, createStablePatchId } from './patchIdentity';
+import { createStablePatchId, computePatchSignature } from './patchIdentity';
+import type { GeminiPatchPayload, FilePatchOperation, LinterError } from '../../../../shared/types';
 
 export const MAX_QUEUED_PATCHES = 20;
 

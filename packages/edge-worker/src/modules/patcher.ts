@@ -18,6 +18,7 @@ import {
   createCommitOnBranch
 } from '../utils/github';
 import { classifyGitHubError } from '../utils/githubError';
+import { resolveOrCreateTarget } from './branchResolver';
 import {
   ClientValidationError,
   UpstreamRequestError,
@@ -221,7 +222,20 @@ export async function handlePatchRequest(
   let createdBranch = false;
   if (isDistinctTarget) {
     try {
-      targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+      const resolved = await resolveOrCreateTarget({
+        owner,
+        repo,
+        baseBranch,
+        effectiveTargetBranch,
+        sourceInfo,
+        expectedTargetHeadOid: req.expectedTargetHeadOid,
+        createBranchIfNeeded: req.createBranchIfNeeded,
+        dryRun: req.dryRun,
+        githubToken,
+        baseOidForCreate: req.expectedHeadOid
+      });
+      targetInfo = resolved.targetInfo;
+      createdBranch = resolved.createdBranch;
     } catch (err: any) {
       if (!(err instanceof BranchNotFoundError)) {
         const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });

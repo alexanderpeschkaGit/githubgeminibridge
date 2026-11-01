@@ -131,7 +131,7 @@ export async function createBranchRef(
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Failed to create branch "${cleanBranch}" on "${owner}/${repo}": HTTP ${res.status} - ${errText}`);
+    throw createGitHubHttpError(res.status, res.statusText, errText);
   }
 
   const json: any = await res.json();

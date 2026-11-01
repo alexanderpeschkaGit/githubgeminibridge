@@ -1,12 +1,9 @@
-import type { HudConfig, HudState } from '../types';
-import {
-  injectPromptText,
-  injectRepoMixFile,
-  injectRepoMixParts,
-  findPromptInputElement,
-} from '../dom/injector';
-import { requestRepoMix } from '../services/workerClient';
+import { injectPromptText, injectRepoMixFile, injectRepoMixParts } from '../dom/injector';
 import { buildBatchFormulaPrompt } from '../services/batchFormula';
+
+import type { HudConfig, HudState } from '../types';
+import { findPromptInputElement } from '../dom/injector';
+import { requestRepoMix } from '../services/workerClient';
 import { clearTargetOidState, setSourceHeadOid } from '../services/patchOidStore';
 import { recordFromConfig } from '../services/repoHistory';
 import { refreshRepoHistorySelectNow } from './hudConfigBindings';

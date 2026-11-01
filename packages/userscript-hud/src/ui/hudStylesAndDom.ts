@@ -208,8 +208,8 @@ export interface HudDomElements {
   maxChunkCharsInput: HTMLInputElement;
   oidBadge: HTMLDivElement;
   mixBtn: HTMLButtonElement;
-  continueMixBtn: HTMLButtonElement;
   batchFormulaBtn: HTMLButtonElement;
+  continueMixBtn: HTMLButtonElement;
   autoPilotCheck: HTMLInputElement;
   recentCommitsCheck: HTMLInputElement;
   retryIndicator: HTMLSpanElement;

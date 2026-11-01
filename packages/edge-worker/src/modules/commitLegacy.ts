@@ -10,6 +10,7 @@ import {
   createCommitOnBranch
 } from '../utils/github';
 import { classifyGitHubError } from '../utils/githubError';
+import { resolveOrCreateTarget } from './branchResolver';
 import { validateNoPlaceholders, parseSearchReplaceBlocks, applySearchReplace } from './searchReplace';
 
 export class ClientValidationError extends Error {
@@ -186,7 +187,20 @@ export async function handleCommitRequest(
   let createdBranch = false;
   if (isDistinctTarget) {
     try {
-      targetInfo = await getBranchHeadOid(owner, repo, effectiveTargetBranch, githubToken);
+      const resolved = await resolveOrCreateTarget({
+        owner,
+        repo,
+        baseBranch,
+        effectiveTargetBranch,
+        sourceInfo,
+        expectedTargetHeadOid: body.expectedTargetHeadOid,
+        createBranchIfNeeded: body.createBranchIfNeeded,
+        dryRun: false,
+        githubToken,
+        baseOidForCreate: body.expectedHeadOid || sourceInfo.headOid
+      });
+      targetInfo = resolved.targetInfo;
+      createdBranch = resolved.createdBranch;
     } catch (err: any) {
       if (!(err instanceof BranchNotFoundError)) {
         const classified = classifyGitHubError(err, { repo: `${owner}/${repo}`, branch: effectiveTargetBranch });
