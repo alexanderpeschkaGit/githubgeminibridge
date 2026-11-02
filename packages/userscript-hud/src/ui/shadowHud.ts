@@ -26,6 +26,16 @@ import { bindAccountSwitch, refreshAccountHint } from './hudAccountSwitch';
 import { renderHudState } from './hudRender';
 import { bindMixAction } from './hudMixAction';
 import { applyHudPatch, runHolisticQueuePatch } from './hudApplyPatch';
+import {
+  buildConvoKey,
+  buildReviewScopeKey,
+  getPendingEntry,
+  getPendingForScope,
+  isRevisionPending,
+  markRevisionPending,
+  pathsOverlap,
+  restoreRevisionPending
+} from '../services/patchReviewStore';
 
 export {
   HUD_STYLES,
@@ -41,6 +51,7 @@ export interface ShadowHudController {
   openPanel: () => void;
   closePanel: () => void;
   handleApplyPatch: (patch: HarvestedPatch) => Promise<boolean>;
+  handleCheckPatch?: (patch: HarvestedPatch) => Promise<boolean>;
   addHarvestedPatch: (patch: HarvestedPatch) => void;
 }
 
@@ -79,12 +90,26 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   }
 
   let supersededPatchIds = new Set<string>();
+  let reviewScopeKey = buildReviewScopeKey({
+    profileKey: config.owner || config.repo || 'default',
+    repoFullName: config.repo,
+    sourceBranch: config.branch,
+    targetBranch: config.targetBranch || config.branch,
+    convoKey: buildConvoKey()
+  });
 
   /** Config changes invalidate every snapshot OID: they are repo+branch bound. */
   function resetPatchOidState(reason: string) {
     clearPatchOidState(state);
     supersededPatchIds.clear();
     state.continuationQueue = [];
+    reviewScopeKey = buildReviewScopeKey({
+      profileKey: config.owner || config.repo || 'default',
+      repoFullName: config.repo,
+      sourceBranch: config.branch,
+      targetBranch: config.targetBranch || config.branch,
+      convoKey: buildConvoKey()
+    });
     updateState({
       status: 'IDLE',
       statusMessage: `🔄 ${reason} Snapshot OID reset — click "Load Repo Mix" before applying patches.`,
@@ -164,6 +189,22 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
         supersededPatchIds = new Set(ids);
       },
     });
+
+  const handleCheckPatch = async (patch: HarvestedPatch): Promise<boolean> => {
+    openPanel();
+    // Run focused dry-run check by creating a temporary queue with just this patch
+    const tempState = { ...state, harvestedPatches: [patch] } as HudState;
+    return runHolisticQueuePatch({
+      config,
+      state: tempState,
+      openPanel,
+      updateState: (partial: Partial<HudState>) => updateState(partial),
+      dryRun: true,
+      onMarkQueueSuperseded: (_ids: string[]) => {
+        supersededPatchIds = new Set(_ids);
+      },
+    });
+  };
 
   dom.clearQueueBtn.onclick = () => {
     state.harvestedPatches = [];
@@ -250,6 +291,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
     openPanel,
     closePanel,
     handleApplyPatch,
+    handleCheckPatch,
     addHarvestedPatch: (patch: HarvestedPatch) => {
       const duplicateId = findDuplicatePatchId(state.harvestedPatches, patch);
       if (duplicateId !== null) {
@@ -259,6 +301,26 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       if (supersededPatchIds.size > 0) {
         state.harvestedPatches = state.harvestedPatches.filter((p) => !supersededPatchIds.has(p.id));
         supersededPatchIds.clear();
+      }
+      // Check for overlap replacement
+      try {
+        const pendingList = getPendingForScope(reviewScopeKey);
+        // look for pending entries that overlap with this patch
+        const thisPaths = ((patch.payload?.patches || []) as any[]).map((op: any) => op.path).filter(Boolean);
+        for (const pending of pendingList) {
+          if (pathsOverlap(thisPaths, pending.paths)) {
+            // remove predecessor if present
+            if (pending.patchId && pending.patchId !== patch.id) {
+              state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== pending.patchId);
+            }
+            restoreRevisionPending(pending.patchId, reviewScopeKey);
+            break;
+          }
+        }
+      } catch {}
+      // filter out pending patches for this scope
+      if (isRevisionPending(patch.id, reviewScopeKey)) {
+        return;
       }
       const next = enqueueHarvestedPatch(state.harvestedPatches, patch);
       if (next === state.harvestedPatches) return;

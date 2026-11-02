@@ -134,6 +134,9 @@ export interface HolisticQueuePartition {
   localErrors: LinterError[];
   targetFiles: string[];
   totalSnippets: number;
+  patchIdsByPath: Record<string, string[]>;
+  localErrorPatchIds: string[];
+  attribution: Record<string, 'exact' | 'file-match' | 'batch'>;
 }
 
 /**
@@ -149,6 +152,9 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
   const forbidPatterns: string[] = [];
   const requireExports: Record<string, string[]> = {};
   const commitMessages: string[] = [];
+  const patchIdsByPath: Record<string, string[]> = {};
+  const localErrorPatchIdsSet = new Set<string>();
+  const attribution: Record<string, 'exact' | 'file-match' | 'batch'> = {}; // keyed by error index or synthetic
 
   for (let snippetIndex = 0; snippetIndex < ordered.length; snippetIndex++) {
     const entry = ordered[snippetIndex];
@@ -159,6 +165,8 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
         stage: 'SEARCH_REPLACE',
         message: 'Code snippet contains no valid patch operations.'
       });
+      localErrorPatchIdsSet.add(entry.id);
+      attribution[localErrors.length - 1] = 'exact';
     }
 
     for (const op of operations) {
@@ -171,12 +179,18 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
           message: `${issue} Provide a repo-relative path (e.g. "src/App.tsx") in the consolidated patch.`,
           codeSnippet: preview || undefined
         });
+        localErrorPatchIdsSet.add(entry.id);
+        attribution[localErrors.length - 1] = 'exact';
         continue;
       }
 
       const normPath = normalizeRepoPath(op.path);
       if (!targetFiles.includes(normPath)) {
         targetFiles.push(normPath);
+      }
+      if (!patchIdsByPath[normPath]) patchIdsByPath[normPath] = [];
+      if (!patchIdsByPath[normPath].includes(entry.id)) {
+        patchIdsByPath[normPath].push(entry.id);
       }
 
       const clonedOp: FilePatchOperation = {
@@ -255,6 +269,9 @@ export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): Holisti
     validBatch,
     localErrors,
     targetFiles,
-    totalSnippets
+    totalSnippets,
+    patchIdsByPath,
+    localErrorPatchIds: Array.from(localErrorPatchIdsSet),
+    attribution
   };
 }

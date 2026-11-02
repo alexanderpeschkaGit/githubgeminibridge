@@ -46,6 +46,10 @@ export function initGeminiEdgeHud(): ShadowHudController | null {
       },
       (patch) => {
         controllerInstance?.handleApplyPatch(patch);
+      },
+      (patch) => {
+        // Trigger focused check via controller if available
+        (controllerInstance as any)?.handleCheckPatch?.(patch);
       }
     );
   } catch (error) {

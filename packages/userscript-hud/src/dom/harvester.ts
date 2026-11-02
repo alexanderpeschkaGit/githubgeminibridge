@@ -84,13 +84,14 @@ function findCodeHeader(
   return null;
 }
 
-/**
- * Starts the DOM Harvester MutationObserver.
- * Watches for code blocks and Gemini Canvas cards, attaching Trusted-Types-safe buttons.
- */
+  /**
+   * Starts the DOM Harvester MutationObserver.
+   * Watches for code blocks and Gemini Canvas cards, attaching Trusted-Types-safe buttons.
+   */
 export function startDomHarvester(
   onPatchHarvested: (patch: HarvestedPatch) => void,
-  onInlineApply: (patch: HarvestedPatch) => void
+  onInlineApply: (patch: HarvestedPatch) => void,
+  onInlineCheck?: (patch: HarvestedPatch) => void
 ): MutationObserver {
   const processedSet = new WeakSet<Element>();
   const pendingPathFills: Array<{
@@ -214,6 +215,37 @@ export function startDomHarvester(
       onInlineApply(currentPatch);
     };
 
+    const checkBtn = document.createElement('button');
+    checkBtn.className = 'ggb-inline-btn ggb-inline-check-btn';
+    checkBtn.style.cssText = `
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      padding: 5px 10px !important;
+      background: linear-gradient(135deg, #334155, #1e293b) !important;
+      color: #e2e8f0 !important;
+      border: 1px solid #475569 !important;
+      border-radius: 8px !important;
+      font-family: ui-sans-serif, system-ui, sans-serif !important;
+      font-size: 12px !important;
+      font-weight: 600 !important;
+      cursor: pointer !important;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
+      margin: 6px 0 6px 6px !important;
+      z-index: 2147483647 !important;
+      user-select: none !important;
+      transition: all 0.2s ease !important;
+    `;
+    checkBtn.textContent = '🔍 Check Patch';
+    checkBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      refreshPatchPathFromDom(currentPatch, codeText, pre);
+      if (typeof onInlineCheck === 'function') {
+        onInlineCheck(currentPatch);
+      }
+    };
+
     const searchRoots: Array<Element | DocumentFragment | null | undefined> = [
       pre.shadowRoot,
       scope.shadowRoot,
@@ -228,7 +260,13 @@ export function startDomHarvester(
       const parent = copyBtn.parentElement;
       if (!hasInlineBtn(parent)) {
         parent.insertBefore(btn, copyBtn);
+        parent.insertBefore(checkBtn, btn);
         attached = true;
+      } else {
+        // If buttons exist, try to append check if missing
+        if (!parent.querySelector('.ggb-inline-check-btn')) {
+          parent.appendChild(checkBtn);
+        }
       }
     }
 
@@ -237,6 +275,9 @@ export function startDomHarvester(
       if (codeHeader) {
         if (!hasInlineBtn(codeHeader)) {
           codeHeader.appendChild(btn);
+          if (!codeHeader.querySelector('.ggb-inline-check-btn')) {
+            codeHeader.appendChild(checkBtn);
+          }
           attached = true;
         }
       }
@@ -246,8 +287,12 @@ export function startDomHarvester(
       pre.style.position = 'relative';
       btn.style.position = 'absolute';
       btn.style.top = '8px';
-      btn.style.right = '40px';
+      btn.style.right = '90px';
+      checkBtn.style.position = 'absolute';
+      checkBtn.style.top = '8px';
+      checkBtn.style.right = '40px';
       pre.appendChild(btn);
+      pre.appendChild(checkBtn);
     }
 
     if (canInheritPathFromHeading(currentPatch)) {

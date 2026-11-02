@@ -22,6 +22,7 @@ export interface HarvestedPatch {
   payload: GeminiPatchPayload;
   legacyPayload?: CommitRequest;
   timestamp: string;
+  reviewStatus?: 'active' | 'revision-pending' | 'superseded';
 }
 
 export type HudStatus =

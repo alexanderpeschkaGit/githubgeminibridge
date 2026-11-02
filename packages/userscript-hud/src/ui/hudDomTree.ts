@@ -253,13 +253,17 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
 
   const checkAllBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🔍 Check All');
   checkAllBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
-  checkAllBtn.title = 'Dry-run preflight & syntax check across all harvested snippets without committing';
+  checkAllBtn.title = 'Run holistic preflight check on all queued snippets (dry-run)';
+  checkAllBtn.setAttribute('aria-label', 'Check All (holistic dry-run)');
 
   const applyAllBtn = createHudElement('button', 'hud-btn hud-btn-primary', '⚡ Apply All');
   applyAllBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
+  applyAllBtn.title = 'Validate and apply all queued patches as a batch';
+  applyAllBtn.setAttribute('aria-label', 'Apply All');
 
-  const clearQueueBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🗑️ Clear');
+  const clearQueueBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🗑️ Clear Queue');
   clearQueueBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
+  clearQueueBtn.title = 'Clear all harvested patches from queue';
 
   queueActions.appendChild(checkAllBtn);
   queueActions.appendChild(applyAllBtn);

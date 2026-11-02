@@ -33,7 +33,7 @@ export interface ResolveOrCreateTargetResult {
   createdBranch: boolean;
 }
 
-const normalizeBranch = (branch: string) => branch.replace(/^refs\/heads\//, '');
+export const normalizeBranch = (branch: string) => branch.replace(/^refs\/heads\//, '');
 
 export async function resolveSourceHead(params: ResolveSourceHeadParams): Promise<BranchHeadInfo> {
   try {

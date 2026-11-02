@@ -92,17 +92,22 @@ const color = 'blue';
 
 Sobald Gemini die Antwort im Chat generiert, erkennt das Userscript die Patches automatisch im Hintergrund ("Harvested Patches"):
 
-1. **Option A – Alle nacheinander ausführen (`⚡ Apply All (N)`):**
-   - Klicke im Queue-Header auf **`⚡ Apply All`**.
-   - Das Skript wendet alle gesammelten Patches **chronologisch von alt nach neu (FIFO)** an.
-   - **Fail-Fast:** Tritt bei Patch 2 ein Fehler auf (z. B. Merge-Konflikt oder Linter-Fehler), **stoppt die Ausführung sofort**. Alle Folge-Patches bleiben unangetastet in der Queue.
-   - Jeder erfolgreich angewendete Patch wird sofort aus der Queue entfernt.
+1. **Zuerst prüfen (`🔍 Check All`):**
+   - Prüft die gesamte Queue als Dry-Run: Pfade, Anker/Suchblöcke, Syntax und Preflight-Regeln werden validiert.
+   - Dabei werden Änderungen nur im Arbeitsspeicher simuliert. Es wird kein Branch erstellt und kein Commit geschrieben.
+   - Bei Erfolg bleibt die Queue erhalten; danach kannst du **`⚡ Apply All`** klicken.
+   - Bei Fehlern werden die gefundenen Probleme angezeigt. Wenn **Auto-Pilot** eingeschaltet ist, sendet das HUD automatisch einen Self-Healing-Prompt in den Chat. Der Button **`🔧 Send Self-Healing Prompt to Chat`** darunter ist ein manueller Weg, denselben Prompt ohne automatisches Absenden einzufügen; du musst ihn nicht zusätzlich klicken, wenn Auto-Pilot den Prompt bereits gesendet hat.
 
-2. **Option B – Einzeln anwenden (`Apply`):**
+2. **Anwenden und committen (`⚡ Apply All (N)`):**
+   - Klicke im Queue-Header auf **`⚡ Apply All`**. Dabei wird erneut validiert; ein vorheriger Check ist hilfreich, aber keine Voraussetzung und keine Garantie gegen zwischenzeitliche Branch-Änderungen.
+   - Wenn alle Pfade aufgelöst sind, führt das HUD die Patches **chronologisch von alt nach neu (FIFO)** in einem gemeinsamen Batch aus. Der Worker prüft den resultierenden Stand und erstellt bei Erfolg **einen atomaren Commit**. Bei einem Fehler wird dieser Batch nicht teilweise committed und die Queue bleibt zur Korrektur erhalten.
+   - Wenn ein Pfad fehlt und daher kein Batch gebildet werden kann, greift der sequenzielle FIFO-Fallback: Er stoppt beim ersten Fehler; erfolgreiche frühere Patches sind bereits committed und aus der Queue entfernt, spätere bleiben stehen.
+
+3. **Einzeln anwenden (`Apply`):**
    - Jeder Patch besitzt eine Diff-Vorschau und einen eigenen **`Apply`**-Button.
    - **Reihenfolge bei manuellem Klick:** Immer von **alt nach neu (chronologisch)** anwenden, da spätere Patches auf den Änderungen früherer Patches aufbauen können.
 
-3. **Queue leeren (`🗑️ Clear`):**
+4. **Queue leeren (`🗑️ Clear`):**
    - Mit einem Klick auf **`Clear`** verwirfst du alle aufgelaufenen Patches auf einmal.
 
 ---
@@ -120,8 +125,18 @@ Sobald Gemini die Antwort im Chat generiert, erkennt das Userscript die Patches 
 
 ### 🔄 Optimistic Concurrency & Head-OID
 - Vor jedem Commit verifiziert der Worker die aktuelle Git HEAD-OID des Branches.
-- Bei `Apply All` wird die resultierende neue OID des vorherigen Commits direkt an den nächsten Commit übergeben.
-- Dadurch sind Race-Conditions und Versionskonflikte ausgeschlossen.
+- Bei einem atomaren `Apply All` gibt es einen Commit für den ganzen Batch. Im sequenziellen Fallback wird die bestätigte neue OID eines Commits für den nächsten Patch verwendet.
+- Wird der Branch zwischenzeitlich verändert, kann der Worker den Vorgang mit einem Konflikt abbrechen; so werden Änderungen nicht stillschweigend auf einen unerwarteten Stand geschrieben.
+
+### 🌿 Branch-Wahl und aufeinander aufbauende Patches
+- **Branch** im HUD ist der Quellbranch, dessen aktueller Stand als Basis geprüft wird. **Target Branch (optional)** ist der Branch, auf den der Commit geschrieben wird. Bleibt Target Branch leer, wird auf den Branch aus **Branch** committed.
+- Wenn deine Änderungen bereits auf dem Branch liegen, auf dem du weiterarbeiten willst, kannst du sie dort lassen und die Bridge-Fixes ebenfalls dorthin committen. Für getrennte Review, Tests oder einen leichter rückgängig zu machenden Vorschlag ist ein eigener Target Branch meist übersichtlicher; später kannst du ihn per Pull Request zusammenführen. Der Worker wendet die Änderungen auf den aktuellen Stand des angegebenen Zielbranches an und prüft dessen Snapshot.
+- Zwei abhängige Patches gehören gemeinsam in die Queue und müssen in FIFO-Reihenfolge stehen: der ältere zuerst, dann der Patch, der darauf aufbaut. Mit aufgelösten Pfaden verarbeitet der atomare Batch die Operationen nacheinander im gemeinsamen In-Memory-Dateistand und committet das Ergebnis einmal. Bei sequenziellem Fallback wird der zweite Patch erst nach erfolgreichem Commit des ersten ausgeführt. Falls ein neuer Self-Healing-Fix die alten fehlerhaften Snippets ersetzt, soll er als konsolidierter Patch den gewünschten Endstand enthalten.
+
+### 🤖 Auto-Pilot und Self-Healing
+- Ein roter Preflight-Fehlerblock zeigt konkrete Validierungsfehler, zum Beispiel einen nicht passenden Suchanker, einen fehlenden Pfad oder einen Syntax-/Regelverstoß. Er bedeutet zunächst: Es wurde kein Commit für den fehlgeschlagenen atomaren Batch geschrieben.
+- Ist **Auto-Pilot** aktiv und sind noch weniger als drei Self-Healing-Versuche verbraucht, erstellt das HUD aus den Fehlern einen gezielten Reparatur-Prompt und fügt ihn in den Chat ein (mit Auto-Submit). Die Schaltfläche **`🔧 Send Self-Healing Prompt to Chat`** bleibt als manuelle Alternative sichtbar und fügt einen Prompt ohne Auto-Submit ein. Sie ist nützlich, wenn Auto-Pilot aus ist oder du den Prompt bewusst manuell erneut senden möchtest; nach automatischem Senden ist ein zusätzlicher Klick normalerweise nicht nötig.
+- Gemini soll dann einen korrigierten Patch liefern. Dieser wird geerntet; der neue Fix ersetzt die als überholt markierten Queue-Einträge. Prüfe den Fix und starte danach erneut **Check All** oder **Apply All**. Auto-Pilot begrenzt automatische Versuche auf drei; danach ist manuelle Prüfung nötig.
 
 ---
 

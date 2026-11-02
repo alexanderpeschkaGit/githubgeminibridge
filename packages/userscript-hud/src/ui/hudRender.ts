@@ -97,7 +97,7 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
   }
 
   dom.checkAllBtn.disabled = patchCount === 0 || isBusy;
-  dom.checkAllBtn.textContent = patchCount > 0 ? `🔍 Check (${patchCount})` : '🔍 Check All';
+  dom.checkAllBtn.textContent = patchCount > 0 ? `🔍 Check All (${patchCount})` : '🔍 Check All';
   dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
   dom.applyAllBtn.textContent = patchCount > 0 ? `⚡ Apply All (${patchCount})` : '⚡ Apply All';
   dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
