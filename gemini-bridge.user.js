@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.13
+// @version      0.80.14
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -545,6 +545,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     const forbidPatterns = [];
     const requireExports = {};
     const commitMessages = [];
+    const patchIdsByPath = {};
+    const localErrorPatchIdsSet = /* @__PURE__ */ new Set();
+    const attribution = {};
     for (let snippetIndex = 0; snippetIndex < ordered.length; snippetIndex++) {
       const entry = ordered[snippetIndex];
       const operations = entry.payload?.patches ?? [];
@@ -554,6 +557,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
           stage: "SEARCH_REPLACE",
           message: "Code snippet contains no valid patch operations."
         });
+        localErrorPatchIdsSet.add(entry.id);
+        attribution[localErrors.length - 1] = "exact";
       }
       for (const op of operations) {
         const issue = findRepoPathIssue(op.path);
@@ -565,11 +570,17 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
             message: `${issue} Provide a repo-relative path (e.g. "src/App.tsx") in the consolidated patch.`,
             codeSnippet: preview || void 0
           });
+          localErrorPatchIdsSet.add(entry.id);
+          attribution[localErrors.length - 1] = "exact";
           continue;
         }
         const normPath = normalizeRepoPath(op.path);
         if (!targetFiles.includes(normPath)) {
           targetFiles.push(normPath);
+        }
+        if (!patchIdsByPath[normPath]) patchIdsByPath[normPath] = [];
+        if (!patchIdsByPath[normPath].includes(entry.id)) {
+          patchIdsByPath[normPath].push(entry.id);
         }
         const clonedOp = {
           ...op,
@@ -628,7 +639,10 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       validBatch,
       localErrors,
       targetFiles,
-      totalSnippets
+      totalSnippets,
+      patchIdsByPath,
+      localErrorPatchIds: Array.from(localErrorPatchIdsSet),
+      attribution
     };
   }
 
@@ -1017,11 +1031,15 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     queueActions.style.cssText = "display: flex; gap: 6px;";
     const checkAllBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F50D} Check All");
     checkAllBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
-    checkAllBtn.title = "Dry-run preflight & syntax check across all harvested snippets without committing";
+    checkAllBtn.title = "Run holistic preflight check on all queued snippets (dry-run)";
+    checkAllBtn.setAttribute("aria-label", "Check All (holistic dry-run)");
     const applyAllBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u26A1 Apply All");
     applyAllBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
-    const clearQueueBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F5D1}\uFE0F Clear");
+    applyAllBtn.title = "Validate and apply all queued patches as a batch";
+    applyAllBtn.setAttribute("aria-label", "Apply All");
+    const clearQueueBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F5D1}\uFE0F Clear Queue");
     clearQueueBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
+    clearQueueBtn.title = "Clear all harvested patches from queue";
     queueActions.appendChild(checkAllBtn);
     queueActions.appendChild(applyAllBtn);
     queueActions.appendChild(clearQueueBtn);
@@ -2039,7 +2057,7 @@ Fix Instructions:
       dom.continueMixBtn.style.display = "none";
     }
     dom.checkAllBtn.disabled = patchCount === 0 || isBusy;
-    dom.checkAllBtn.textContent = patchCount > 0 ? `\u{1F50D} Check (${patchCount})` : "\u{1F50D} Check All";
+    dom.checkAllBtn.textContent = patchCount > 0 ? `\u{1F50D} Check All (${patchCount})` : "\u{1F50D} Check All";
     dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
     dom.applyAllBtn.textContent = patchCount > 0 ? `\u26A1 Apply All (${patchCount})` : "\u26A1 Apply All";
     dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
@@ -2674,6 +2692,136 @@ Fix Instructions:
     }
   }
 
+  // src/services/patchReviewStore.ts
+  var STORE_KEY = "gm_patch_review_pending_v1";
+  var MAX_ENTRIES_PER_SCOPE = 20;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+  var FALLBACK_TAB_KEY = "gm_patch_review_tab_key_v1";
+  function getOrCreateTabKey() {
+    try {
+      const existing = getStoredValue(FALLBACK_TAB_KEY, "");
+      if (existing && typeof existing === "string" && existing.length > 0) {
+        return existing;
+      }
+      const key = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+      setStoredValue(FALLBACK_TAB_KEY, key);
+      return key;
+    } catch {
+      return `tab_${Date.now().toString(36)}`;
+    }
+  }
+  function buildConvoKey() {
+    try {
+      if (typeof location !== "undefined") {
+        const origin = location.origin || "";
+        const pathname = location.pathname || "";
+        if (origin || pathname) {
+          return `${origin}${pathname}`;
+        }
+      }
+    } catch {
+    }
+    return getOrCreateTabKey();
+  }
+  function buildReviewScopeKey(params) {
+    const profileKey = params.profileKey || "default";
+    const repoFullName = params.repoFullName || "unknown";
+    const sourceBranch = params.sourceBranch || "unknown";
+    const targetBranch = params.targetBranch || sourceBranch || "unknown";
+    const convoKey = params.convoKey || buildConvoKey();
+    return `${profileKey}|${repoFullName}|${sourceBranch}|${targetBranch}|${convoKey}`;
+  }
+  function normalizePaths(paths) {
+    if (!Array.isArray(paths)) return [];
+    const set = /* @__PURE__ */ new Set();
+    for (const p of paths) {
+      if (typeof p !== "string") continue;
+      const norm = normalizeRepoPath(p).replace(/\\/g, "/");
+      if (norm === "" || norm === ".") continue;
+      set.add(norm);
+    }
+    return Array.from(set);
+  }
+  function loadAll() {
+    try {
+      const rawStr = getStoredValue(STORE_KEY, "[]");
+      let raw = [];
+      try {
+        raw = JSON.parse(rawStr);
+      } catch {
+        raw = [];
+      }
+      if (!Array.isArray(raw)) return [];
+      const now = Date.now();
+      const filtered = [];
+      for (const entry of raw) {
+        if (!entry || typeof entry !== "object") continue;
+        if (typeof entry.patchId !== "string" || typeof entry.scopeKey !== "string") continue;
+        const expiresAt = typeof entry.expiresAt === "number" ? entry.expiresAt : now + MAX_AGE_MS;
+        if (expiresAt < now) continue;
+        filtered.push({
+          patchId: entry.patchId,
+          scopeKey: entry.scopeKey,
+          paths: normalizePaths(entry.paths),
+          headOid: typeof entry.headOid === "string" ? entry.headOid : void 0,
+          targetHeadOid: typeof entry.targetHeadOid === "string" ? entry.targetHeadOid : void 0,
+          attribution: entry.attribution,
+          timestamp: typeof entry.timestamp === "string" ? entry.timestamp : (/* @__PURE__ */ new Date()).toISOString(),
+          expiresAt
+        });
+      }
+      return filtered;
+    } catch {
+      return [];
+    }
+  }
+  function saveAll(entries) {
+    try {
+      const now = Date.now();
+      const pruned = entries.filter((e) => e.expiresAt >= now).sort((a, b) => a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0);
+      const byScope = /* @__PURE__ */ new Map();
+      for (const e of pruned) {
+        if (!byScope.has(e.scopeKey)) byScope.set(e.scopeKey, []);
+        byScope.get(e.scopeKey).push(e);
+      }
+      const out = [];
+      for (const list of byScope.values()) {
+        const capped = list.slice(-MAX_ENTRIES_PER_SCOPE);
+        out.push(...capped);
+      }
+      setStoredValue(STORE_KEY, JSON.stringify(out));
+    } catch {
+    }
+  }
+  function isRevisionPending(patchId, scopeKey) {
+    if (!patchId || !scopeKey) return false;
+    const entries = loadAll();
+    return entries.some((e) => e.patchId === patchId && e.scopeKey === scopeKey);
+  }
+  function getPendingForScope(scopeKey) {
+    if (!scopeKey) return [];
+    const entries = loadAll();
+    return entries.filter((e) => e.scopeKey === scopeKey);
+  }
+  function restoreRevisionPending(patchId, scopeKey) {
+    if (!patchId || !scopeKey) return false;
+    const entries = loadAll();
+    const filtered = entries.filter((e) => !(e.patchId === patchId && e.scopeKey === scopeKey));
+    if (filtered.length === entries.length) return false;
+    saveAll(filtered);
+    return true;
+  }
+  function pathsOverlap(a, b) {
+    const na = normalizePaths(a);
+    const nb = normalizePaths(b);
+    if (na.length === 0 || nb.length === 0) return false;
+    const setB = new Set(nb);
+    for (const p of na) {
+      if (setB.has(p)) return true;
+    }
+    return false;
+  }
+
   // src/ui/shadowHud.ts
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
@@ -2701,10 +2849,24 @@ Fix Instructions:
       renderState();
     }
     let supersededPatchIds = /* @__PURE__ */ new Set();
+    let reviewScopeKey = buildReviewScopeKey({
+      profileKey: config.owner || config.repo || "default",
+      repoFullName: config.repo,
+      sourceBranch: config.branch,
+      targetBranch: config.targetBranch || config.branch,
+      convoKey: buildConvoKey()
+    });
     function resetPatchOidState(reason) {
       clearPatchOidState(state);
       supersededPatchIds.clear();
       state.continuationQueue = [];
+      reviewScopeKey = buildReviewScopeKey({
+        profileKey: config.owner || config.repo || "default",
+        repoFullName: config.repo,
+        sourceBranch: config.branch,
+        targetBranch: config.targetBranch || config.branch,
+        convoKey: buildConvoKey()
+      });
       updateState({
         status: "IDLE",
         statusMessage: `\u{1F504} ${reason} Snapshot OID reset \u2014 click "Load Repo Mix" before applying patches.`,
@@ -2774,6 +2936,20 @@ Fix Instructions:
         supersededPatchIds = new Set(ids);
       }
     });
+    const handleCheckPatch = async (patch) => {
+      openPanel();
+      const tempState = { ...state, harvestedPatches: [patch] };
+      return runHolisticQueuePatch({
+        config,
+        state: tempState,
+        openPanel,
+        updateState: (partial) => updateState(partial),
+        dryRun: true,
+        onMarkQueueSuperseded: (_ids) => {
+          supersededPatchIds = new Set(_ids);
+        }
+      });
+    };
     dom.clearQueueBtn.onclick = () => {
       state.harvestedPatches = [];
       supersededPatchIds.clear();
@@ -2852,6 +3028,7 @@ Fix Instructions:
       openPanel,
       closePanel,
       handleApplyPatch,
+      handleCheckPatch,
       addHarvestedPatch: (patch) => {
         const duplicateId = findDuplicatePatchId(state.harvestedPatches, patch);
         if (duplicateId !== null) {
@@ -2861,6 +3038,23 @@ Fix Instructions:
         if (supersededPatchIds.size > 0) {
           state.harvestedPatches = state.harvestedPatches.filter((p) => !supersededPatchIds.has(p.id));
           supersededPatchIds.clear();
+        }
+        try {
+          const pendingList = getPendingForScope(reviewScopeKey);
+          const thisPaths = (patch.payload?.patches || []).map((op) => op.path).filter(Boolean);
+          for (const pending of pendingList) {
+            if (pathsOverlap(thisPaths, pending.paths)) {
+              if (pending.patchId && pending.patchId !== patch.id) {
+                state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== pending.patchId);
+              }
+              restoreRevisionPending(pending.patchId, reviewScopeKey);
+              break;
+            }
+          }
+        } catch {
+        }
+        if (isRevisionPending(patch.id, reviewScopeKey)) {
+          return;
         }
         const next = enqueueHarvestedPatch(state.harvestedPatches, patch);
         if (next === state.harvestedPatches) return;
@@ -3246,7 +3440,7 @@ Fix Instructions:
     }
     return null;
   }
-  function startDomHarvester(onPatchHarvested, onInlineApply) {
+  function startDomHarvester(onPatchHarvested, onInlineApply, onInlineCheck) {
     const processedSet = /* @__PURE__ */ new WeakSet();
     const pendingPathFills = [];
     function refreshPendingPathFills() {
@@ -3335,6 +3529,36 @@ Fix Instructions:
         refreshPatchPathFromDom(currentPatch, codeText, pre);
         onInlineApply(currentPatch);
       };
+      const checkBtn = document.createElement("button");
+      checkBtn.className = "ggb-inline-btn ggb-inline-check-btn";
+      checkBtn.style.cssText = `
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      padding: 5px 10px !important;
+      background: linear-gradient(135deg, #334155, #1e293b) !important;
+      color: #e2e8f0 !important;
+      border: 1px solid #475569 !important;
+      border-radius: 8px !important;
+      font-family: ui-sans-serif, system-ui, sans-serif !important;
+      font-size: 12px !important;
+      font-weight: 600 !important;
+      cursor: pointer !important;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
+      margin: 6px 0 6px 6px !important;
+      z-index: 2147483647 !important;
+      user-select: none !important;
+      transition: all 0.2s ease !important;
+    `;
+      checkBtn.textContent = "\u{1F50D} Check Patch";
+      checkBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        refreshPatchPathFromDom(currentPatch, codeText, pre);
+        if (typeof onInlineCheck === "function") {
+          onInlineCheck(currentPatch);
+        }
+      };
       const searchRoots = [
         pre.shadowRoot,
         scope.shadowRoot,
@@ -3347,7 +3571,12 @@ Fix Instructions:
         const parent = copyBtn.parentElement;
         if (!hasInlineBtn(parent)) {
           parent.insertBefore(btn, copyBtn);
+          parent.insertBefore(checkBtn, btn);
           attached = true;
+        } else {
+          if (!parent.querySelector(".ggb-inline-check-btn")) {
+            parent.appendChild(checkBtn);
+          }
         }
       }
       if (!attached) {
@@ -3355,6 +3584,9 @@ Fix Instructions:
         if (codeHeader) {
           if (!hasInlineBtn(codeHeader)) {
             codeHeader.appendChild(btn);
+            if (!codeHeader.querySelector(".ggb-inline-check-btn")) {
+              codeHeader.appendChild(checkBtn);
+            }
             attached = true;
           }
         }
@@ -3363,8 +3595,12 @@ Fix Instructions:
         pre.style.position = "relative";
         btn.style.position = "absolute";
         btn.style.top = "8px";
-        btn.style.right = "40px";
+        btn.style.right = "90px";
+        checkBtn.style.position = "absolute";
+        checkBtn.style.top = "8px";
+        checkBtn.style.right = "40px";
         pre.appendChild(btn);
+        pre.appendChild(checkBtn);
       }
       if (canInheritPathFromHeading(currentPatch)) {
         pendingPathFills.push({ element: pre, codeText, patch: currentPatch });
@@ -3493,6 +3729,9 @@ Fix Instructions:
         },
         (patch) => {
           controllerInstance?.handleApplyPatch(patch);
+        },
+        (patch) => {
+          controllerInstance?.handleCheckPatch?.(patch);
         }
       );
     } catch (error) {
