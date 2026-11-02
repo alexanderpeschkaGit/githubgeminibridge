@@ -2,7 +2,12 @@ import type { HarvestedPatch, HudConfig, HudState } from '../types';
 import { injectPromptText } from '../dom/injector';
 import { buildSelfHealingPrompt, MAX_SELF_HEALING_RETRIES } from '../services/selfHealing';
 import { createHudElement, type HudDomElements } from './hudStylesAndDom';
-import { buildReviewScopeKey, buildConvoKey } from '../services/patchReviewStore';
+import {
+  buildReviewScopeKey,
+  buildConvoKey,
+  markRevisionPending,
+  restoreRevisionPending,
+} from '../services/patchReviewStore';
 
 function buildReviewScopeKeyLocal(config: HudConfig): string {
   try {
@@ -24,10 +29,18 @@ export interface HudRenderDeps {
   config: HudConfig;
   updateState: (partial: Partial<HudState>) => void;
   onApplyPatch: (patch: HarvestedPatch) => void;
+  onCheckPatch?: (patch: HarvestedPatch) => void;
 }
 
 /** Renders the HUD status, linter errors and patch queue from the current state. */
-export function renderHudState({ dom, state, config, updateState, onApplyPatch }: HudRenderDeps): void {
+export function renderHudState({
+  dom,
+  state,
+  config,
+  updateState,
+  onApplyPatch,
+  onCheckPatch,
+}: HudRenderDeps): void {
   dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
   dom.triggerBadge.textContent = state.status;
 
@@ -142,7 +155,7 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
   } else {
     state.harvestedPatches.forEach((patch) => {
       const item = createHudElement('div', 'hud-patch-item');
-      if ((patch as any).reviewStatus === 'revision-pending') {
+      if (patch.reviewStatus === 'revision-pending') {
         item.classList.add('hud-patch-item-pending');
       }
       const meta = createHudElement('div', 'hud-patch-item-meta');
@@ -157,7 +170,7 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
       const itemSub = createHudElement('div', 'hud-patch-item-sub', patch.commitMessage);
       itemSub.title = patch.commitMessage;
 
-      if ((patch as any).reviewStatus === 'revision-pending') {
+      if (patch.reviewStatus === 'revision-pending') {
         const pendingNote = createHudElement('div', 'hud-patch-item-pending-note', '⏸️ Revision pending — ignored after reload until restored or replaced');
         pendingNote.style.cssText = 'color: #fbbf24; font-size: 10px; margin-top: 2px;';
         item.appendChild(pendingNote);
@@ -166,16 +179,15 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
       const actions = createHudElement('div', 'hud-patch-item-actions');
       actions.style.cssText = 'display: flex; gap: 4px; flex-wrap: wrap;';
 
-      if ((patch as any).reviewStatus === 'revision-pending') {
+      if (patch.reviewStatus === 'revision-pending') {
         const restoreBtn = createHudElement('button', 'hud-btn hud-btn-secondary', 'Restore');
         restoreBtn.style.cssText = 'padding: 3px 6px; font-size: 10px;';
         restoreBtn.onclick = () => {
           try {
             const scopeKey = buildReviewScopeKeyLocal(config);
-            const { restoreRevisionPending } = require('../services/patchReviewStore');
             restoreRevisionPending(patch.id, scopeKey);
           } catch {}
-          // trigger re-render via updateState
+          patch.reviewStatus = 'active';
           updateState({});
         };
         actions.appendChild(restoreBtn);
@@ -184,8 +196,7 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
         checkBtn.style.cssText = 'padding: 3px 6px; font-size: 10px;';
         checkBtn.title = 'Check this patch only (dry-run)';
         checkBtn.onclick = () => {
-          const evt = new CustomEvent('ggb-check-patch', { detail: { patchId: patch.id } });
-          document.dispatchEvent(evt);
+          onCheckPatch?.(patch);
         };
 
         const applyBtn = createHudElement('button', 'hud-btn hud-btn-primary', 'Apply');
@@ -200,9 +211,9 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
         reviseBtn.onclick = () => {
           try {
             const scopeKey = buildReviewScopeKeyLocal(config);
-            const { markRevisionPending } = require('../services/patchReviewStore');
             markRevisionPending(patch.id, scopeKey, paths.filter(Boolean));
           } catch {}
+          patch.reviewStatus = 'revision-pending';
           updateState({});
         };
 

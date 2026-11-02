@@ -1,5 +1,16 @@
 import type { HarvestedPatch } from '../types';
 import { getStoredValue, setStoredValue } from './storage';
+import { normalizeRepoPath } from '../../../../shared/repoPaths';
+
+export interface ReviewScope {
+  profileKey: string;
+  repoFullName: string;
+  sourceBranch: string;
+  targetBranch: string;
+  convoKey?: string;
+}
+
+export type ReviewScopeInput = ReviewScope | string;
 
 export interface RevisionPendingRecord {
   patchId: string;
@@ -81,11 +92,13 @@ export function buildReviewScopeKey(parts: {
   return normalizeScopeKeyParts({ ...parts, convoKey: parts.convoKey || buildConvoKey() });
 }
 
-export function isRevisionPending(
-  patchId: string,
-  scope: { profileKey: string; repoFullName: string; sourceBranch: string; targetBranch: string; convoKey?: string }
-): boolean {
-  const scopeKey = buildReviewScopeKey(scope);
+/** Accepts either a scope object or an already-normalized scope key. */
+export function resolveReviewScopeKey(scope: ReviewScopeInput): string {
+  return typeof scope === 'string' ? scope : buildReviewScopeKey(scope);
+}
+
+export function isRevisionPending(patchId: string, scope: ReviewScopeInput): boolean {
+  const scopeKey = resolveReviewScopeKey(scope);
   const now = Date.now();
   const records = loadStore().filter((r) => now - r.timestamp <= MAX_AGE_MS);
   if (records.length !== loadStore().length) {
@@ -96,9 +109,10 @@ export function isRevisionPending(
 
 export function markRevisionPending(
   patchId: string,
-  scopeKey: string,
+  scope: ReviewScopeInput,
   paths: string[]
 ): void {
+  const scopeKey = resolveReviewScopeKey(scope);
   const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
   // Remove any existing record for this patchId in same scope
   const filtered = records.filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
@@ -129,32 +143,38 @@ export function markRevisionPending(
   saveStore([...otherRecords, ...scopeRecords]);
 }
 
-export function restoreRevisionPending(
-  patchId: string,
-  scope: { profileKey: string; repoFullName: string; sourceBranch: string; targetBranch: string; convoKey?: string }
-): void {
-  const scopeKey = buildReviewScopeKey(scope);
+export function restoreRevisionPending(patchId: string, scope: ReviewScopeInput): void {
+  const scopeKey = resolveReviewScopeKey(scope);
   const records = loadStore().filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
   saveStore(records);
 }
 
-export function getPendingEntry(patchId: string, scopeKey: string): RevisionPendingRecord | null {
+export function getPendingEntry(
+  patchId: string,
+  scope: ReviewScopeInput
+): RevisionPendingRecord | null {
+  const scopeKey = resolveReviewScopeKey(scope);
   const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
   const found = records.find((r) => r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey);
   return found || null;
 }
 
-export function getPendingForScope(scopeKeyOrScope: string | { profileKey: string; repoFullName: string; sourceBranch: string; targetBranch: string; convoKey?: string }): RevisionPendingRecord[] {
-  const scopeKey = typeof scopeKeyOrScope === 'string' ? scopeKeyOrScope : buildReviewScopeKey(scopeKeyOrScope);
+export function getPendingForScope(scope: ReviewScopeInput): RevisionPendingRecord[] {
+  const scopeKey = resolveReviewScopeKey(scope);
   const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
   return records.filter((r) => normalizeScopeKeyParts(r) === scopeKey);
 }
 
+function canonicalPathKey(path: string): string {
+  return normalizeRepoPath(path).toLowerCase();
+}
+
 export function pathsOverlap(a: string[], b: string[]): boolean {
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
-  const setA = new Set(a.filter(Boolean).map((p) => p.toLowerCase()));
+  const setA = new Set(a.filter(Boolean).map(canonicalPathKey).filter(Boolean));
   for (const p of b) {
-    if (p && setA.has(p.toLowerCase())) return true;
+    if (!p) continue;
+    if (setA.has(canonicalPathKey(p))) return true;
   }
   return false;
 }

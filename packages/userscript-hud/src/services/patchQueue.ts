@@ -43,12 +43,20 @@ export function fifoQueue(queue: HarvestedPatch[]): HarvestedPatch[] {
 }
 
 /**
+ * Revision-pending patches are explicitly parked by the user and must never be
+ * checked or committed until restored.
+ */
+export function activeQueue(queue: HarvestedPatch[]): HarvestedPatch[] {
+  return queue.filter((entry) => entry.reviewStatus !== 'revision-pending');
+}
+
+/**
  * Coalesces a multi-entry queue into one atomic V2 payload in FIFO order.
  * Returns null when fewer than two entries exist or any patch lacks a resolved
  * repo-relative path, so the caller can fall back to the sequential prompt flow.
  */
 export function coalescePatchesIntoBatch(queue: HarvestedPatch[]): HarvestedPatch | null {
-  const ordered = fifoQueue(queue);
+  const ordered = fifoQueue(activeQueue(queue));
   if (ordered.length < 2) return null;
 
   const patches: FilePatchOperation[] = [];
@@ -115,7 +123,7 @@ export async function runPatchQueue(
   apply: (patch: HarvestedPatch) => Promise<boolean>,
   onProgress: (patch: HarvestedPatch, index: number, total: number) => void
 ): Promise<{ applied: number; total: number }> {
-  const ordered = fifoQueue(queue);
+  const ordered = fifoQueue(activeQueue(queue));
   const total = ordered.length;
   let applied = 0;
 
@@ -144,7 +152,7 @@ export interface HolisticQueuePartition {
  * errors across all snippets non-fail-fast so the self-healing loop can repair them holistically.
  */
 export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): HolisticQueuePartition {
-  const ordered = fifoQueue(queue);
+  const ordered = fifoQueue(activeQueue(queue));
   const totalSnippets = ordered.length;
   const localErrors: LinterError[] = [];
   const targetFiles: string[] = [];

@@ -84,6 +84,72 @@ function findCodeHeader(
   return null;
 }
 
+function readCodeBlock(pre: HTMLElement): { codeEl: HTMLElement; codeText: string } {
+  const codeEl =
+    (pre.shadowRoot || pre).querySelector('code') ||
+    pre.querySelector('code') ||
+    pre;
+  const codeText = (codeEl.textContent || '').trim();
+  return { codeEl, codeText };
+}
+
+/** Parses a code block into a harvested patch without touching the DOM or queue. */
+function buildPatchFromCode(pre: HTMLElement, codeText: string): HarvestedPatch | null {
+  const v2Payload = parseV2PatchPayloadFromCode(codeText);
+  if (v2Payload) {
+    return {
+      id: createStablePatchId('v2_json', v2Payload),
+      mode: 'v2_json',
+      commitMessage: v2Payload.commitMessage,
+      payload: v2Payload,
+      timestamp: new Date().toLocaleTimeString(),
+    };
+  }
+
+  if (!isSearchReplace(codeText)) return null;
+
+  const detectedPath = extractPathFromCode(codeText, pre);
+  const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || undefined);
+  if (!converted) return null;
+
+  return {
+    id: createStablePatchId('v1_search_replace', converted.payload),
+    mode: 'v1_search_replace',
+    commitMessage: converted.payload.commitMessage,
+    payload: converted.payload,
+    legacyPayload: converted.legacyPayload,
+    timestamp: new Date().toLocaleTimeString(),
+  };
+}
+
+/** Single source of truth for the inline check button styling and label. */
+function createInlineCheckButton(): HTMLButtonElement {
+  const checkBtn = document.createElement('button');
+  checkBtn.className = 'ggb-inline-btn ggb-inline-check-btn';
+  checkBtn.style.cssText = `
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 5px 10px !important;
+    background: linear-gradient(135deg, #334155, #1e293b) !important;
+    color: #e2e8f0 !important;
+    border: 1px solid #475569 !important;
+    border-radius: 8px !important;
+    font-family: ui-sans-serif, system-ui, sans-serif !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
+    margin: 6px 0 6px 6px !important;
+    z-index: 2147483647 !important;
+    user-select: none !important;
+    transition: all 0.2s ease !important;
+  `;
+  checkBtn.textContent = '🔍 Check Patch';
+  checkBtn.title = 'Check this patch only (dry-run, no commit). Does not include other queued changes.';
+  return checkBtn;
+}
+
   /**
    * Starts the DOM Harvester MutationObserver.
    * Watches for code blocks and Gemini Canvas cards, attaching Trusted-Types-safe buttons.
@@ -140,61 +206,32 @@ export function startDomHarvester(
     }
     if (hasApplyBtn && !hasCheckBtn) {
       // Try to add missing check button without reprocessing full harvest
+      const { codeEl: retrofitCodeEl, codeText: retrofitCodeText } = readCodeBlock(pre);
+      const retrofitPatch = buildPatchFromCode(pre, retrofitCodeText);
+      const bindRetrofitCheck = (checkBtn: HTMLButtonElement) => {
+        checkBtn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!retrofitPatch) return;
+          refreshPatchPathFromDom(retrofitPatch, retrofitCodeText, pre);
+          if (typeof onInlineCheck === 'function') {
+            onInlineCheck(retrofitPatch);
+          }
+        };
+      };
       const copyBtn = findCopyButton(searchRootsEarly);
       if (copyBtn && copyBtn.parentElement && !copyBtn.parentElement.querySelector('.ggb-inline-check-btn')) {
-        const checkBtn = document.createElement('button');
-        checkBtn.className = 'ggb-inline-btn ggb-inline-check-btn';
-        checkBtn.style.cssText = `
-          display: inline-flex !important;
-          align-items: center !important;
-          gap: 6px !important;
-          padding: 5px 10px !important;
-          background: linear-gradient(135deg, #334155, #1e293b) !important;
-          color: #e2e8f0 !important;
-          border: 1px solid #475569 !important;
-          border-radius: 8px !important;
-          font-family: ui-sans-serif, system-ui, sans-serif !important;
-          font-size: 12px !important;
-          font-weight: 600 !important;
-          cursor: pointer !important;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
-          margin: 6px 0 6px 6px !important;
-          z-index: 2147483647 !important;
-          user-select: none !important;
-          transition: all 0.2s ease !important;
-        `;
-        checkBtn.textContent = '🔍 Check Patch';
-        checkBtn.title = 'Check this patch only (dry-run, no commit). Does not include other queued changes.';
+        const checkBtn = createInlineCheckButton();
+        bindRetrofitCheck(checkBtn);
         copyBtn.parentElement.insertBefore(checkBtn, copyBtn);
         processedSet.add(pre);
         pre.setAttribute('data-ggh-processed', 'true');
         return;
       }
-      const codeHeader = findCodeHeader(searchRootsEarly, pre, (pre.shadowRoot || pre).querySelector('code') || pre.querySelector('code') || pre);
+      const codeHeader = findCodeHeader(searchRootsEarly, pre, retrofitCodeEl);
       if (codeHeader && !codeHeader.querySelector('.ggb-inline-check-btn')) {
-        const checkBtn = document.createElement('button');
-        checkBtn.className = 'ggb-inline-btn ggb-inline-check-btn';
-        checkBtn.style.cssText = `
-          display: inline-flex !important;
-          align-items: center !important;
-          gap: 6px !important;
-          padding: 5px 10px !important;
-          background: linear-gradient(135deg, #334155, #1e293b) !important;
-          color: #e2e8f0 !important;
-          border: 1px solid #475569 !important;
-          border-radius: 8px !important;
-          font-family: ui-sans-serif, system-ui, sans-serif !important;
-          font-size: 12px !important;
-          font-weight: 600 !important;
-          cursor: pointer !important;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
-          margin: 6px 0 6px 6px !important;
-          z-index: 2147483647 !important;
-          user-select: none !important;
-          transition: all 0.2s ease !important;
-        `;
-        checkBtn.textContent = '🔍 Check Patch';
-        checkBtn.title = 'Check this patch only (dry-run, no commit). Does not include other queued changes.';
+        const checkBtn = createInlineCheckButton();
+        bindRetrofitCheck(checkBtn);
         codeHeader.appendChild(checkBtn);
         processedSet.add(pre);
         pre.setAttribute('data-ggh-processed', 'true');
@@ -205,40 +242,10 @@ export function startDomHarvester(
       return;
     }
 
-    const codeEl =
-      (pre.shadowRoot || pre).querySelector('code') ||
-      pre.querySelector('code') ||
-      pre;
-    const codeText = (codeEl.textContent || '').trim();
+    const { codeEl, codeText } = readCodeBlock(pre);
     if (codeText.length < 15) return;
 
-    let harvested: HarvestedPatch | null = null;
-
-    // Check for V2 JSON payload first
-    const v2Payload = parseV2PatchPayloadFromCode(codeText);
-    if (v2Payload) {
-      harvested = {
-        id: createStablePatchId('v2_json', v2Payload),
-        mode: 'v2_json',
-        commitMessage: v2Payload.commitMessage,
-        payload: v2Payload,
-        timestamp: new Date().toLocaleTimeString(),
-      };
-    } else if (isSearchReplace(codeText)) {
-      // Check for legacy diff blocks (plain non-diff code blocks in chat are never auto-harvested as file creates)
-      const detectedPath = extractPathFromCode(codeText, pre);
-      const converted = convertLegacyBlocksToV2Payload(codeText, detectedPath || undefined);
-      if (converted) {
-        harvested = {
-          id: createStablePatchId('v1_search_replace', converted.payload),
-          mode: 'v1_search_replace',
-          commitMessage: converted.payload.commitMessage,
-          payload: converted.payload,
-          legacyPayload: converted.legacyPayload,
-          timestamp: new Date().toLocaleTimeString(),
-        };
-      }
-    }
+    const harvested = buildPatchFromCode(pre, codeText);
 
     if (!harvested) return;
 
@@ -288,28 +295,7 @@ export function startDomHarvester(
       onInlineApply(currentPatch);
     };
 
-    const checkBtn = document.createElement('button');
-    checkBtn.className = 'ggb-inline-btn ggb-inline-check-btn';
-    checkBtn.style.cssText = `
-      display: inline-flex !important;
-      align-items: center !important;
-      gap: 6px !important;
-      padding: 5px 10px !important;
-      background: linear-gradient(135deg, #334155, #1e293b) !important;
-      color: #e2e8f0 !important;
-      border: 1px solid #475569 !important;
-      border-radius: 8px !important;
-      font-family: ui-sans-serif, system-ui, sans-serif !important;
-      font-size: 12px !important;
-      font-weight: 600 !important;
-      cursor: pointer !important;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
-      margin: 6px 0 6px 6px !important;
-      z-index: 2147483647 !important;
-      user-select: none !important;
-      transition: all 0.2s ease !important;
-    `;
-    checkBtn.title = 'Check this patch only (dry-run, no commit). Does not include other queued changes.';
+    const checkBtn = createInlineCheckButton();
     checkBtn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();

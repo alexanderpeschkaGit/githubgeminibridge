@@ -250,6 +250,17 @@ export interface HolisticQueuePatchDeps extends HudApplyPatchDeps {
   dryRun: boolean;
   onMarkQueueSuperseded?: (ids: string[]) => void;
   isFocused?: boolean; // true if checking/applying a single selected patch
+  focusedPatchId?: string; // id of the single patch to check in focused mode
+}
+
+function currentReviewScope(config: HudConfig) {
+  return {
+    profileKey: config.owner || config.repo || 'default',
+    repoFullName: config.repo,
+    sourceBranch: config.branch,
+    targetBranch: config.targetBranch || config.branch,
+    convoKey: buildConvoKey(),
+  };
 }
 
 /**
@@ -263,11 +274,17 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
     return false;
   }
 
-  if (deps.state.harvestedPatches.length === 0) {
+  const focusedPatch =
+    deps.isFocused && deps.focusedPatchId
+      ? deps.state.harvestedPatches.find((entry) => entry.id === deps.focusedPatchId) ?? null
+      : null;
+  const queue = focusedPatch ? [focusedPatch] : deps.state.harvestedPatches;
+
+  if (queue.length === 0) {
     return false;
   }
 
-  const partition = partitionQueueForHolisticCheck(deps.state.harvestedPatches);
+  const partition = partitionQueueForHolisticCheck(queue);
   const totalSnippets = partition.totalSnippets;
   const targetFiles = partition.targetFiles;
 
@@ -281,7 +298,22 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
   try {
 
     let workerRes: WorkerPatchResponse | undefined;
-    if (partition.validBatch && deps.state.headOid) {
+    if (partition.validBatch) {
+      // A dry-run must never claim "passed" without a validated HEAD. Recover the
+      // current branch HEAD exactly like applyHudPatch instead of skipping the worker.
+      if (!isPatchSnapshotReady(deps.state)) {
+        deps.updateState({
+          status: 'PATCHING',
+          statusMessage: `🔄 No snapshot OID — resolving current HEAD of ${deps.config.repo}@${deps.config.branch}...`,
+        });
+        const resolvedOid = await requestBranchHead(deps.config, deps.config.repo, deps.config.branch);
+        setSourceHeadOid(deps.config, deps.state, resolvedOid);
+        deps.updateState({
+          status: 'PATCHING',
+          statusMessage: `🔄 Using current ${deps.config.branch} HEAD ${resolvedOid.slice(0, 7)} as concurrency token (no repo mix snapshot).`,
+        });
+      }
+
       const effectiveDryRun = deps.dryRun || partition.localErrors.length > 0;
       const patchReq = buildWorkerPatchRequest(
         deps.config,
@@ -302,61 +334,60 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
     ];
 
     if (allErrors.length > 0) {
-      deps.onMarkQueueSuperseded?.(deps.state.harvestedPatches.map((p) => p.id));
-      
-      // If focused check (single patch) and preflight failed, mark as revision pending
-      if (deps.isFocused && deps.state.harvestedPatches.length === 1) {
-        const patch = deps.state.harvestedPatches[0];
-        try {
-          const scopeKey = buildReviewScopeKey({
-            profileKey: deps.config.owner || deps.config.repo || 'default',
-            repoFullName: deps.config.repo,
-            sourceBranch: deps.config.branch,
-            targetBranch: deps.config.targetBranch || deps.config.branch,
-            convoKey: buildConvoKey()
-          });
-          const paths = Array.from(new Set(targetFiles.filter(Boolean)));
-          markRevisionPending(patch.id, scopeKey, paths);
-        } catch {}
+      // Only a real apply may replace the queue via self-healing; a dry-run keeps it.
+      if (!deps.dryRun) {
+        deps.onMarkQueueSuperseded?.(queue.map((p) => p.id));
       }
-      
-      if (deps.dryRun && !deps.isFocused) {
-        // For holistic check all (not focused), don't auto-submit repair prompt
+
+      if (deps.dryRun) {
+        // Focused check failures mark the actual queued patch as revision pending;
+        // dry-runs never inject a repair prompt (no commit, no auto-submit).
+        if (focusedPatch) {
+          focusedPatch.reviewStatus = 'revision-pending';
+          try {
+            const paths = Array.from(new Set(targetFiles.filter(Boolean)));
+            markRevisionPending(focusedPatch.id, currentReviewScope(deps.config), paths);
+          } catch {}
+        }
         deps.updateState({
           status: 'PREFLIGHT_FAILED',
-          statusMessage: `⚠️ Holistic check failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). Batch checked as a whole - use "Send Batch Repair Prompt" to get guidance.`,
+          statusMessage: focusedPatch
+            ? `⚠️ Check failed for this patch (${allErrors.length} error(s)). No commit was made; review the errors or click "Revise" to regenerate.`
+            : `⚠️ Holistic check failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). Batch checked as a whole - use "Send Batch Repair Prompt" to get guidance.`,
           retryCount: deps.state.retryCount,
           lastErrors: allErrors,
         });
         return false;
       }
-      
-      // For focused or apply operations, pass only affected patch errors/targets to self-healing
-      let targetFilesForHealing = targetFiles;
-      if (deps.isFocused && deps.state.harvestedPatches.length === 1) {
-        targetFilesForHealing = targetFiles;
-      }
-      
+
       return handlePreflightFailure(
         { status: 'PREFLIGHT_FAILED', errors: allErrors },
         deps.config,
         deps.state,
         deps.updateState,
-        deps.isFocused ? `Check failed for this patch.` : `Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)).`,
-        targetFilesForHealing
+        `Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)).`,
+        targetFiles
       );
     }
 
-    if (deps.dryRun || workerRes?.status === 'VALIDATED') {
+    if (deps.dryRun) {
+      if (workerRes?.status === 'VALIDATED') {
+        deps.updateState({
+          status: 'IDLE',
+          statusMessage: focusedPatch
+            ? `✅ This patch passed preflight & syntax validation (dry-run).`
+            : `✅ All ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) passed preflight & syntax validation! Click "⚡ Apply All" to commit.`,
+          lastErrors: [],
+          retryCount: 0,
+        });
+        return true;
+      }
+
       deps.updateState({
-        status: 'IDLE',
-        statusMessage: deps.isFocused 
-          ? `✅ This patch passed preflight & syntax validation (dry-run).`
-          : `✅ All ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) passed preflight & syntax validation! Click "⚡ Apply All" to commit.`,
-        lastErrors: [],
-        retryCount: 0,
+        status: 'ERROR',
+        statusMessage: `❌ Dry-run could not be validated: ${patchSnapshotRequiredMessage(deps.config, 'batch queue')}`,
       });
-      return true;
+      return false;
     }
 
     if (workerRes?.status === 'COMMITTED' || workerRes?.status === 'NO_CHANGES_NEEDED') {

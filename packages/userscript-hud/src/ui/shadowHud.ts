@@ -90,26 +90,27 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
   }
 
   let supersededPatchIds = new Set<string>();
-  let reviewScopeKey = buildReviewScopeKey({
-    profileKey: config.owner || config.repo || 'default',
-    repoFullName: config.repo,
-    sourceBranch: config.branch,
-    targetBranch: config.targetBranch || config.branch,
-    convoKey: buildConvoKey()
-  });
+
+  /** Review scope is derived from the live config so config changes never leave a stale key. */
+  function currentReviewScope() {
+    return {
+      profileKey: config.owner || config.repo || 'default',
+      repoFullName: config.repo,
+      sourceBranch: config.branch,
+      targetBranch: config.targetBranch || config.branch,
+      convoKey: buildConvoKey(),
+    };
+  }
+
+  function currentReviewScopeKey(): string {
+    return buildReviewScopeKey(currentReviewScope());
+  }
 
   /** Config changes invalidate every snapshot OID: they are repo+branch bound. */
   function resetPatchOidState(reason: string) {
     clearPatchOidState(state);
     supersededPatchIds.clear();
     state.continuationQueue = [];
-    reviewScopeKey = buildReviewScopeKey({
-      profileKey: config.owner || config.repo || 'default',
-      repoFullName: config.repo,
-      sourceBranch: config.branch,
-      targetBranch: config.targetBranch || config.branch,
-      convoKey: buildConvoKey()
-    });
     updateState({
       status: 'IDLE',
       statusMessage: `🔄 ${reason} Snapshot OID reset — click "Load Repo Mix" before applying patches.`,
@@ -127,6 +128,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       config,
       updateState: (partial) => updateState(partial),
       onApplyPatch: (patch) => { void handleApplyPatch(patch); },
+      onCheckPatch: (patch) => { void handleCheckPatch(patch); },
     });
   }
 
@@ -192,18 +194,16 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
 
   const handleCheckPatch = async (patch: HarvestedPatch): Promise<boolean> => {
     openPanel();
-    // Run focused dry-run check by creating a temporary queue with just this patch
-    const tempState = { ...state, harvestedPatches: [patch] } as HudState;
+    // Focused dry-run: the real state is passed so a failed check can park the
+    // actual queued patch as revision-pending without touching batch supersede state.
     return runHolisticQueuePatch({
       config,
-      state: tempState,
+      state,
       openPanel,
       updateState: (partial: Partial<HudState>) => updateState(partial),
       dryRun: true,
       isFocused: true,
-      onMarkQueueSuperseded: (_ids: string[]) => {
-        supersededPatchIds = new Set(_ids);
-      },
+      focusedPatchId: patch.id,
     });
   };
 
@@ -305,36 +305,23 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
         state.harvestedPatches = state.harvestedPatches.filter((p) => !supersededPatchIds.has(p.id));
         supersededPatchIds.clear();
       }
-      // Check for overlap replacement
+      // Check for overlap replacement across every pending entry for this scope.
       try {
-        const pendingList = getPendingForScope(reviewScopeKey);
-        // look for pending entries that overlap with this patch
-        const thisPaths = ((patch.payload?.patches || []) as any[]).map((op: any) => op.path).filter(Boolean);
+        const pendingList = getPendingForScope(currentReviewScopeKey());
+        const thisPaths = (patch.payload?.patches || [])
+          .map((op) => op.path)
+          .filter((path): path is string => Boolean(path));
         for (const pending of pendingList) {
-          if (pathsOverlap(thisPaths, pending.paths)) {
-            // remove predecessor if present
-            if (pending.patchId && pending.patchId !== patch.id) {
-              state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== pending.patchId);
-            }
-            restoreRevisionPending(pending.patchId, {
-              profileKey: config.owner || config.repo || 'default',
-              repoFullName: config.repo,
-              sourceBranch: config.branch,
-              targetBranch: config.targetBranch || config.branch,
-              convoKey: buildConvoKey()
-            });
-            break;
+          if (!pathsOverlap(thisPaths, pending.paths)) continue;
+          // remove predecessor if present
+          if (pending.patchId && pending.patchId !== patch.id) {
+            state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== pending.patchId);
           }
+          restoreRevisionPending(pending.patchId, currentReviewScope());
         }
       } catch {}
       // filter out pending patches for this scope
-      if (isRevisionPending(patch.id, {
-        profileKey: config.owner || config.repo || 'default',
-        repoFullName: config.repo,
-        sourceBranch: config.branch,
-        targetBranch: config.targetBranch || config.branch,
-        convoKey: buildConvoKey()
-      })) {
+      if (isRevisionPending(patch.id, currentReviewScope())) {
         return;
       }
       const next = enqueueHarvestedPatch(state.harvestedPatches, patch);
