@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.19
+// @version      0.80.20
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -539,8 +539,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
     return { applied, total };
   }
-  function partitionQueueForHolisticCheck(queue) {
-    const ordered = fifoQueue(activeQueue(queue));
+  function partitionQueueForHolisticCheck(queue, options) {
+    const sourceQueue = options?.includeRevisionPending ? queue : activeQueue(queue);
+    const ordered = fifoQueue(sourceQueue);
     const totalSnippets = ordered.length;
     const localErrors = [];
     const targetFiles = [];
@@ -831,7 +832,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   .hud-account-hint .hud-btn { margin-left: 6px; padding: 2px 6px; font-size: 10px; }
 `;
   var HUD_SHADOW_STYLES = HUD_STYLES;
-  function createHudElement(tag, className, textContent) {
+  function createHudElement2(tag, className, textContent) {
     const el = document.createElement(tag);
     if (className) el.className = className;
     if (textContent !== void 0) el.textContent = textContent;
@@ -844,80 +845,80 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     if (existing) {
       existing.remove();
     }
-    const host = createHudElement("div");
+    const host = createHudElement2("div");
     host.id = "gemini-edge-hud-root";
     host.style.cssText = "all: initial; position: fixed; z-index: 2147483647;";
     document.body.appendChild(host);
     const shadowRoot = host.attachShadow({ mode: "open" });
-    const styleEl = createHudElement("style");
+    const styleEl = createHudElement2("style");
     styleEl.textContent = HUD_STYLES;
     shadowRoot.appendChild(styleEl);
-    const trigger = createHudElement("div", "hud-trigger");
-    const triggerIcon = createHudElement("span", void 0, "\u26A1");
-    const triggerLabel = createHudElement("span", void 0, "Gemini Edge HUD");
-    const triggerBadge = createHudElement("span", "hud-trigger-badge idle", "IDLE");
+    const trigger = createHudElement2("div", "hud-trigger");
+    const triggerIcon = createHudElement2("span", void 0, "\u26A1");
+    const triggerLabel = createHudElement2("span", void 0, "Gemini Edge HUD");
+    const triggerBadge = createHudElement2("span", "hud-trigger-badge idle", "IDLE");
     trigger.appendChild(triggerIcon);
     trigger.appendChild(triggerLabel);
     trigger.appendChild(triggerBadge);
     shadowRoot.appendChild(trigger);
-    const panel = createHudElement("div", "hud-panel");
-    const header = createHudElement("div", "hud-header");
-    const title = createHudElement("div", "hud-title", "\u26A1 Cloudflare Edge HUD");
-    const updateCheckBtn = createHudElement("button", "hud-header-icon", "\u27F3");
+    const panel = createHudElement2("div", "hud-panel");
+    const header = createHudElement2("div", "hud-header");
+    const title = createHudElement2("div", "hud-title", "\u26A1 Cloudflare Edge HUD");
+    const updateCheckBtn = createHudElement2("button", "hud-header-icon", "\u27F3");
     updateCheckBtn.title = "Check published userscript version";
-    const closeBtn = createHudElement("button", "hud-close-btn", "\xD7");
+    const closeBtn = createHudElement2("button", "hud-close-btn", "\xD7");
     closeBtn.title = "Close Panel";
     header.appendChild(title);
     header.appendChild(updateCheckBtn);
     header.appendChild(closeBtn);
     panel.appendChild(header);
-    const body = createHudElement("div", "hud-body");
-    const updateBanner = createHudElement("div", "hud-update-banner");
-    const updateBannerText = createHudElement("span", void 0, "");
-    const updateBannerBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u2B06 Update");
+    const body = createHudElement2("div", "hud-body");
+    const updateBanner = createHudElement2("div", "hud-update-banner");
+    const updateBannerText = createHudElement2("span", void 0, "");
+    const updateBannerBtn = createHudElement2("button", "hud-btn hud-btn-primary", "\u2B06 Update");
     updateBanner.appendChild(updateBannerText);
     updateBanner.appendChild(updateBannerBtn);
     body.appendChild(updateBanner);
-    const repoOwnerGrid = createHudElement("div", "hud-repo-owner-grid");
-    const repoComboWrap = createHudElement("div", "hud-repo-combo-wrap");
-    const repoLabel = createHudElement("span", "hud-label", "GitHub Repository");
+    const repoOwnerGrid = createHudElement2("div", "hud-repo-owner-grid");
+    const repoComboWrap = createHudElement2("div", "hud-repo-combo-wrap");
+    const repoLabel = createHudElement2("span", "hud-label", "GitHub Repository");
     repoLabel.title = "GitHub Repository (owner/repo)";
-    const inputCombo = createHudElement("div", "hud-input-combo");
-    const repoInput = createHudElement("input", "hud-input");
+    const inputCombo = createHudElement2("div", "hud-input-combo");
+    const repoInput = createHudElement2("input", "hud-input");
     repoInput.value = config.repo;
-    const repoHistoryBtn = createHudElement("button", "hud-combo-arrow", "\u25BE");
+    const repoHistoryBtn = createHudElement2("button", "hud-combo-arrow", "\u25BE");
     repoHistoryBtn.type = "button";
     repoHistoryBtn.title = "Recent Repositories";
     inputCombo.appendChild(repoInput);
     inputCombo.appendChild(repoHistoryBtn);
-    const repoHistoryMenu = createHudElement("div", "hud-repo-menu");
+    const repoHistoryMenu = createHudElement2("div", "hud-repo-menu");
     repoHistoryMenu.style.display = "none";
     repoComboWrap.appendChild(repoLabel);
     repoComboWrap.appendChild(inputCombo);
     repoComboWrap.appendChild(repoHistoryMenu);
     repoOwnerGrid.appendChild(repoComboWrap);
-    const ownerRow = createHudElement("div", "hud-form-row");
-    const ownerLabel = createHudElement("span", "hud-label", "GitHub Owner");
+    const ownerRow = createHudElement2("div", "hud-form-row");
+    const ownerLabel = createHudElement2("span", "hud-label", "GitHub Owner");
     ownerLabel.title = "GitHub Owner (active account)";
-    const ownerInput = createHudElement("input", "hud-input");
+    const ownerInput = createHudElement2("input", "hud-input");
     ownerInput.value = config.owner;
     ownerRow.appendChild(ownerLabel);
     ownerRow.appendChild(ownerInput);
     repoOwnerGrid.appendChild(ownerRow);
     body.appendChild(repoOwnerGrid);
-    const ownerHintEl = createHudElement("div", "hud-account-hint");
+    const ownerHintEl = createHudElement2("div", "hud-account-hint");
     ownerHintEl.style.display = "none";
     body.appendChild(ownerHintEl);
-    const branchGrid = createHudElement("div", "hud-form-grid");
-    const branchRow = createHudElement("div", "hud-form-row");
-    const branchLabel = createHudElement("span", "hud-label", "Branch");
-    const branchInput = createHudElement("input", "hud-input");
+    const branchGrid = createHudElement2("div", "hud-form-grid");
+    const branchRow = createHudElement2("div", "hud-form-row");
+    const branchLabel = createHudElement2("span", "hud-label", "Branch");
+    const branchInput = createHudElement2("input", "hud-input");
     branchInput.value = config.branch;
     branchRow.appendChild(branchLabel);
     branchRow.appendChild(branchInput);
-    const targetBranchRow = createHudElement("div", "hud-form-row");
-    const targetBranchLabel = createHudElement("span", "hud-label", "Target Branch (optional)");
-    const targetBranchInput = createHudElement("input", "hud-input");
+    const targetBranchRow = createHudElement2("div", "hud-form-row");
+    const targetBranchLabel = createHudElement2("span", "hud-label", "Target Branch (optional)");
+    const targetBranchInput = createHudElement2("input", "hud-input");
     targetBranchInput.placeholder = "Same as mix branch (or e.g. preview, feature/...)";
     targetBranchInput.value = config.targetBranch || "";
     targetBranchRow.appendChild(targetBranchLabel);
@@ -925,17 +926,17 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     branchGrid.appendChild(branchRow);
     branchGrid.appendChild(targetBranchRow);
     body.appendChild(branchGrid);
-    const scopeGrid = createHudElement("div", "hud-form-grid");
-    const pathsRow = createHudElement("div", "hud-form-row");
-    const pathsLabel = createHudElement("span", "hud-label", "Include Paths (comma-separated, optional)");
-    const includePathsInput = createHudElement("input", "hud-input");
+    const scopeGrid = createHudElement2("div", "hud-form-grid");
+    const pathsRow = createHudElement2("div", "hud-form-row");
+    const pathsLabel = createHudElement2("span", "hud-label", "Include Paths (comma-separated, optional)");
+    const includePathsInput = createHudElement2("input", "hud-input");
     includePathsInput.placeholder = "e.g. src/, packages/edge-worker/";
     includePathsInput.value = (config.includePaths || []).join(", ");
     pathsRow.appendChild(pathsLabel);
     pathsRow.appendChild(includePathsInput);
-    const maxChunkRow = createHudElement("div", "hud-form-row");
-    const maxChunkLabel = createHudElement("span", "hud-label", "Max Chunk Chars (Default: 85000, Max 10 Parts)");
-    const maxChunkCharsInput = createHudElement("input", "hud-input");
+    const maxChunkRow = createHudElement2("div", "hud-form-row");
+    const maxChunkLabel = createHudElement2("span", "hud-label", "Max Chunk Chars (Default: 85000, Max 10 Parts)");
+    const maxChunkCharsInput = createHudElement2("input", "hud-input");
     maxChunkCharsInput.type = "number";
     maxChunkCharsInput.min = "10000";
     maxChunkCharsInput.max = "2000000";
@@ -945,25 +946,25 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     scopeGrid.appendChild(pathsRow);
     scopeGrid.appendChild(maxChunkRow);
     body.appendChild(scopeGrid);
-    const accountWorkerGrid = createHudElement("div", "hud-account-worker-grid");
-    const accountCol = createHudElement("div", "hud-form-row");
-    const accountLabel = createHudElement("span", "hud-label", "Account");
+    const accountWorkerGrid = createHudElement2("div", "hud-account-worker-grid");
+    const accountCol = createHudElement2("div", "hud-form-row");
+    const accountLabel = createHudElement2("span", "hud-label", "Account");
     accountLabel.title = "GitHub Account Profile (active)";
-    const accountBtnGroup = createHudElement("div", "hud-account-btns");
-    const accountBtn1 = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F464} Acc 1");
+    const accountBtnGroup = createHudElement2("div", "hud-account-btns");
+    const accountBtn1 = createHudElement2("button", "hud-btn hud-btn-secondary", "\u{1F464} Acc 1");
     accountBtn1.type = "button";
     accountBtn1.title = "Switch to GitHub Account Profile 1";
-    const accountBtn2 = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F464} Acc 2");
+    const accountBtn2 = createHudElement2("button", "hud-btn hud-btn-secondary", "\u{1F464} Acc 2");
     accountBtn2.type = "button";
     accountBtn2.title = "Switch to GitHub Account Profile 2";
     accountBtnGroup.appendChild(accountBtn1);
     accountBtnGroup.appendChild(accountBtn2);
     accountCol.appendChild(accountLabel);
     accountCol.appendChild(accountBtnGroup);
-    const workerUrlCol = createHudElement("div", "hud-form-row");
-    const workerUrlLabel = createHudElement("span", "hud-label", "Worker URL");
+    const workerUrlCol = createHudElement2("div", "hud-form-row");
+    const workerUrlLabel = createHudElement2("span", "hud-label", "Worker URL");
     workerUrlLabel.title = "Worker URL (Edge Worker Endpoint)";
-    const workerUrlInput = createHudElement("input", "hud-input");
+    const workerUrlInput = createHudElement2("input", "hud-input");
     workerUrlInput.type = "url";
     workerUrlInput.placeholder = "https://<your-worker>.workers.dev";
     workerUrlInput.value = config.workerUrl;
@@ -973,74 +974,74 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     accountWorkerGrid.appendChild(accountCol);
     accountWorkerGrid.appendChild(workerUrlCol);
     body.appendChild(accountWorkerGrid);
-    const secretGrid = createHudElement("div", "hud-form-grid");
-    const secretRow = createHudElement("div", "hud-form-row");
-    const secretLabel = createHudElement("span", "hud-label", "Worker Secret (WORKER_SECRET)");
-    const secretInput = createHudElement("input", "hud-input");
+    const secretGrid = createHudElement2("div", "hud-form-grid");
+    const secretRow = createHudElement2("div", "hud-form-row");
+    const secretLabel = createHudElement2("span", "hud-label", "Worker Secret (WORKER_SECRET)");
+    const secretInput = createHudElement2("input", "hud-input");
     secretInput.type = "password";
     secretInput.value = config.workerSecret;
     secretRow.appendChild(secretLabel);
     secretRow.appendChild(secretInput);
-    const oidRow = createHudElement("div", "hud-form-row");
-    const oidLabel = createHudElement("span", "hud-label", "Head OID (Optimistic Concurrency)");
-    const oidBadge = createHudElement("div", "hud-badge-oid", state.headOid || "(Not mixed yet)");
+    const oidRow = createHudElement2("div", "hud-form-row");
+    const oidLabel = createHudElement2("span", "hud-label", "Head OID (Optimistic Concurrency)");
+    const oidBadge = createHudElement2("div", "hud-badge-oid", state.headOid || "(Not mixed yet)");
     oidRow.appendChild(oidLabel);
     oidRow.appendChild(oidBadge);
     secretGrid.appendChild(secretRow);
     secretGrid.appendChild(oidRow);
     body.appendChild(secretGrid);
-    const actionRow = createHudElement("div");
+    const actionRow = createHudElement2("div");
     actionRow.style.cssText = "display: flex; gap: 8px;";
-    const mixBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u{1F4E6} Load Repo Mix (/api/mix)");
+    const mixBtn = createHudElement2("button", "hud-btn hud-btn-primary", "\u{1F4E6} Load Repo Mix (/api/mix)");
     mixBtn.style.flex = "1";
     actionRow.appendChild(mixBtn);
-    const continueMixBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u23ED\uFE0F Next Parts");
+    const continueMixBtn = createHudElement2("button", "hud-btn hud-btn-secondary", "\u23ED\uFE0F Next Parts");
     continueMixBtn.type = "button";
     continueMixBtn.style.display = "none";
     actionRow.appendChild(continueMixBtn);
-    const batchFormulaBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F9E9} Batch Formula");
+    const batchFormulaBtn = createHudElement2("button", "hud-btn hud-btn-secondary", "\u{1F9E9} Batch Formula");
     batchFormulaBtn.title = "Insert optimal V2 integratable batch prompt formula into chat";
     actionRow.appendChild(batchFormulaBtn);
     body.appendChild(actionRow);
-    const togglesRow = createHudElement("div", "hud-toggles-row");
-    const autoPilotGroup = createHudElement("div");
+    const togglesRow = createHudElement2("div", "hud-toggles-row");
+    const autoPilotGroup = createHudElement2("div");
     autoPilotGroup.style.cssText = "display: flex; align-items: center; gap: 6px;";
-    const autoPilotLabel = createHudElement("label", "hud-toggle-label");
+    const autoPilotLabel = createHudElement2("label", "hud-toggle-label");
     autoPilotLabel.title = 'Auto-Pilot: automatically injects focused self-healing prompts (max 3 retries) when a single-patch preflight fails. Manual "Send Self-Healing Prompt to Chat" available below.';
-    const autoPilotCheck = createHudElement("input");
+    const autoPilotCheck = createHudElement2("input");
     autoPilotCheck.type = "checkbox";
     autoPilotCheck.checked = config.autoPilot;
-    const autoPilotText = createHudElement("span", void 0, "\u{1F916} Auto-Pilot");
+    const autoPilotText = createHudElement2("span", void 0, "\u{1F916} Auto-Pilot");
     autoPilotLabel.appendChild(autoPilotCheck);
     autoPilotLabel.appendChild(autoPilotText);
-    const retryIndicator = createHudElement("span", "hud-retry-pill", "(" + state.retryCount + "/3)");
+    const retryIndicator = createHudElement2("span", "hud-retry-pill", "(" + state.retryCount + "/3)");
     autoPilotGroup.appendChild(autoPilotLabel);
     autoPilotGroup.appendChild(retryIndicator);
-    const recentCommitsLabel = createHudElement("label", "hud-toggle-label");
+    const recentCommitsLabel = createHudElement2("label", "hud-toggle-label");
     recentCommitsLabel.title = "Volatile Dateien & Letzte Commits in RepoMix einbeziehen";
-    const recentCommitsCheck = createHudElement("input");
+    const recentCommitsCheck = createHudElement2("input");
     recentCommitsCheck.type = "checkbox";
     recentCommitsCheck.checked = config.includeRecentCommits === true;
-    const recentCommitsText = createHudElement("span", void 0, "\u{1F552} Letzte Commits");
+    const recentCommitsText = createHudElement2("span", void 0, "\u{1F552} Letzte Commits");
     recentCommitsLabel.appendChild(recentCommitsCheck);
     recentCommitsLabel.appendChild(recentCommitsText);
     togglesRow.appendChild(autoPilotGroup);
     togglesRow.appendChild(recentCommitsLabel);
     body.appendChild(togglesRow);
-    const queueHeaderRow = createHudElement("div");
+    const queueHeaderRow = createHudElement2("div");
     queueHeaderRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-top: 4px;";
-    const queueLabel = createHudElement("span", "hud-label", "Harvested Patches");
-    const queueActions = createHudElement("div");
+    const queueLabel = createHudElement2("span", "hud-label", "Harvested Patches");
+    const queueActions = createHudElement2("div");
     queueActions.style.cssText = "display: flex; gap: 6px;";
-    const checkAllBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F50D} Check All");
+    const checkAllBtn = createHudElement2("button", "hud-btn hud-btn-secondary", "\u{1F50D} Check All");
     checkAllBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
     checkAllBtn.title = "Run holistic preflight check on all queued snippets (dry-run)";
     checkAllBtn.setAttribute("aria-label", "Check All (holistic dry-run)");
-    const applyAllBtn = createHudElement("button", "hud-btn hud-btn-primary", "\u26A1 Apply All");
+    const applyAllBtn = createHudElement2("button", "hud-btn hud-btn-primary", "\u26A1 Apply All");
     applyAllBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
     applyAllBtn.title = "Validate and apply all queued patches as a batch";
     applyAllBtn.setAttribute("aria-label", "Apply All");
-    const clearQueueBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F5D1}\uFE0F Clear Queue");
+    const clearQueueBtn = createHudElement2("button", "hud-btn hud-btn-secondary", "\u{1F5D1}\uFE0F Clear Queue");
     clearQueueBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
     clearQueueBtn.title = "Clear all harvested patches from queue";
     queueActions.appendChild(checkAllBtn);
@@ -1049,12 +1050,12 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     queueHeaderRow.appendChild(queueLabel);
     queueHeaderRow.appendChild(queueActions);
     body.appendChild(queueHeaderRow);
-    const patchQueueEl = createHudElement("div", "hud-patch-queue");
-    const emptyQueueMsg = createHudElement("div", void 0, "No patches harvested from chat yet.");
+    const patchQueueEl = createHudElement2("div", "hud-patch-queue");
+    const emptyQueueMsg = createHudElement2("div", void 0, "No patches harvested from chat yet.");
     emptyQueueMsg.style.cssText = "color: #64748b; font-size: 11px; text-align: center; padding: 6px;";
     patchQueueEl.appendChild(emptyQueueMsg);
     body.appendChild(patchQueueEl);
-    const statusBox = createHudElement("div", "hud-status-box idle", state.statusMessage);
+    const statusBox = createHudElement2("div", "hud-status-box idle", state.statusMessage);
     body.appendChild(statusBox);
     panel.appendChild(body);
     shadowRoot.appendChild(panel);
@@ -1559,7 +1560,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       dom.repoHistoryBtn.title = "Recent Repositories";
       entries.forEach((entry) => {
         const label = formatRepoHistoryLabel(entry);
-        const btn = createHudElement("button", "hud-repo-menu-item", label);
+        const btn = createHudElement2("button", "hud-repo-menu-item", label);
         btn.type = "button";
         btn.title = label;
         btn.onclick = (e) => {
@@ -1696,8 +1697,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       return;
     }
     const info = profileInfo(match);
-    const text = createHudElement("span", void 0, `\u26A0\uFE0F Dieses Repo geh\xF6rt zu ${info.label} (${info.workerName}).`);
-    const switchBtn = createHudElement("button", "hud-btn hud-btn-secondary", `\u{1F501} Zu ${info.label} wechseln`);
+    const text = createHudElement2("span", void 0, `\u26A0\uFE0F Dieses Repo geh\xF6rt zu ${info.label} (${info.workerName}).`);
+    const switchBtn = createHudElement2("button", "hud-btn hud-btn-secondary", `\u{1F501} Zu ${info.label} wechseln`);
     switchBtn.type = "button";
     switchBtn.onclick = () => switchViaHint(match);
     hint.appendChild(text);
@@ -1761,6 +1762,208 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     };
   }
 
+  // src/ui/hudRender.ts
+  function buildReviewScopeKeyLocal(config) {
+    try {
+      return buildReviewScopeKey({
+        profileKey: config.owner || config.repo || "default",
+        repoFullName: config.repo,
+        sourceBranch: config.branch,
+        targetBranch: config.targetBranch || config.branch,
+        convoKey: buildConvoKey()
+      });
+    } catch {
+      return "";
+    }
+  }
+  function renderHudState({
+    dom,
+    state,
+    config,
+    updateState,
+    onApplyPatch,
+    onCheckPatch,
+    onMarkQueueSuperseded
+  }) {
+    dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
+    dom.triggerBadge.textContent = state.status;
+    if (state.headOid) {
+      dom.oidBadge.textContent = state.headOid;
+      dom.oidBadge.style.color = "#6ee7b7";
+    } else {
+      dom.oidBadge.textContent = "(Not mixed yet)";
+      dom.oidBadge.style.color = "#94a3b8";
+    }
+    dom.retryIndicator.textContent = `(${state.retryCount}/3)`;
+    dom.retryIndicator.title = `Self-Healing Retries: ${state.retryCount}/3`;
+    const statusClasses = {
+      ERROR: "error",
+      PREFLIGHT_FAILED: "error",
+      GIT_CONFLICT: "error",
+      COMMITTED: "success",
+      MIXING: "info",
+      PATCHING: "info"
+    };
+    dom.statusBox.className = `hud-status-box ${statusClasses[state.status] || "idle"}`;
+    dom.statusBox.textContent = "";
+    const mainMsg = createHudElement("div", void 0, state.statusMessage);
+    dom.statusBox.appendChild(mainMsg);
+    if (state.lastErrors && state.lastErrors.length > 0) {
+      const errList = createHudElement("ul");
+      errList.style.cssText = "margin: 6px 0 0 16px; padding: 0; font-size: 11px;";
+      state.lastErrors.forEach((err) => {
+        const li = createHudElement("li", void 0, `[${err.stage}] ${err.file}: ${err.message}`);
+        errList.appendChild(li);
+      });
+      dom.statusBox.appendChild(errList);
+      const healBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F527} Send Self-Healing Prompt to Chat");
+      healBtn.title = "Send repair prompt for current errors (manual; does not auto-submit)";
+      healBtn.style.cssText = "margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;";
+      healBtn.onclick = () => {
+        const nextRetry = (state.retryCount || 0) + 1;
+        const targetFiles = [];
+        for (const p of state.harvestedPatches) {
+          for (const op of p.payload?.patches || []) {
+            if (op.path && !targetFiles.includes(op.path)) targetFiles.push(op.path);
+          }
+        }
+        const prompt = buildSelfHealingPrompt(
+          state.lastErrors,
+          config.repo,
+          config.branch,
+          state.headOid,
+          nextRetry,
+          {
+            targetFiles,
+            targetBranch: config.targetBranch?.trim() || void 0
+          }
+        );
+        injectPromptText(prompt, false);
+        const supersedeIds = state.harvestedPatches.filter((p) => p.reviewStatus !== "revision-pending").map((p) => p.id);
+        if (supersedeIds.length > 0) {
+          onMarkQueueSuperseded?.(supersedeIds);
+        }
+        updateState({
+          retryCount: nextRetry,
+          statusMessage: `\u{1F527} Injected self-healing prompt (Turn ${nextRetry}/${MAX_SELF_HEALING_RETRIES}) into chat.`
+        });
+      };
+      dom.statusBox.appendChild(healBtn);
+    }
+    const activeCount = activeQueue(state.harvestedPatches).length;
+    const patchCount = state.harvestedPatches.length;
+    const isBusy = state.status === "PATCHING" || state.status === "MIXING";
+    if (dom.checkAllBtn && dom.applyAllBtn) {
+      let hintEl = dom.patchQueueEl.parentElement?.querySelector(".hud-queue-hint");
+      if (!hintEl) {
+        hintEl = document.createElement("div");
+        hintEl.className = "hud-queue-hint";
+        hintEl.style.cssText = "color: #94a3b8; font-size: 10px; margin-top: 4px; margin-bottom: 4px;";
+        const queueHeader = dom.patchQueueEl.previousElementSibling;
+        if (queueHeader && queueHeader.parentElement) {
+          queueHeader.parentElement.insertBefore(hintEl, dom.patchQueueEl);
+        }
+      }
+      hintEl.textContent = "Check = this patch only; Check All = complete queue including dependencies.";
+    }
+    if (state.continuationQueue && state.continuationQueue.length > 0) {
+      const nextBatch = state.continuationQueue.slice(0, 10);
+      const first = nextBatch[0]?.partIndex ?? 11;
+      const last = nextBatch[nextBatch.length - 1]?.partIndex ?? first;
+      const fileCount = nextBatch.reduce((sum, p) => sum + (p.stats?.fileCount ?? 0), 0);
+      const totalRemaining = state.continuationQueue.length;
+      dom.continueMixBtn.style.display = "inline-flex";
+      dom.continueMixBtn.disabled = isBusy;
+      dom.continueMixBtn.textContent = `\u23ED\uFE0F Parts ${first}\u2013${last}`;
+      dom.continueMixBtn.title = `Inject Parts ${first}\u2013${last} (${fileCount} files, ${totalRemaining} part(s) remaining in queue)`;
+    } else {
+      dom.continueMixBtn.style.display = "none";
+    }
+    dom.checkAllBtn.disabled = activeCount === 0 || isBusy;
+    dom.checkAllBtn.textContent = activeCount > 0 ? `\u{1F50D} Check All (${activeCount})` : "\u{1F50D} Check All";
+    dom.checkAllBtn.title = "Check = this patch only (dry-run). Check All = complete queue including dependencies.";
+    dom.applyAllBtn.disabled = activeCount === 0 || isBusy;
+    dom.applyAllBtn.textContent = activeCount > 0 ? `\u26A1 Apply All (${activeCount})` : "\u26A1 Apply All";
+    dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
+    dom.patchQueueEl.textContent = "";
+    if (state.harvestedPatches.length === 0) {
+      dom.patchQueueEl.appendChild(dom.emptyQueueMsg);
+    } else {
+      state.harvestedPatches.forEach((patch) => {
+        const item = createHudElement("div", "hud-patch-item");
+        if (patch.reviewStatus === "revision-pending") {
+          item.classList.add("hud-patch-item-pending");
+        }
+        const meta = createHudElement("div", "hud-patch-item-meta");
+        const paths = (patch.payload.patches || []).map((p) => p.path);
+        const pathLabel = paths.length > 0 ? paths.join(", ") : patch.commitMessage;
+        const itemTitle = createHudElement(
+          "div",
+          "hud-patch-item-title",
+          `${patch.mode === "v2_json" ? "\u26A1" : "\u{1F4DD}"} ${pathLabel}`
+        );
+        itemTitle.title = pathLabel;
+        const itemSub = createHudElement("div", "hud-patch-item-sub", patch.commitMessage);
+        itemSub.title = patch.commitMessage;
+        meta.appendChild(itemTitle);
+        meta.appendChild(itemSub);
+        if (patch.reviewStatus === "revision-pending") {
+          const pendingNote = createHudElement("div", "hud-patch-item-pending-note", "\u23F8\uFE0F Revision pending \u2014 ignored after reload until restored or replaced");
+          pendingNote.style.cssText = "color: #fbbf24; font-size: 10px; margin-top: 2px;";
+          meta.appendChild(pendingNote);
+        }
+        const actions = createHudElement("div", "hud-patch-item-actions");
+        actions.style.cssText = "display: flex; gap: 4px; flex-wrap: wrap;";
+        if (patch.reviewStatus === "revision-pending") {
+          const restoreBtn = createHudElement("button", "hud-btn hud-btn-secondary", "Restore");
+          restoreBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
+          restoreBtn.onclick = () => {
+            try {
+              const scopeKey = buildReviewScopeKeyLocal(config);
+              restoreRevisionPending(patch.id, scopeKey);
+            } catch {
+            }
+            patch.reviewStatus = "active";
+            updateState({});
+          };
+          actions.appendChild(restoreBtn);
+        } else {
+          const checkBtn = createHudElement("button", "hud-btn hud-btn-secondary", "Check");
+          checkBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
+          checkBtn.title = "Check this patch only (dry-run)";
+          checkBtn.onclick = () => {
+            onCheckPatch?.(patch);
+          };
+          const applyBtn = createHudElement("button", "hud-btn hud-btn-primary", "Apply");
+          applyBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
+          applyBtn.disabled = isBusy;
+          applyBtn.onclick = () => {
+            onApplyPatch(patch);
+          };
+          const reviseBtn = createHudElement("button", "hud-btn hud-btn-secondary", "Revise");
+          reviseBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
+          reviseBtn.onclick = () => {
+            try {
+              const scopeKey = buildReviewScopeKeyLocal(config);
+              markRevisionPending(patch.id, scopeKey, paths.filter(Boolean));
+            } catch {
+            }
+            patch.reviewStatus = "revision-pending";
+            updateState({});
+          };
+          actions.appendChild(checkBtn);
+          actions.appendChild(applyBtn);
+          actions.appendChild(reviseBtn);
+        }
+        meta.appendChild(itemTitle);
+        meta.appendChild(itemSub);
+        item.appendChild(meta);
+        item.appendChild(actions);
+        dom.patchQueueEl.appendChild(item);
+      });
+    }
+  }
+
   // src/dom/injector.ts
   function findPromptInputElement() {
     if (typeof document === "undefined") return null;
@@ -1817,7 +2020,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   function injectRepoMixFile(xmlContent, fileName = "repo-mix.txt") {
     return injectRepoMixParts([{ fileName, xmlContent }]);
   }
-  function injectPromptText(promptText, autoSubmit = false) {
+  function injectPromptText2(promptText, autoSubmit = false) {
     if (typeof document === "undefined") return false;
     const inputEl = findPromptInputElement();
     if (!inputEl) {
@@ -1869,431 +2072,6 @@ ${promptText}` : promptText).replace(/\u200B/g, "");
       }, 300);
     }
     return true;
-  }
-
-  // src/services/selfHealing.ts
-  var MAX_SELF_HEALING_RETRIES = 3;
-  function buildSelfHealingPrompt(errors, repo, branch, headOid, retryAttempt, options) {
-    const formattedErrors = errors.map((err, idx) => {
-      const loc = err.line ? err.column ? `:${err.line}:${err.column}` : `:${err.line}` : "";
-      const snippet = err.codeSnippet ? `
-   > ${err.codeSnippet}` : "";
-      return `${idx + 1}. [Stage: ${err.stage}] ${err.file}${loc} \u2014 ${err.message}${snippet}`;
-    }).join("\n");
-    const targetBranch = options?.targetBranch?.trim() || branch;
-    const targetFilesStr = options?.targetFiles && options.targetFiles.length > 0 ? options.targetFiles.join(", ") : "(resolve all affected files from errors below)";
-    return `#solve Linter & Preflight Self-Healing Loop (Retry ${retryAttempt}/${MAX_SELF_HEALING_RETRIES})
-
-The previous patch for repository "${repo}" on branch "${targetBranch}" was rejected during preflight validation.
-Expected HEAD commit: "${headOid}".
-Target Files in Scope: ${targetFilesStr}
-
-Aggregated Preflight & Snippet Errors (${errors.length}):
-${formattedErrors}
-
-Fix Instructions:
-1. Fix ALL listed syntax, missing-path, and rule errors across all affected files in a single cohesive response.
-2. Hard Guardrail: NEVER use placeholder comments like "// ... existing code ...", "/* remaining code */", or "# ... existing code ...". Always provide complete search/replace blocks or full file content.
-3. Anchor Context: Provide 2\u20134 lines of verbatim surrounding context in each search block so patches match unambiguously. Never reorder or alter union types in unmodified signature anchors.
-4. Output Format: Emit exactly ONE directly importable Markdown/JSON patch block (\`\`\`json or \`\`\`md) containing a single valid GeminiPatchPayload JSON object. Every patch in "patches" MUST include an exact repo-relative "path" (e.g. "src/App.tsx") and at most one entry per file:
-\`\`\`json
-{
-  "commitMessage": "fix: resolve preflight linter errors (retry ${retryAttempt})",
-  "patches": [
-    {
-      "path": "path/to/file.ext",
-      "action": "modify",
-      "blocks": [
-        {
-          "search": "exact string to replace",
-          "replace": "replacement string"
-        }
-      ]
-    }
-  ]
-}
-\`\`\`
-`;
-  }
-  function shouldTriggerSelfHealing(response, autoPilot, currentRetryCount) {
-    if (response.status === "COMMITTED") {
-      return {
-        trigger: false,
-        nextRetryCount: 0,
-        reason: "COMMITTED_SUCCESS"
-      };
-    }
-    if (response.status !== "PREFLIGHT_FAILED") {
-      return {
-        trigger: false,
-        nextRetryCount: currentRetryCount,
-        reason: "STATUS_NOT_PREFLIGHT_FAILED"
-      };
-    }
-    if (!Array.isArray(response.errors) || response.errors.length === 0) {
-      return {
-        trigger: false,
-        nextRetryCount: currentRetryCount,
-        reason: "NO_ERRORS_REPORTED"
-      };
-    }
-    if (currentRetryCount >= MAX_SELF_HEALING_RETRIES) {
-      return {
-        trigger: false,
-        nextRetryCount: currentRetryCount,
-        reason: "MAX_RETRIES_EXCEEDED"
-      };
-    }
-    if (!autoPilot) {
-      return {
-        trigger: false,
-        nextRetryCount: currentRetryCount,
-        reason: "AUTOPILOT_DISABLED"
-      };
-    }
-    return {
-      trigger: true,
-      nextRetryCount: currentRetryCount + 1,
-      reason: "PREFLIGHT_FAILED_AUTO_RETRY"
-    };
-  }
-  function executeSelfHealingTurn(response, cfg, state, autoSubmit = true, targetFiles) {
-    const evalResult = shouldTriggerSelfHealing(response, cfg.autoPilot, state.retryCount);
-    if (!evalResult.trigger) {
-      return {
-        triggered: false,
-        nextRetryCount: evalResult.nextRetryCount,
-        reason: evalResult.reason
-      };
-    }
-    const prompt = buildSelfHealingPrompt(
-      response.errors || [],
-      cfg.repo,
-      cfg.branch,
-      state.headOid,
-      evalResult.nextRetryCount,
-      {
-        targetFiles,
-        targetBranch: cfg.targetBranch?.trim() || void 0
-      }
-    );
-    injectPromptText(prompt, autoSubmit);
-    return {
-      triggered: true,
-      nextRetryCount: evalResult.nextRetryCount,
-      prompt,
-      reason: evalResult.reason
-    };
-  }
-
-  // src/services/patchReviewStore.ts
-  var REVIEW_STORE_KEY = "patch_review_store_v1";
-  var MAX_RECORDS_PER_SCOPE = 50;
-  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
-  function loadStore() {
-    try {
-      const raw = getStoredValue(REVIEW_STORE_KEY, "");
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((r) => r && typeof r.patchId === "string" && typeof r.timestamp === "number");
-    } catch {
-      return [];
-    }
-  }
-  function saveStore(records) {
-    try {
-      setStoredValue(REVIEW_STORE_KEY, JSON.stringify(records));
-    } catch {
-    }
-  }
-  function normalizeScopeKeyParts(parts) {
-    return [
-      (parts.profileKey || "").toLowerCase().trim(),
-      (parts.repoFullName || "").toLowerCase().trim(),
-      (parts.sourceBranch || "").toLowerCase().trim(),
-      (parts.targetBranch || "").toLowerCase().trim(),
-      (parts.convoKey || "").trim()
-    ].join("|");
-  }
-  function buildConvoKey() {
-    try {
-      if (typeof window !== "undefined") {
-        const loc = window.location;
-        if (loc && loc.origin && loc.pathname) {
-          const base = loc.origin + loc.pathname;
-          if (base.length > 0) return base;
-        }
-      }
-    } catch {
-    }
-    try {
-      if (typeof sessionStorage !== "undefined") {
-        let sid = sessionStorage.getItem("ggb_review_convo_session");
-        if (!sid) {
-          sid = "sess_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-          sessionStorage.setItem("ggb_review_convo_session", sid);
-        }
-        return sid;
-      }
-    } catch {
-    }
-    return "default";
-  }
-  function buildReviewScopeKey(parts) {
-    return normalizeScopeKeyParts({ ...parts, convoKey: parts.convoKey || buildConvoKey() });
-  }
-  function resolveReviewScopeKey(scope) {
-    return typeof scope === "string" ? scope : buildReviewScopeKey(scope);
-  }
-  function isRevisionPending(patchId, scope) {
-    const scopeKey = resolveReviewScopeKey(scope);
-    const now = Date.now();
-    const records = loadStore().filter((r) => now - r.timestamp <= MAX_AGE_MS);
-    if (records.length !== loadStore().length) {
-      saveStore(records);
-    }
-    return records.some((r) => r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey);
-  }
-  function markRevisionPending(patchId, scope, paths) {
-    const scopeKey = resolveReviewScopeKey(scope);
-    const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
-    const filtered = records.filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
-    const parts = scopeKey.split("|");
-    const record = {
-      patchId,
-      profileKey: parts[0] || "",
-      repoFullName: parts[1] || "",
-      sourceBranch: parts[2] || "",
-      targetBranch: parts[3] || "",
-      convoKey: parts[4] || buildConvoKey(),
-      paths: paths.filter(Boolean),
-      timestamp: Date.now()
-    };
-    filtered.push(record);
-    const scopeRecords = filtered.filter((r) => normalizeScopeKeyParts(r) === scopeKey);
-    const otherRecords = filtered.filter((r) => normalizeScopeKeyParts(r) !== scopeKey);
-    if (scopeRecords.length > MAX_RECORDS_PER_SCOPE) {
-      scopeRecords.sort((a, b) => a.timestamp - b.timestamp);
-      scopeRecords.splice(0, scopeRecords.length - MAX_RECORDS_PER_SCOPE);
-    }
-    saveStore([...otherRecords, ...scopeRecords]);
-  }
-  function restoreRevisionPending(patchId, scope) {
-    const scopeKey = resolveReviewScopeKey(scope);
-    const records = loadStore().filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
-    saveStore(records);
-  }
-  function getPendingForScope(scope) {
-    const scopeKey = resolveReviewScopeKey(scope);
-    const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
-    return records.filter((r) => normalizeScopeKeyParts(r) === scopeKey);
-  }
-  function canonicalPathKey(path) {
-    return normalizeRepoPath(path).toLowerCase();
-  }
-  function pathsOverlap(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b)) return false;
-    const setA = new Set(a.filter(Boolean).map(canonicalPathKey).filter(Boolean));
-    for (const p of b) {
-      if (!p) continue;
-      if (setA.has(canonicalPathKey(p))) return true;
-    }
-    return false;
-  }
-
-  // src/ui/hudRender.ts
-  function buildReviewScopeKeyLocal(config) {
-    try {
-      return buildReviewScopeKey({
-        profileKey: config.owner || config.repo || "default",
-        repoFullName: config.repo,
-        sourceBranch: config.branch,
-        targetBranch: config.targetBranch || config.branch,
-        convoKey: buildConvoKey()
-      });
-    } catch {
-      return "";
-    }
-  }
-  function renderHudState({
-    dom,
-    state,
-    config,
-    updateState,
-    onApplyPatch,
-    onCheckPatch
-  }) {
-    dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
-    dom.triggerBadge.textContent = state.status;
-    if (state.headOid) {
-      dom.oidBadge.textContent = state.headOid;
-      dom.oidBadge.style.color = "#6ee7b7";
-    } else {
-      dom.oidBadge.textContent = "(Not mixed yet)";
-      dom.oidBadge.style.color = "#94a3b8";
-    }
-    dom.retryIndicator.textContent = `(${state.retryCount}/3)`;
-    dom.retryIndicator.title = `Self-Healing Retries: ${state.retryCount}/3`;
-    const statusClasses = {
-      ERROR: "error",
-      PREFLIGHT_FAILED: "error",
-      GIT_CONFLICT: "error",
-      COMMITTED: "success",
-      MIXING: "info",
-      PATCHING: "info"
-    };
-    dom.statusBox.className = `hud-status-box ${statusClasses[state.status] || "idle"}`;
-    dom.statusBox.textContent = "";
-    const mainMsg = createHudElement("div", void 0, state.statusMessage);
-    dom.statusBox.appendChild(mainMsg);
-    if (state.lastErrors && state.lastErrors.length > 0) {
-      const errList = createHudElement("ul");
-      errList.style.cssText = "margin: 6px 0 0 16px; padding: 0; font-size: 11px;";
-      state.lastErrors.forEach((err) => {
-        const li = createHudElement("li", void 0, `[${err.stage}] ${err.file}: ${err.message}`);
-        errList.appendChild(li);
-      });
-      dom.statusBox.appendChild(errList);
-      const healBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F527} Send Self-Healing Prompt to Chat");
-      healBtn.title = "Send repair prompt for current errors (manual; does not auto-submit)";
-      healBtn.style.cssText = "margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;";
-      healBtn.onclick = () => {
-        const nextRetry = (state.retryCount || 0) + 1;
-        const targetFiles = [];
-        for (const p of state.harvestedPatches) {
-          for (const op of p.payload?.patches || []) {
-            if (op.path && !targetFiles.includes(op.path)) targetFiles.push(op.path);
-          }
-        }
-        const prompt = buildSelfHealingPrompt(
-          state.lastErrors,
-          config.repo,
-          config.branch,
-          state.headOid,
-          nextRetry,
-          {
-            targetFiles,
-            targetBranch: config.targetBranch?.trim() || void 0
-          }
-        );
-        injectPromptText(prompt, false);
-        updateState({
-          retryCount: nextRetry,
-          statusMessage: `\u{1F527} Injected self-healing prompt (Turn ${nextRetry}/${MAX_SELF_HEALING_RETRIES}) into chat.`
-        });
-      };
-      dom.statusBox.appendChild(healBtn);
-    }
-    const patchCount = state.harvestedPatches.length;
-    const isBusy = state.status === "PATCHING" || state.status === "MIXING";
-    if (dom.checkAllBtn && dom.applyAllBtn) {
-      let hintEl = dom.patchQueueEl.parentElement?.querySelector(".hud-queue-hint");
-      if (!hintEl) {
-        hintEl = document.createElement("div");
-        hintEl.className = "hud-queue-hint";
-        hintEl.style.cssText = "color: #94a3b8; font-size: 10px; margin-top: 4px; margin-bottom: 4px;";
-        const queueHeader = dom.patchQueueEl.previousElementSibling;
-        if (queueHeader && queueHeader.parentElement) {
-          queueHeader.parentElement.insertBefore(hintEl, dom.patchQueueEl);
-        }
-      }
-      hintEl.textContent = "Check = this patch only; Check All = complete queue including dependencies.";
-    }
-    if (state.continuationQueue && state.continuationQueue.length > 0) {
-      const nextBatch = state.continuationQueue.slice(0, 10);
-      const first = nextBatch[0]?.partIndex ?? 11;
-      const last = nextBatch[nextBatch.length - 1]?.partIndex ?? first;
-      const fileCount = nextBatch.reduce((sum, p) => sum + (p.stats?.fileCount ?? 0), 0);
-      const totalRemaining = state.continuationQueue.length;
-      dom.continueMixBtn.style.display = "inline-flex";
-      dom.continueMixBtn.disabled = isBusy;
-      dom.continueMixBtn.textContent = `\u23ED\uFE0F Parts ${first}\u2013${last}`;
-      dom.continueMixBtn.title = `Inject Parts ${first}\u2013${last} (${fileCount} files, ${totalRemaining} part(s) remaining in queue)`;
-    } else {
-      dom.continueMixBtn.style.display = "none";
-    }
-    dom.checkAllBtn.disabled = patchCount === 0 || isBusy;
-    dom.checkAllBtn.textContent = patchCount > 0 ? `\u{1F50D} Check All (${patchCount})` : "\u{1F50D} Check All";
-    dom.checkAllBtn.title = "Check = this patch only (dry-run). Check All = complete queue including dependencies.";
-    dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
-    dom.applyAllBtn.textContent = patchCount > 0 ? `\u26A1 Apply All (${patchCount})` : "\u26A1 Apply All";
-    dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
-    dom.patchQueueEl.textContent = "";
-    if (state.harvestedPatches.length === 0) {
-      dom.patchQueueEl.appendChild(dom.emptyQueueMsg);
-    } else {
-      state.harvestedPatches.forEach((patch) => {
-        const item = createHudElement("div", "hud-patch-item");
-        if (patch.reviewStatus === "revision-pending") {
-          item.classList.add("hud-patch-item-pending");
-        }
-        const meta = createHudElement("div", "hud-patch-item-meta");
-        const paths = (patch.payload.patches || []).map((p) => p.path);
-        const pathLabel = paths.length > 0 ? paths.join(", ") : patch.commitMessage;
-        const itemTitle = createHudElement(
-          "div",
-          "hud-patch-item-title",
-          `${patch.mode === "v2_json" ? "\u26A1" : "\u{1F4DD}"} ${pathLabel}`
-        );
-        itemTitle.title = pathLabel;
-        const itemSub = createHudElement("div", "hud-patch-item-sub", patch.commitMessage);
-        itemSub.title = patch.commitMessage;
-        if (patch.reviewStatus === "revision-pending") {
-          const pendingNote = createHudElement("div", "hud-patch-item-pending-note", "\u23F8\uFE0F Revision pending \u2014 ignored after reload until restored or replaced");
-          pendingNote.style.cssText = "color: #fbbf24; font-size: 10px; margin-top: 2px;";
-          item.appendChild(pendingNote);
-        }
-        const actions = createHudElement("div", "hud-patch-item-actions");
-        actions.style.cssText = "display: flex; gap: 4px; flex-wrap: wrap;";
-        if (patch.reviewStatus === "revision-pending") {
-          const restoreBtn = createHudElement("button", "hud-btn hud-btn-secondary", "Restore");
-          restoreBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
-          restoreBtn.onclick = () => {
-            try {
-              const scopeKey = buildReviewScopeKeyLocal(config);
-              restoreRevisionPending(patch.id, scopeKey);
-            } catch {
-            }
-            patch.reviewStatus = "active";
-            updateState({});
-          };
-          actions.appendChild(restoreBtn);
-        } else {
-          const checkBtn = createHudElement("button", "hud-btn hud-btn-secondary", "Check");
-          checkBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
-          checkBtn.title = "Check this patch only (dry-run)";
-          checkBtn.onclick = () => {
-            onCheckPatch?.(patch);
-          };
-          const applyBtn = createHudElement("button", "hud-btn hud-btn-primary", "Apply");
-          applyBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
-          applyBtn.disabled = isBusy;
-          applyBtn.onclick = () => {
-            onApplyPatch(patch);
-          };
-          const reviseBtn = createHudElement("button", "hud-btn hud-btn-secondary", "Revise");
-          reviseBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
-          reviseBtn.onclick = () => {
-            try {
-              const scopeKey = buildReviewScopeKeyLocal(config);
-              markRevisionPending(patch.id, scopeKey, paths.filter(Boolean));
-            } catch {
-            }
-            patch.reviewStatus = "revision-pending";
-            updateState({});
-          };
-          actions.appendChild(checkBtn);
-          actions.appendChild(applyBtn);
-          actions.appendChild(reviseBtn);
-        }
-        meta.appendChild(itemTitle);
-        meta.appendChild(itemSub);
-        item.appendChild(meta);
-        item.appendChild(actions);
-        dom.patchQueueEl.appendChild(item);
-      });
-    }
   }
 
   // src/services/batchFormula.ts
@@ -2574,7 +2352,7 @@ Fix Instructions:
       }
       const promptText = ("value" in promptEl ? promptEl.value : promptEl.textContent) || "";
       if (promptText.trim().length === 0) {
-        injectPromptText(
+        injectPromptText2(
           `[RepoMix Continuation: Parts ${first}\u2013${last} for ${config.repo} (${config.branch})]`,
           false
         );
@@ -2598,10 +2376,125 @@ Fix Instructions:
       }
     };
     dom.batchFormulaBtn.onclick = () => {
-      const injected = injectPromptText(buildBatchFormulaPrompt(config, state), false);
+      const injected = injectPromptText2(buildBatchFormulaPrompt(config, state), false);
       updateState({
         statusMessage: injected ? "\u{1F4CB} Injected optimal V2 Batch Formula into chat prompt." : "\u274C Could not find the chat prompt input to inject the Batch Formula."
       });
+    };
+  }
+
+  // src/services/selfHealing.ts
+  var MAX_SELF_HEALING_RETRIES2 = 3;
+  function buildSelfHealingPrompt2(errors, repo, branch, headOid, retryAttempt, options) {
+    const formattedErrors = errors.map((err, idx) => {
+      const loc = err.line ? err.column ? `:${err.line}:${err.column}` : `:${err.line}` : "";
+      const snippet = err.codeSnippet ? `
+   > ${err.codeSnippet}` : "";
+      return `${idx + 1}. [Stage: ${err.stage}] ${err.file}${loc} \u2014 ${err.message}${snippet}`;
+    }).join("\n");
+    const targetBranch = options?.targetBranch?.trim() || branch;
+    const targetFilesStr = options?.targetFiles && options.targetFiles.length > 0 ? options.targetFiles.join(", ") : "(resolve all affected files from errors below)";
+    return `#solve Linter & Preflight Self-Healing Loop (Retry ${retryAttempt}/${MAX_SELF_HEALING_RETRIES2})
+
+The previous patch for repository "${repo}" on branch "${targetBranch}" was rejected during preflight validation.
+Expected HEAD commit: "${headOid}".
+Target Files in Scope: ${targetFilesStr}
+
+Aggregated Preflight & Snippet Errors (${errors.length}):
+${formattedErrors}
+
+Fix Instructions:
+1. Fix ALL listed syntax, missing-path, and rule errors across all affected files in a single cohesive response.
+2. Hard Guardrail: NEVER use placeholder comments like "// ... existing code ...", "/* remaining code */", or "# ... existing code ...". Always provide complete search/replace blocks or full file content.
+3. Anchor Context: Provide 2\u20134 lines of verbatim surrounding context in each search block so patches match unambiguously. Never reorder or alter union types in unmodified signature anchors.
+4. Output Format: Emit exactly ONE directly importable Markdown/JSON patch block (\`\`\`json or \`\`\`md) containing a single valid GeminiPatchPayload JSON object. Every patch in "patches" MUST include an exact repo-relative "path" (e.g. "src/App.tsx") and at most one entry per file:
+\`\`\`json
+{
+  "commitMessage": "fix: resolve preflight linter errors (retry ${retryAttempt})",
+  "patches": [
+    {
+      "path": "path/to/file.ext",
+      "action": "modify",
+      "blocks": [
+        {
+          "search": "exact string to replace",
+          "replace": "replacement string"
+        }
+      ]
+    }
+  ]
+}
+\`\`\`
+`;
+  }
+  function shouldTriggerSelfHealing(response, autoPilot, currentRetryCount) {
+    if (response.status === "COMMITTED") {
+      return {
+        trigger: false,
+        nextRetryCount: 0,
+        reason: "COMMITTED_SUCCESS"
+      };
+    }
+    if (response.status !== "PREFLIGHT_FAILED") {
+      return {
+        trigger: false,
+        nextRetryCount: currentRetryCount,
+        reason: "STATUS_NOT_PREFLIGHT_FAILED"
+      };
+    }
+    if (!Array.isArray(response.errors) || response.errors.length === 0) {
+      return {
+        trigger: false,
+        nextRetryCount: currentRetryCount,
+        reason: "NO_ERRORS_REPORTED"
+      };
+    }
+    if (currentRetryCount >= MAX_SELF_HEALING_RETRIES2) {
+      return {
+        trigger: false,
+        nextRetryCount: currentRetryCount,
+        reason: "MAX_RETRIES_EXCEEDED"
+      };
+    }
+    if (!autoPilot) {
+      return {
+        trigger: false,
+        nextRetryCount: currentRetryCount,
+        reason: "AUTOPILOT_DISABLED"
+      };
+    }
+    return {
+      trigger: true,
+      nextRetryCount: currentRetryCount + 1,
+      reason: "PREFLIGHT_FAILED_AUTO_RETRY"
+    };
+  }
+  function executeSelfHealingTurn(response, cfg, state, autoSubmit = true, targetFiles) {
+    const evalResult = shouldTriggerSelfHealing(response, cfg.autoPilot, state.retryCount);
+    if (!evalResult.trigger) {
+      return {
+        triggered: false,
+        nextRetryCount: evalResult.nextRetryCount,
+        reason: evalResult.reason
+      };
+    }
+    const prompt = buildSelfHealingPrompt2(
+      response.errors || [],
+      cfg.repo,
+      cfg.branch,
+      state.headOid,
+      evalResult.nextRetryCount,
+      {
+        targetFiles,
+        targetBranch: cfg.targetBranch?.trim() || void 0
+      }
+    );
+    injectPromptText2(prompt, autoSubmit);
+    return {
+      triggered: true,
+      nextRetryCount: evalResult.nextRetryCount,
+      prompt,
+      reason: evalResult.reason
     };
   }
 
@@ -2629,6 +2522,122 @@ Fix Instructions:
       missing[index].path = candidate;
     }
     return { payload: { ...payload, patches }, cancelled: false };
+  }
+
+  // src/services/patchReviewStore.ts
+  var REVIEW_STORE_KEY = "patch_review_store_v1";
+  var MAX_RECORDS_PER_SCOPE = 50;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+  function loadStore() {
+    try {
+      const raw = getStoredValue(REVIEW_STORE_KEY, "");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((r) => r && typeof r.patchId === "string" && typeof r.timestamp === "number");
+    } catch {
+      return [];
+    }
+  }
+  function saveStore(records) {
+    try {
+      setStoredValue(REVIEW_STORE_KEY, JSON.stringify(records));
+    } catch {
+    }
+  }
+  function normalizeScopeKeyParts(parts) {
+    return [
+      (parts.profileKey || "").toLowerCase().trim(),
+      (parts.repoFullName || "").toLowerCase().trim(),
+      (parts.sourceBranch || "").toLowerCase().trim(),
+      (parts.targetBranch || "").toLowerCase().trim(),
+      (parts.convoKey || "").trim()
+    ].join("|");
+  }
+  function buildConvoKey2() {
+    try {
+      if (typeof window !== "undefined") {
+        const loc = window.location;
+        if (loc && loc.origin && loc.pathname) {
+          const base = loc.origin + loc.pathname;
+          if (base.length > 0) return base;
+        }
+      }
+    } catch {
+    }
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        let sid = sessionStorage.getItem("ggb_review_convo_session");
+        if (!sid) {
+          sid = "sess_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+          sessionStorage.setItem("ggb_review_convo_session", sid);
+        }
+        return sid;
+      }
+    } catch {
+    }
+    return "default";
+  }
+  function buildReviewScopeKey2(parts) {
+    return normalizeScopeKeyParts({ ...parts, convoKey: parts.convoKey || buildConvoKey2() });
+  }
+  function resolveReviewScopeKey(scope) {
+    return typeof scope === "string" ? scope : buildReviewScopeKey2(scope);
+  }
+  function isRevisionPending(patchId, scope) {
+    const scopeKey = resolveReviewScopeKey(scope);
+    const now = Date.now();
+    const records = loadStore().filter((r) => now - r.timestamp <= MAX_AGE_MS);
+    if (records.length !== loadStore().length) {
+      saveStore(records);
+    }
+    return records.some((r) => r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey);
+  }
+  function markRevisionPending2(patchId, scope, paths) {
+    const scopeKey = resolveReviewScopeKey(scope);
+    const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
+    const filtered = records.filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
+    const parts = scopeKey.split("|");
+    const record = {
+      patchId,
+      profileKey: parts[0] || "",
+      repoFullName: parts[1] || "",
+      sourceBranch: parts[2] || "",
+      targetBranch: parts[3] || "",
+      convoKey: parts[4] || buildConvoKey2(),
+      paths: paths.filter(Boolean),
+      timestamp: Date.now()
+    };
+    filtered.push(record);
+    const scopeRecords = filtered.filter((r) => normalizeScopeKeyParts(r) === scopeKey);
+    const otherRecords = filtered.filter((r) => normalizeScopeKeyParts(r) !== scopeKey);
+    if (scopeRecords.length > MAX_RECORDS_PER_SCOPE) {
+      scopeRecords.sort((a, b) => a.timestamp - b.timestamp);
+      scopeRecords.splice(0, scopeRecords.length - MAX_RECORDS_PER_SCOPE);
+    }
+    saveStore([...otherRecords, ...scopeRecords]);
+  }
+  function restoreRevisionPending2(patchId, scope) {
+    const scopeKey = resolveReviewScopeKey(scope);
+    const records = loadStore().filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
+    saveStore(records);
+  }
+  function getPendingForScope(scope) {
+    const scopeKey = resolveReviewScopeKey(scope);
+    const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
+    return records.filter((r) => normalizeScopeKeyParts(r) === scopeKey);
+  }
+  function canonicalPathKey(path) {
+    return normalizeRepoPath(path).toLowerCase();
+  }
+  function pathsOverlap(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    const setA = new Set(a.filter(Boolean).map(canonicalPathKey).filter(Boolean));
+    for (const p of b) {
+      if (!p) continue;
+      if (setA.has(canonicalPathKey(p))) return true;
+    }
+    return false;
   }
 
   // src/ui/hudApplyPatch.ts
@@ -2664,12 +2673,12 @@ Fix Instructions:
     if (selfHealingResult.triggered) {
       updateState({
         status: "PREFLIGHT_FAILED",
-        statusMessage: `\u26A0\uFE0F ${prefixLabel} \u{1F916} Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES}).`,
+        statusMessage: `\u26A0\uFE0F ${prefixLabel} \u{1F916} Auto-Pilot self-healing prompt injected (Turn ${selfHealingResult.nextRetryCount}/${MAX_SELF_HEALING_RETRIES2}).`,
         retryCount: selfHealingResult.nextRetryCount,
         lastErrors: errors
       });
     } else {
-      const reasonMsg = selfHealingResult.reason === "MAX_RETRIES_EXCEEDED" ? `Max retries (${MAX_SELF_HEALING_RETRIES}) reached.` : "Auto-pilot disabled.";
+      const reasonMsg = selfHealingResult.reason === "MAX_RETRIES_EXCEEDED" ? `Max retries (${MAX_SELF_HEALING_RETRIES2}) reached.` : "Auto-pilot disabled.";
       updateState({
         status: "PREFLIGHT_FAILED",
         statusMessage: `\u274C ${prefixLabel} ${reasonMsg} Review errors below or trigger manual retry.`,
@@ -2798,7 +2807,7 @@ Fix Instructions:
       repoFullName: config.repo,
       sourceBranch: config.branch,
       targetBranch: config.targetBranch || config.branch,
-      convoKey: buildConvoKey()
+      convoKey: buildConvoKey2()
     };
   }
   async function runHolisticQueuePatch(deps) {
@@ -2806,12 +2815,12 @@ Fix Instructions:
     if (!deps.dryRun && checkForeignOwnerBlocked(deps.config, deps.updateState)) {
       return false;
     }
-    const focusedPatch = deps.isFocused && deps.focusedPatchId ? deps.state.harvestedPatches.find((entry) => entry.id === deps.focusedPatchId) ?? null : null;
+    const focusedPatch = deps.focusedPatch ?? (deps.isFocused && deps.focusedPatchId ? deps.state.harvestedPatches.find((entry) => entry.id === deps.focusedPatchId) ?? null : null);
     const queue = focusedPatch ? [focusedPatch] : deps.state.harvestedPatches;
     if (queue.length === 0) {
       return false;
     }
-    const partition = partitionQueueForHolisticCheck(queue);
+    const partition = partitionQueueForHolisticCheck(queue, deps.isFocused ? { includeRevisionPending: true } : void 0);
     const totalSnippets = partition.totalSnippets;
     const targetFiles = partition.targetFiles;
     deps.updateState({
@@ -2819,6 +2828,15 @@ Fix Instructions:
       statusMessage: deps.dryRun ? `\u23F3 Checking ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) (Dry-Run)...` : `\u23F3 Validating and applying ${totalSnippets} snippet(s) across ${targetFiles.length} file(s)...`
     });
     try {
+      if (partition.totalSnippets === 0) {
+        deps.updateState({
+          status: "IDLE",
+          statusMessage: "\u2139\uFE0F No active snippets to check (all queued items are revision-pending).",
+          lastErrors: [],
+          retryCount: deps.state.retryCount
+        });
+        return false;
+      }
       let workerRes;
       if (partition.validBatch) {
         if (!isPatchSnapshotReady(deps.state)) {
@@ -2858,7 +2876,7 @@ Fix Instructions:
             focusedPatch.reviewStatus = "revision-pending";
             try {
               const paths = Array.from(new Set(targetFiles.filter(Boolean)));
-              markRevisionPending(focusedPatch.id, currentReviewScope(deps.config), paths);
+              markRevisionPending2(focusedPatch.id, currentReviewScope(deps.config), paths);
             } catch {
             }
           }
@@ -2961,11 +2979,11 @@ Fix Instructions:
         repoFullName: config.repo,
         sourceBranch: config.branch,
         targetBranch: config.targetBranch || config.branch,
-        convoKey: buildConvoKey()
+        convoKey: buildConvoKey2()
       };
     }
     function currentReviewScopeKey() {
-      return buildReviewScopeKey(currentReviewScope2());
+      return buildReviewScopeKey2(currentReviewScope2());
     }
     function resetPatchOidState(reason) {
       clearPatchOidState(state);
@@ -2990,6 +3008,9 @@ Fix Instructions:
         },
         onCheckPatch: (patch) => {
           void handleCheckPatch(patch);
+        },
+        onMarkQueueSuperseded: (ids) => {
+          supersededPatchIds = new Set(ids);
         }
       });
     }
@@ -3052,7 +3073,8 @@ Fix Instructions:
         updateState: (partial) => updateState(partial),
         dryRun: true,
         isFocused: true,
-        focusedPatchId: patch.id
+        focusedPatchId: patch.id,
+        focusedPatch: patch
       });
     };
     dom.clearQueueBtn.onclick = () => {
@@ -3154,7 +3176,7 @@ Fix Instructions:
             if (pending.patchId && pending.patchId !== patch.id) {
               state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== pending.patchId);
             }
-            restoreRevisionPending(pending.patchId, currentReviewScope2());
+            restoreRevisionPending2(pending.patchId, currentReviewScope2());
           }
         } catch {
         }
@@ -3740,6 +3762,7 @@ Fix Instructions:
           if (!parent.querySelector(".ggb-inline-check-btn")) {
             parent.appendChild(checkBtn);
           }
+          attached = true;
         }
       }
       if (!attached) {
@@ -3751,6 +3774,8 @@ Fix Instructions:
               codeHeader.appendChild(checkBtn);
             }
             attached = true;
+          } else {
+            attached = true;
           }
         }
       }
@@ -3758,10 +3783,10 @@ Fix Instructions:
         pre.style.position = "relative";
         btn.style.position = "absolute";
         btn.style.top = "8px";
-        btn.style.right = "90px";
+        btn.style.right = "190px";
         checkBtn.style.position = "absolute";
         checkBtn.style.top = "8px";
-        checkBtn.style.right = "40px";
+        checkBtn.style.right = "8px";
         pre.appendChild(btn);
         pre.appendChild(checkBtn);
       }
