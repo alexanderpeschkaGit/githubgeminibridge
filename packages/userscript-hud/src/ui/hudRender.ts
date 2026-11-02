@@ -1,3 +1,13 @@
+import type { HarvestedPatch, HudConfig, HudState } from '../types';
+import { injectPromptText } from '../dom/injector';
+import { buildSelfHealingPrompt, MAX_SELF_HEALING_RETRIES } from '../services/selfHealing';
+import { createHudElement, type HudDomElements } from './hudStylesAndDom';
+import {
+  buildReviewScopeKey,
+  buildConvoKey,
+  markRevisionPending,
+  restoreRevisionPending,
+} from '../services/patchReviewStore';
 import { activeQueue } from '../services/patchQueue';
 
 function buildReviewScopeKeyLocal(config: HudConfig): string {

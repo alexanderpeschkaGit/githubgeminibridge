@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import { spawnSync } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -143,6 +144,16 @@ async function build() {
 
   if (!fs.existsSync(distDir)) {
     fs.mkdirSync(distDir, { recursive: true });
+  }
+
+  const tscPath = req.resolve('typescript/bin/tsc');
+  const typecheck = spawnSync(process.execPath, [tscPath, '--noEmit'], {
+    cwd: hudDir,
+    stdio: 'inherit',
+  });
+  if (typecheck.status !== 0) {
+    console.error('[Build Userscript] Typecheck failed; aborting bundle.');
+    process.exit(1);
   }
 
   const result = await esbuild.build({
