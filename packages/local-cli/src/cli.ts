@@ -7,6 +7,9 @@ export function parseCliArgs(argv: string[]): {
   model?: string;
   skipCommit?: boolean;
   help?: boolean;
+  allowHeadMismatch?: boolean;
+  strictHeadCheck?: boolean;
+  expectedHeadOid?: string;
 } {
   const args = argv.slice(2);
   let prompt = '';
@@ -16,6 +19,9 @@ export function parseCliArgs(argv: string[]): {
   let model: string | undefined;
   let skipCommit = false;
   let help = false;
+  let allowHeadMismatch = false;
+  let strictHeadCheck = true;
+  let expectedHeadOid: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -34,6 +40,12 @@ export function parseCliArgs(argv: string[]): {
       model = args[++i];
     } else if (arg === '--skip-commit') {
       skipCommit = true;
+    } else if (arg === '--allow-head-mismatch') {
+      allowHeadMismatch = true;
+    } else if (arg === '--no-strict-head-check') {
+      strictHeadCheck = false;
+    } else if (arg === '--expected-head-oid') {
+      expectedHeadOid = args[++i];
     } else if (!arg.startsWith('-') && !prompt) {
       prompt = arg;
     }
@@ -48,7 +60,10 @@ export function parseCliArgs(argv: string[]): {
     },
     model,
     skipCommit,
-    help
+    help,
+    allowHeadMismatch,
+    strictHeadCheck,
+    expectedHeadOid
   };
 }
 
@@ -59,21 +74,24 @@ Usage:
   gemini-local [options] [prompt]
 
 Options:
-  -p, --prompt <prompt>      Task instruction for Gemini
-  -t, --path <filepath>      Target file(s) to include in context (repeatable)
-  -r, --repo <owner/repo>    Repository name identifier (default: local/repo)
-  -b, --branch <branch>      Branch name (default: main)
-  -m, --model <model>        Gemini model (default: gemini-2.0-flash)
-      --skip-commit          Apply changes to disk without creating a Git commit
-  -h, --help                 Display this help message
+  -p, --prompt <prompt>           Task instruction for Gemini
+  -t, --path <filepath>           Target file(s) to include in context (repeatable)
+  -r, --repo <owner/repo>         Repository name identifier (default: local/repo)
+  -b, --branch <branch>           Branch name (default: main)
+  -m, --model <model>             Gemini model (default: gemini-2.0-flash)
+      --skip-commit               Apply changes to disk without creating a Git commit
+      --expected-head-oid <oid>   Expected base HEAD OID to compare against local HEAD
+      --allow-head-mismatch       Allow proceeding if local HEAD differs from expected HEAD
+      --no-strict-head-check      Disable strict local HEAD check (default: enabled)
+  -h, --help                      Display this help message
 
 Environment:
-  GEMINI_API_KEY             Google Gemini API Key (or set in .env)
+  GEMINI_API_KEY                  Google Gemini API Key (or set in .env)
 `);
 }
 
 export async function runCli(argv = process.argv): Promise<number> {
-  const { input, model, skipCommit, help } = parseCliArgs(argv);
+  const { input, model, skipCommit, help, allowHeadMismatch, strictHeadCheck, expectedHeadOid } = parseCliArgs(argv);
 
   if (help || !input.prompt) {
     printHelp();
@@ -85,7 +103,7 @@ export async function runCli(argv = process.argv): Promise<number> {
     console.log(`[gemini-local] Target files: ${input.targetPaths.join(', ')}`);
   }
 
-  const result = await runLocalHybridTask(input, { model, skipCommit });
+  const result = await runLocalHybridTask(input, { model, skipCommit, allowHeadMismatch, strictHeadCheck, expectedHeadOid });
 
   if (result.status === 'SUCCESS') {
     console.log(`[gemini-local] Status: SUCCESS`);
@@ -104,6 +122,25 @@ export async function runCli(argv = process.argv): Promise<number> {
       }
     }
     return 2;
+  } else if (result.status === 'LOCAL_HEAD_MISMATCH' as any) {
+    console.error(`[gemini-local] Local HEAD mismatch!`);
+    if ((result as any).message) {
+      console.error((result as any).message);
+    }
+    if ((result as any).localHeadOid) {
+      console.error(`  Local HEAD:      ${(result as any).localHeadOid}`);
+    }
+    if ((result as any).expectedHeadOid) {
+      console.error(`  Expected HEAD:   ${(result as any).expectedHeadOid}`);
+    }
+    if ((result as any).suggestions && Array.isArray((result as any).suggestions)) {
+      console.error('\nSuggestions:');
+      for (const s of (result as any).suggestions) {
+        console.error(`  - ${s}`);
+      }
+    }
+    console.error('\nUse --allow-head-mismatch to proceed anyway (not recommended).');
+    return 3;
   } else {
     console.error(`[gemini-local] Error: ${result.message}`);
     return 1;

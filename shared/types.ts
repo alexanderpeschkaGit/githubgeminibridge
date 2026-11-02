@@ -125,6 +125,7 @@ export interface WorkerPatchRequest {
   expectedTargetHeadOid?: string; // Optionaler, vom Source-OID getrennter Target-Branch Concurrency-Token
   createBranchIfNeeded?: boolean; // Default true: legt targetBranch an, falls nicht vorhanden
   dryRun?: boolean;               // Optional: prüft Search/Replace & AST/Linter komplett ohne GitHub-Commit
+  localHeadOid?: string;          // Optional: lokaler HEAD des Clients zum Abgleich mit expectedHeadOid
 }
 
 export interface LinterError {
@@ -137,7 +138,7 @@ export interface LinterError {
 }
 
 export interface WorkerPatchResponse {
-  status: "COMMITTED" | "VALIDATED" | "PREFLIGHT_FAILED" | "GIT_CONFLICT" | "NO_CHANGES_NEEDED" | "ERROR";
+  status: "COMMITTED" | "VALIDATED" | "PREFLIGHT_FAILED" | "GIT_CONFLICT" | "NO_CHANGES_NEEDED" | "ERROR" | "LOCAL_HEAD_MISMATCH";
   newHeadOid?: string;         // Effektiver Branch-HEAD nach Commit/No-op; Fehler-OIDs dienen nur Diagnose
   commitUrl?: string;
   errors?: LinterError[];      // Aggregierte Fehlerliste für Auto-Retry in Gemini
@@ -147,6 +148,9 @@ export interface WorkerPatchResponse {
   pullRequestUrl?: string;        // GitHub Compare/PR-Link (z.B. https://github.com/owner/repo/compare/base...target?expand=1)
   errorCode?: GitHubErrorCode;    // Normalized machine-readable GitHub / Worker error category
   retryable?: boolean;            // True when refreshing snapshot OID or retrying after backoff can recover
+  localHeadOid?: string;
+  expectedHeadOid?: string;
+  suggestions?: string[];
 }
 
 export type GitHubErrorCode =

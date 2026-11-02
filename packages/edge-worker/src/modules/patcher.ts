@@ -143,6 +143,30 @@ export async function handlePatchRequest(
     return { status: 'PREFLIGHT_FAILED', errors: pathErrors };
   }
 
+  // Optional client-side head check to catch local/remote drift early
+  if (req.localHeadOid && typeof req.localHeadOid === 'string') {
+    const local = req.localHeadOid.trim().toLowerCase();
+    const expected = req.expectedHeadOid.trim().toLowerCase();
+    if (/^[0-9a-f]{40}$/.test(local) && local !== expected) {
+      const isDistinctTarget = (req.targetBranch || req.branch).trim().replace(/^refs\/heads\//, '') !== req.branch.trim().replace(/^refs\/heads\//, '');
+      return {
+        status: 'LOCAL_HEAD_MISMATCH',
+        errorCode: 'GIT_CONFLICT',
+        retryable: true,
+        localHeadOid: req.localHeadOid.trim(),
+        expectedHeadOid: req.expectedHeadOid,
+        targetBranch: isDistinctTarget ? (req.targetBranch || req.branch).trim() : undefined,
+        errorMessage: `Local HEAD "${req.localHeadOid.trim()}" does not match expected HEAD "${req.expectedHeadOid}" for branch "${req.branch}".`,
+        suggestions: [
+          `Fetch latest: git fetch origin ${req.branch}`,
+          `Reset to remote: git checkout -B ${req.branch} origin/${req.branch}`,
+          `Or stash local changes: git stash push -u -m "wip-before-bridge"`,
+          `Then generate a new RepoMix from the updated branch.`
+        ]
+      };
+    }
+  }
+
   const allTargetPaths = Array.from(new Set(patches.map((p) => p.path)));
 
   // Same-branch patches need no separate target resolution, so the source HEAD

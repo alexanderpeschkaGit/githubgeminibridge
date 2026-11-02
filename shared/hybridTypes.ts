@@ -15,10 +15,13 @@ export interface HybridTaskInput {
 
 export interface HybridTaskResult {
   mode: ExecutionMode;
-  status: 'SUCCESS' | 'PREFLIGHT_FAILED' | 'ERROR';
+  status: 'SUCCESS' | 'PREFLIGHT_FAILED' | 'ERROR' | 'LOCAL_HEAD_MISMATCH';
   commitSha?: string;
   errors?: any[];
   message?: string;
+  localHeadOid?: string;
+  expectedHeadOid?: string;
+  suggestions?: string[];
 }
 
 // ==========================================
