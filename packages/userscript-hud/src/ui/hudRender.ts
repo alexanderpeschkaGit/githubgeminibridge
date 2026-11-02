@@ -1,13 +1,4 @@
-import type { HarvestedPatch, HudConfig, HudState } from '../types';
-import { injectPromptText } from '../dom/injector';
-import { buildSelfHealingPrompt, MAX_SELF_HEALING_RETRIES } from '../services/selfHealing';
-import { createHudElement, type HudDomElements } from './hudStylesAndDom';
-import {
-  buildReviewScopeKey,
-  buildConvoKey,
-  markRevisionPending,
-  restoreRevisionPending,
-} from '../services/patchReviewStore';
+import { activeQueue } from '../services/patchQueue';
 
 function buildReviewScopeKeyLocal(config: HudConfig): string {
   try {
@@ -30,6 +21,7 @@ export interface HudRenderDeps {
   updateState: (partial: Partial<HudState>) => void;
   onApplyPatch: (patch: HarvestedPatch) => void;
   onCheckPatch?: (patch: HarvestedPatch) => void;
+  onMarkQueueSuperseded?: (ids: string[]) => void;
 }
 
 /** Renders the HUD status, linter errors and patch queue from the current state. */
@@ -40,6 +32,7 @@ export function renderHudState({
   updateState,
   onApplyPatch,
   onCheckPatch,
+  onMarkQueueSuperseded,
 }: HudRenderDeps): void {
   dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
   dom.triggerBadge.textContent = state.status;
@@ -99,6 +92,12 @@ export function renderHudState({
         }
       );
       injectPromptText(prompt, false);
+      const supersedeIds = state.harvestedPatches
+        .filter((p) => p.reviewStatus !== 'revision-pending')
+        .map((p) => p.id);
+      if (supersedeIds.length > 0) {
+        onMarkQueueSuperseded?.(supersedeIds);
+      }
       updateState({
         retryCount: nextRetry,
         statusMessage: `🔧 Injected self-healing prompt (Turn ${nextRetry}/${MAX_SELF_HEALING_RETRIES}) into chat.`,
@@ -107,6 +106,7 @@ export function renderHudState({
     dom.statusBox.appendChild(healBtn);
   }
 
+  const activeCount = activeQueue(state.harvestedPatches).length;
   const patchCount = state.harvestedPatches.length;
   const isBusy = state.status === 'PATCHING' || state.status === 'MIXING';
 
@@ -141,11 +141,11 @@ export function renderHudState({
     dom.continueMixBtn.style.display = 'none';
   }
 
-  dom.checkAllBtn.disabled = patchCount === 0 || isBusy;
-  dom.checkAllBtn.textContent = patchCount > 0 ? `🔍 Check All (${patchCount})` : '🔍 Check All';
+  dom.checkAllBtn.disabled = activeCount === 0 || isBusy;
+  dom.checkAllBtn.textContent = activeCount > 0 ? `🔍 Check All (${activeCount})` : '🔍 Check All';
   dom.checkAllBtn.title = 'Check = this patch only (dry-run). Check All = complete queue including dependencies.';
-  dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
-  dom.applyAllBtn.textContent = patchCount > 0 ? `⚡ Apply All (${patchCount})` : '⚡ Apply All';
+  dom.applyAllBtn.disabled = activeCount === 0 || isBusy;
+  dom.applyAllBtn.textContent = activeCount > 0 ? `⚡ Apply All (${activeCount})` : '⚡ Apply All';
   dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
 
   // Render Patch Queue
@@ -170,10 +170,12 @@ export function renderHudState({
       const itemSub = createHudElement('div', 'hud-patch-item-sub', patch.commitMessage);
       itemSub.title = patch.commitMessage;
 
+      meta.appendChild(itemTitle);
+      meta.appendChild(itemSub);
       if (patch.reviewStatus === 'revision-pending') {
         const pendingNote = createHudElement('div', 'hud-patch-item-pending-note', '⏸️ Revision pending — ignored after reload until restored or replaced');
         pendingNote.style.cssText = 'color: #fbbf24; font-size: 10px; margin-top: 2px;';
-        item.appendChild(pendingNote);
+        meta.appendChild(pendingNote);
       }
 
       const actions = createHudElement('div', 'hud-patch-item-actions');

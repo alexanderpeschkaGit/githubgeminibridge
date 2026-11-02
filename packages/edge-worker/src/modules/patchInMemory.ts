@@ -169,6 +169,7 @@ export async function applyPatchesInMemory(
       if (current !== null) {
         workingFiles[op.path] = null;
       }
+      resultingFiles.delete(op.path);
       continue;
     }
 

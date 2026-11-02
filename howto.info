@@ -9,11 +9,14 @@ Praktische Schritt-für-Schritt-Anleitung für den täglichen Workflow: Vom Repo
 1. **Userscript im Browser:**
    - [`gemini-bridge.user.js`](file:///Y:/projekte2026/website/gitTrans/githubgeminibridge/gemini-bridge.user.js) in Tampermonkey oder Violentmonkey installieren / aktualisieren.
    - `gemini.google.com` oder `aistudio.google.com` im Browser öffnen (oder neu laden mit `F5`).
-2. **HUD-Konfiguration (Zahnrad / Bridge Drawer im Browser):**
-   - **Worker URL:** z. B. `https://gemini-git-bridge.<deine-subdomain>.workers.dev`
-   - **Bridge Secret:** Dein gesetztes Shared Secret (aus Cloudflare)
-   - **Default Repo:** `owner/repo` (z. B. `meinUser/meinProjekt`)
-   - **Default Branch:** z. B. `main` oder `preview`
+2. **HUD-Konfiguration (Bridge Drawer im Browser):**
+   - **Worker URL:** z. B. `https://gemini-git-bridge.sikanda.workers.dev`
+   - **Bridge Secret:** Dein gesetztes Shared Secret (aus Cloudflare) — wird nie im Bundle gespeichert.
+   - **Repo:** `owner/repo` (z. B. `meinUser/meinProjekt`). Über das Verlauf-Dropdown (`▾`) können kürzlich genutzte Repos wieder ausgewählt werden.
+   - **Branch:** Quellbranch (Basis für Checks/Commits, falls kein Target Branch gesetzt ist)
+   - **Target Branch (optional):** Separater Zielbranch für den Commit. Bleibt leer, wird auf `Branch` committet.
+   - **Account-Switch (`👤 Account 1/2`):** Schneller Wechsel zwischen konfigurierten Accounts inkl. Owner-Erkennung. Fremde Owner werden gewarnt; Patches auf fremde Owner werden im HUD blockiert.
+   - **Optionen:** `Auto-Pilot` (automatisches Self-Healing), `Include Paths` (kommagetrennt, Scope-Filter), `Max Chunk Chars` (Standard 85.000), `🕒 Volatile Dateien & Letzte Commits` (opt-in)
 
 ---
 
@@ -35,6 +38,8 @@ Ideal für Änderungen über mehrere Dateien hinweg in einem einzigen zusammenh�
 
 > **Minimaler Prompt für Gemini (ohne Kontext-Bloat):**
 > *"Gib die Änderungen ausschließlich als V2 Patch-JSON mit commitMessage und patches (action: modify/create/delete, blocks: [{ search, replace }]) aus."*
+
+> **Tipp:** Im HUD kann der Button **`🧩 Batch Formula`** neben `📦 Load Repo Mix` einen optimierten Prompt mit korrektem V2-Schema, Repo/Branch/HeadOid und Ankerregeln direkt in den Chat injizieren.
 
 Gemini antwortet dann in diesem Schema:
 ```json
@@ -93,15 +98,16 @@ const color = 'blue';
 Sobald Gemini die Antwort im Chat generiert, erkennt das Userscript die Patches automatisch im Hintergrund ("Harvested Patches"):
 
 1. **Zuerst prüfen (`🔍 Check All`):**
-   - Prüft die gesamte Queue als Dry-Run: Pfade, Anker/Suchblöcke, Syntax und Preflight-Regeln werden validiert.
+   - Prüft die gesamte Queue als Dry-Run über `/api/patch` mit `dryRun: true`: Pfade, Anker/Suchblöcke, Syntax und Preflight-Regeln werden aggregiert validiert (keine Branch-Erstellung, kein Commit).
    - Dabei werden Änderungen nur im Arbeitsspeicher simuliert. Es wird kein Branch erstellt und kein Commit geschrieben.
    - Bei Erfolg bleibt die Queue erhalten; danach kannst du **`⚡ Apply All`** klicken.
-   - Bei Fehlern werden die gefundenen Probleme angezeigt. Wenn **Auto-Pilot** eingeschaltet ist, sendet das HUD automatisch einen Self-Healing-Prompt in den Chat. Der Button **`🔧 Send Self-Healing Prompt to Chat`** darunter ist ein manueller Weg, denselben Prompt ohne automatisches Absenden einzufügen; du musst ihn nicht zusätzlich klicken, wenn Auto-Pilot den Prompt bereits gesendet hat.
+   - Bei Fehlern werden die gefundenen Probleme angezeigt. Wenn **Auto-Pilot** eingeschaltet ist, sendet das HUD automatisch einen Self-Healing-Prompt in den Chat. Der Button **`🔧 Send Self-Healing Prompt to Chat`** darunter ist ein manueller Weg, denselben Prompt ohne automatisches Absenden einzufügen; du musst ihn nicht zusätzlich klicken, wenn Auto-Pilot den Prompt bereits gesendet hat. Für asynchrone Import-Workflows liefert der Self-Healing-Prompt direkt importierbare Markdown/JSON-Anweisungen.
 
 2. **Anwenden und committen (`⚡ Apply All (N)`):**
-   - Klicke im Queue-Header auf **`⚡ Apply All`**. Dabei wird erneut validiert; ein vorheriger Check ist hilfreich, aber keine Voraussetzung und keine Garantie gegen zwischenzeitliche Branch-Änderungen.
-   - Wenn alle Pfade aufgelöst sind, führt das HUD die Patches **chronologisch von alt nach neu (FIFO)** in einem gemeinsamen Batch aus. Der Worker prüft den resultierenden Stand und erstellt bei Erfolg **einen atomaren Commit**. Bei einem Fehler wird dieser Batch nicht teilweise committed und die Queue bleibt zur Korrektur erhalten.
-   - Wenn ein Pfad fehlt und daher kein Batch gebildet werden kann, greift der sequenzielle FIFO-Fallback: Er stoppt beim ersten Fehler; erfolgreiche frühere Patches sind bereits committed und aus der Queue entfernt, spätere bleiben stehen.
+   - Klicke im Queue-Header auf **`⚡ Apply All`**. Dabei wird erneut validiert; ein vorheriger Check ist hilfreich, aber keine Voraussetzung.
+   - Wenn alle Pfade aufgelöst sind und keine fehlenden Pfade vorliegen, fasst das HUD die Patches als **einen atomaren Batch** zusammen (ein `/api/patch`-Call, ein Commit). Der Worker wendet die Operationen in FIFO-Reihenfolge auf dem gemeinsamen In-Memory-Stand an und committed das Ergebnis atomar. Schlägt der Batch fehl, bleibt die gesamte Queue unverändert.
+   - Wenn es fehlende Pfade gibt oder der Batch nicht gebildet werden kann, greift der **sequenzielle FIFO-Fail-Fast-Fallback**: Er stoppt beim ersten Fehler; erfolgreiche frühere Patches sind bereits committed und aus der Queue entfernt, spätere bleiben stehen. Die Head-OID wird für den nächsten Patch fortgeschrieben.
+   - Fehlt die Snapshot-OID (neuer Browser/Storage), löst das HUD automatisch eine **Live-HEAD-Recovery** über den Worker (`/graphql` Proxy) aus und committet mit dem ermittelten `expectedHeadOid` (kein „Load Repo Mix“-Zwang mehr).
 
 3. **Einzeln anwenden (`Apply`):**
    - Jeder Patch besitzt eine Diff-Vorschau und einen eigenen **`Apply`**-Button.
@@ -131,12 +137,13 @@ Sobald Gemini die Antwort im Chat generiert, erkennt das Userscript die Patches 
 ### 🌿 Branch-Wahl und aufeinander aufbauende Patches
 - **Branch** im HUD ist der Quellbranch, dessen aktueller Stand als Basis geprüft wird. **Target Branch (optional)** ist der Branch, auf den der Commit geschrieben wird. Bleibt Target Branch leer, wird auf den Branch aus **Branch** committed.
 - Wenn deine Änderungen bereits auf dem Branch liegen, auf dem du weiterarbeiten willst, kannst du sie dort lassen und die Bridge-Fixes ebenfalls dorthin committen. Für getrennte Review, Tests oder einen leichter rückgängig zu machenden Vorschlag ist ein eigener Target Branch meist übersichtlicher; später kannst du ihn per Pull Request zusammenführen. Der Worker wendet die Änderungen auf den aktuellen Stand des angegebenen Zielbranches an und prüft dessen Snapshot.
+- **Repo-/Branch-gescoped OIDs:** Persistierte Source-/Target-OIDs sind an `repo#branch` gebunden. Bei Repo- oder Branch-Wechsel werden fremde OIDs verworfen, um False-Positives zu vermeiden.
 - Zwei abhängige Patches gehören gemeinsam in die Queue und müssen in FIFO-Reihenfolge stehen: der ältere zuerst, dann der Patch, der darauf aufbaut. Mit aufgelösten Pfaden verarbeitet der atomare Batch die Operationen nacheinander im gemeinsamen In-Memory-Dateistand und committet das Ergebnis einmal. Bei sequenziellem Fallback wird der zweite Patch erst nach erfolgreichem Commit des ersten ausgeführt. Falls ein neuer Self-Healing-Fix die alten fehlerhaften Snippets ersetzt, soll er als konsolidierter Patch den gewünschten Endstand enthalten.
 
 ### 🤖 Auto-Pilot und Self-Healing
 - Ein roter Preflight-Fehlerblock zeigt konkrete Validierungsfehler, zum Beispiel einen nicht passenden Suchanker, einen fehlenden Pfad oder einen Syntax-/Regelverstoß. Er bedeutet zunächst: Es wurde kein Commit für den fehlgeschlagenen atomaren Batch geschrieben.
 - Ist **Auto-Pilot** aktiv und sind noch weniger als drei Self-Healing-Versuche verbraucht, erstellt das HUD aus den Fehlern einen gezielten Reparatur-Prompt und fügt ihn in den Chat ein (mit Auto-Submit). Die Schaltfläche **`🔧 Send Self-Healing Prompt to Chat`** bleibt als manuelle Alternative sichtbar und fügt einen Prompt ohne Auto-Submit ein. Sie ist nützlich, wenn Auto-Pilot aus ist oder du den Prompt bewusst manuell erneut senden möchtest; nach automatischem Senden ist ein zusätzlicher Klick normalerweise nicht nötig.
-- Gemini soll dann einen korrigierten Patch liefern. Dieser wird geerntet; der neue Fix ersetzt die als überholt markierten Queue-Einträge. Prüfe den Fix und starte danach erneut **Check All** oder **Apply All**. Auto-Pilot begrenzt automatische Versuche auf drei; danach ist manuelle Prüfung nötig.
+- Gemini soll dann einen korrigierten Patch liefern. Dieser wird geerntet; der neue Fix ersetzt die als überholt markierten Queue-Einträge. Prüfe den Fix und starte danach erneut **Check All** oder **Apply All**. Auto-Pilot begrenzt automatische Versuche auf drei; danach ist manuelle Prüfung nötig. Patches werden inhaltsbasiert dedupliziert (identische Payloads werden nicht doppelt in die Queue aufgenommen).
 
 ---
 
@@ -145,7 +152,8 @@ Sobald Gemini die Antwort im Chat generiert, erkennt das Userscript die Patches 
 | Problem | Ursache | Lösung |
 |---|---|---|
 | `400 Bad Request: Placeholder detected` | Gemini hat `// ... existing code ...` verwendet | Gemini auffordern: *"Schreibe den Code vollständig ohne Auslassungs-Kommentare oder nutze SEARCH/REPLACE"* |
-| `PREFLIGHT_FAILED / Conflict` | Such-Block (`search`) stimmt nicht exakt mit dem Dateiinhalt im Branch überein | Branch-Stand prüfen oder Gemini den aktuellen Codeausschnitt erneut vorgeben |
-| Kein `Apply`-Button / Queue bleibt leer | Kein relativer Dateipfad oder ungültiges JSON | Sicherstellen, dass die erste Zeile `// filepath: ...` lautet oder valides JSON vorliegt |
+| `PREFLIGHT_FAILED / Conflict` | Such-Block (`search`) stimmt nicht exakt mit dem Dateiinhalt im Branch überein | Branch-Stand prüfen oder Gemini den aktuellen Codeausschnitt erneut vorgeben. Nutze `🔍 Check All` für Dry-Run. |
+| Kein `Apply`-Button / Queue bleibt leer | Kein relativer Dateipfad oder ungültiges JSON | Sicherstellen, dass die erste Zeile `// filepath: ...` lautet oder valides JSON vorliegt. Bei fehlendem Pfad fragt das HUD beim ersten Apply nach (oder nutze `resolvePatchPaths`). |
 | `401 Unauthorized` | Bridge-Secret im HUD ist falsch oder fehlt | Im HUD-Drawer das `Bridge Secret` mit dem im Cloudflare Worker hinterlegten Secret abgleichen |
-| Branch existiert nicht | Zielbranch auf GitHub nicht vorhanden | Branch auf GitHub anlegen oder im HUD auf `main` bzw. `preview` umstellen |
+| Branch existiert nicht | Zielbranch auf GitHub nicht vorhanden | Branch auf GitHub anlegen oder im HUD auf `main` bzw. `preview` umstellen. Bei fehlendem Zielbranch kann der Worker ihn nur bei eindeutigem Branch-Not-Found erstellen. |
+| `GIT_CONFLICT` trotz unveränderter Branches | Falscher repo-/branch-scoped Snapshot-OID | Repo/Branch im HUD neu setzen oder OIDs zurücksetzen; bei fehlender OID führt das HUD automatische Live-HEAD-Recovery aus. |

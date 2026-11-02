@@ -251,6 +251,7 @@ export interface HolisticQueuePatchDeps extends HudApplyPatchDeps {
   onMarkQueueSuperseded?: (ids: string[]) => void;
   isFocused?: boolean; // true if checking/applying a single selected patch
   focusedPatchId?: string; // id of the single patch to check in focused mode
+  focusedPatch?: HarvestedPatch;
 }
 
 function currentReviewScope(config: HudConfig) {
@@ -263,10 +264,10 @@ function currentReviewScope(config: HudConfig) {
   };
 }
 
-/**
- * Runs a holistic validation across all snippets in the queue:
- * combines missing-path and syntax/linter errors non-fail-fast without prompt popups.
- */
+  /**
+   * Runs a holistic validation across all snippets in the queue:
+   * combines missing-path and syntax/linter errors non-fail-fast without prompt popups.
+   */
 export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promise<boolean> {
   deps.openPanel();
 
@@ -275,16 +276,17 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
   }
 
   const focusedPatch =
-    deps.isFocused && deps.focusedPatchId
+    deps.focusedPatch ??
+    (deps.isFocused && deps.focusedPatchId
       ? deps.state.harvestedPatches.find((entry) => entry.id === deps.focusedPatchId) ?? null
-      : null;
+      : null);
   const queue = focusedPatch ? [focusedPatch] : deps.state.harvestedPatches;
 
   if (queue.length === 0) {
     return false;
   }
 
-  const partition = partitionQueueForHolisticCheck(queue);
+  const partition = partitionQueueForHolisticCheck(queue, deps.isFocused ? { includeRevisionPending: true } : undefined);
   const totalSnippets = partition.totalSnippets;
   const targetFiles = partition.targetFiles;
 
@@ -296,6 +298,15 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
   });
 
   try {
+    if (partition.totalSnippets === 0) {
+      deps.updateState({
+        status: 'IDLE',
+        statusMessage: 'ℹ️ No active snippets to check (all queued items are revision-pending).',
+        lastErrors: [],
+        retryCount: deps.state.retryCount,
+      });
+      return false;
+    }
 
     let workerRes: WorkerPatchResponse | undefined;
     if (partition.validBatch) {

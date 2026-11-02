@@ -151,8 +151,12 @@ export interface HolisticQueuePartition {
  * Aggregates all harvested snippets into a consolidated batch and collects missing-path
  * errors across all snippets non-fail-fast so the self-healing loop can repair them holistically.
  */
-export function partitionQueueForHolisticCheck(queue: HarvestedPatch[]): HolisticQueuePartition {
-  const ordered = fifoQueue(activeQueue(queue));
+export function partitionQueueForHolisticCheck(
+  queue: HarvestedPatch[],
+  options?: { includeRevisionPending?: boolean }
+): HolisticQueuePartition {
+  const sourceQueue = options?.includeRevisionPending ? queue : activeQueue(queue);
+  const ordered = fifoQueue(sourceQueue);
   const totalSnippets = ordered.length;
   const localErrors: LinterError[] = [];
   const targetFiles: string[] = [];

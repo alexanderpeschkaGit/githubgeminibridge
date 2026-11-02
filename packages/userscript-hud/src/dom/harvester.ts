@@ -326,6 +326,7 @@ export function startDomHarvester(
         if (!parent.querySelector('.ggb-inline-check-btn')) {
           parent.appendChild(checkBtn);
         }
+        attached = true;
       }
     }
 
@@ -338,6 +339,8 @@ export function startDomHarvester(
             codeHeader.appendChild(checkBtn);
           }
           attached = true;
+        } else {
+          attached = true;
         }
       }
     }
@@ -346,10 +349,10 @@ export function startDomHarvester(
       pre.style.position = 'relative';
       btn.style.position = 'absolute';
       btn.style.top = '8px';
-      btn.style.right = '90px';
+      btn.style.right = '190px';
       checkBtn.style.position = 'absolute';
       checkBtn.style.top = '8px';
-      checkBtn.style.right = '40px';
+      checkBtn.style.right = '8px';
       pre.appendChild(btn);
       pre.appendChild(checkBtn);
     }

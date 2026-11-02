@@ -89,3 +89,5 @@ description: "Apply this rule whenever working on packages/userscript-hud/ or ge
     - Bündelt TypeScript-Quellcode (`src/index.ts`) via `esbuild` in ein valides Tampermonkey-Userscript mit allen Grants (`@grant GM_xmlhttpRequest`, `@grant GM_setValue`, etc.).
     - Erzeugt `packages/userscript-hud/dist/gemini-bridge.user.js` und synchronisiert automatisch mit Root `gemini-bridge.user.js`.
     - **Versionierung (Single Source of Truth):** `@version` im Banner wird aus `packages/userscript-hud/package.json` gelesen — keine zweite, driftende Versionsangabe im Script. Ein normales `npm run build` **bumpt nie** (reproduzierbare Builds). Releases laufen über `npm run release:patch|minor|major` (`--bump=…`) oder `npm run build -- --version=x.y.z`; nur ein **höherer** `@version`-Wert löst Tampermonkeys `@updateURL`-Update aus.
+
+- **Patch Review Store (patchReviewStore.ts):** Verwaltet pro Scope (Profil/Repo/Branch/Conversation) evision-pending Patches (geparkte Patches), inkl. Pfad-Overlap-Erkennung zur automatischen Ersetzung beim Harven eines �berlappenden Fixes und TTL/Cap.

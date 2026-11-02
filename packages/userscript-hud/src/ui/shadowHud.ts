@@ -129,6 +129,9 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       updateState: (partial) => updateState(partial),
       onApplyPatch: (patch) => { void handleApplyPatch(patch); },
       onCheckPatch: (patch) => { void handleCheckPatch(patch); },
+      onMarkQueueSuperseded: (ids) => {
+        supersededPatchIds = new Set(ids);
+      },
     });
   }
 
@@ -204,6 +207,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       dryRun: true,
       isFocused: true,
       focusedPatchId: patch.id,
+      focusedPatch: patch,
     });
   };
 
