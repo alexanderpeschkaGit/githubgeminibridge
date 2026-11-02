@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.16
+// @version      0.80.17
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -1431,9 +1431,13 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       targetBranch: (entry.targetBranch || "").trim() || void 0
     };
   }
+  function repoKey(e) {
+    const n = normalizeEntry(e);
+    return `${n.owner.toLowerCase()}|||${n.repo.toLowerCase()}`;
+  }
   function entryKey(e) {
     const n = normalizeEntry(e);
-    return `${n.owner.toLowerCase()}|||${n.repo.toLowerCase()}|||${n.branch.toLowerCase()}|||${(n.targetBranch || "").toLowerCase()}`;
+    return `${repoKey(n)}|||${n.branch.toLowerCase()}|||${(n.targetBranch || "").toLowerCase()}`;
   }
   function loadRepoHistory() {
     try {
@@ -1468,8 +1472,8 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     const n = normalizeEntry(entry);
     if (!n.repo) return loadRepoHistory();
     const current = loadRepoHistory();
-    const key = entryKey(n);
-    const filtered = current.filter((e) => entryKey(e) !== key);
+    const key = repoKey(n);
+    const filtered = current.filter((e) => repoKey(e) !== key);
     const next = [n, ...filtered].slice(0, MAX_ENTRIES);
     saveRepoHistory(next);
     return next;
