@@ -32,9 +32,14 @@ function normalizeEntry(entry: RepoHistoryEntry): RepoHistoryEntry {
   };
 }
 
+function repoKey(e: RepoHistoryEntry): string {
+  const n = normalizeEntry(e);
+  return `${n.owner.toLowerCase()}|||${n.repo.toLowerCase()}`;
+}
+
 function entryKey(e: RepoHistoryEntry): string {
   const n = normalizeEntry(e);
-  return `${n.owner.toLowerCase()}|||${n.repo.toLowerCase()}|||${n.branch.toLowerCase()}|||${(n.targetBranch || '').toLowerCase()}`;
+  return `${repoKey(n)}|||${n.branch.toLowerCase()}|||${(n.targetBranch || '').toLowerCase()}`;
 }
 
 export function loadRepoHistory(): RepoHistoryEntry[] {
@@ -76,8 +81,8 @@ export function pushRepoHistory(entry: RepoHistoryEntry): RepoHistoryEntry[] {
   const n = normalizeEntry(entry);
   if (!n.repo) return loadRepoHistory();
   const current = loadRepoHistory();
-  const key = entryKey(n);
-  const filtered = current.filter((e) => entryKey(e) !== key);
+  const key = repoKey(n);
+  const filtered = current.filter((e) => repoKey(e) !== key);
   const next = [n, ...filtered].slice(0, MAX_ENTRIES);
   saveRepoHistory(next);
   return next;
