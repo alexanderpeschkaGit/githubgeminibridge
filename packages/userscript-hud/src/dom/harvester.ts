@@ -164,6 +164,7 @@ export function startDomHarvester(
           transition: all 0.2s ease !important;
         `;
         checkBtn.textContent = '🔍 Check Patch';
+        checkBtn.title = 'Check this patch only (dry-run, no commit). Does not include other queued changes.';
         copyBtn.parentElement.insertBefore(checkBtn, copyBtn);
         processedSet.add(pre);
         pre.setAttribute('data-ggh-processed', 'true');
@@ -193,6 +194,7 @@ export function startDomHarvester(
           transition: all 0.2s ease !important;
         `;
         checkBtn.textContent = '🔍 Check Patch';
+        checkBtn.title = 'Check this patch only (dry-run, no commit). Does not include other queued changes.';
         codeHeader.appendChild(checkBtn);
         processedSet.add(pre);
         pre.setAttribute('data-ggh-processed', 'true');
@@ -307,7 +309,7 @@ export function startDomHarvester(
       user-select: none !important;
       transition: all 0.2s ease !important;
     `;
-    checkBtn.textContent = '🔍 Check Patch';
+    checkBtn.title = 'Check this patch only (dry-run, no commit). Does not include other queued changes.';
     checkBtn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();

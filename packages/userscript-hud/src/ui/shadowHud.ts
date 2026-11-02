@@ -200,6 +200,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       openPanel,
       updateState: (partial: Partial<HudState>) => updateState(partial),
       dryRun: true,
+      isFocused: true,
       onMarkQueueSuperseded: (_ids: string[]) => {
         supersededPatchIds = new Set(_ids);
       },
@@ -220,6 +221,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       openPanel,
       updateState: (partial) => updateState(partial),
       dryRun: true,
+      isFocused: false,
       onMarkQueueSuperseded: (ids) => {
         supersededPatchIds = new Set(ids);
       },
@@ -277,6 +279,7 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
       openPanel,
       updateState: (partial) => updateState(partial),
       dryRun: false,
+      isFocused: false,
       onMarkQueueSuperseded: (ids) => {
         supersededPatchIds = new Set(ids);
       },
@@ -313,13 +316,25 @@ export function mountShadowHud(onApplyPatchCustom?: (patch: HarvestedPatch) => P
             if (pending.patchId && pending.patchId !== patch.id) {
               state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== pending.patchId);
             }
-            restoreRevisionPending(pending.patchId, reviewScopeKey);
+            restoreRevisionPending(pending.patchId, {
+              profileKey: config.owner || config.repo || 'default',
+              repoFullName: config.repo,
+              sourceBranch: config.branch,
+              targetBranch: config.targetBranch || config.branch,
+              convoKey: buildConvoKey()
+            });
             break;
           }
         }
       } catch {}
       // filter out pending patches for this scope
-      if (isRevisionPending(patch.id, reviewScopeKey)) {
+      if (isRevisionPending(patch.id, {
+        profileKey: config.owner || config.repo || 'default',
+        repoFullName: config.repo,
+        sourceBranch: config.branch,
+        targetBranch: config.targetBranch || config.branch,
+        convoKey: buildConvoKey()
+      })) {
         return;
       }
       const next = enqueueHarvestedPatch(state.harvestedPatches, patch);

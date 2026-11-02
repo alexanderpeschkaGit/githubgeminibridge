@@ -1,211 +1,160 @@
-import { normalizeRepoPath } from '../../../../shared/repoPaths';
+import type { HarvestedPatch } from '../types';
 import { getStoredValue, setStoredValue } from './storage';
 
-export type ReviewScopeKey = string;
-
-export interface PendingRevisionEntry {
+export interface RevisionPendingRecord {
   patchId: string;
-  scopeKey: ReviewScopeKey;
+  profileKey: string;
+  repoFullName: string;
+  sourceBranch: string;
+  targetBranch: string;
+  convoKey: string;
   paths: string[];
-  headOid?: string;
-  targetHeadOid?: string;
-  attribution?: 'exact' | 'file-match' | 'batch';
-  timestamp: string;
-  expiresAt: number;
+  timestamp: number;
 }
 
-const STORE_KEY = 'gm_patch_review_pending_v1';
-const MAX_ENTRIES_PER_SCOPE = 20;
+const REVIEW_STORE_KEY = 'patch_review_store_v1';
+const MAX_RECORDS_PER_SCOPE = 50;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-const FALLBACK_TAB_KEY = 'gm_patch_review_tab_key_v1';
 
-function getOrCreateTabKey(): string {
+function loadStore(): RevisionPendingRecord[] {
   try {
-    const existing = getStoredValue(FALLBACK_TAB_KEY, '');
-    if (existing && typeof existing === 'string' && existing.length > 0) {
-      return existing;
-    }
-    const key = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-    setStoredValue(FALLBACK_TAB_KEY, key);
-    return key;
-  } catch {
-    return `tab_${Date.now().toString(36)}`;
-  }
-}
-
-export function buildConvoKey(): string {
-  try {
-    if (typeof location !== 'undefined') {
-      const origin = location.origin || '';
-      const pathname = location.pathname || '';
-      if (origin || pathname) {
-        return `${origin}${pathname}`;
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return getOrCreateTabKey();
-}
-
-export function buildReviewScopeKey(params: {
-  profileKey?: string;
-  repoFullName?: string;
-  sourceBranch?: string;
-  targetBranch?: string;
-  convoKey?: string;
-}): ReviewScopeKey {
-  const profileKey = params.profileKey || 'default';
-  const repoFullName = params.repoFullName || 'unknown';
-  const sourceBranch = params.sourceBranch || 'unknown';
-  const targetBranch = params.targetBranch || sourceBranch || 'unknown';
-  const convoKey = params.convoKey || buildConvoKey();
-  return `${profileKey}|${repoFullName}|${sourceBranch}|${targetBranch}|${convoKey}`;
-}
-
-function normalizePaths(paths?: string[]): string[] {
-  if (!Array.isArray(paths)) return [];
-  const set = new Set<string>();
-  for (const p of paths) {
-    if (typeof p !== 'string') continue;
-    const norm = normalizeRepoPath(p).replace(/\\/g, '/');
-    if (norm === '' || norm === '.') continue;
-    set.add(norm);
-  }
-  return Array.from(set);
-}
-
-function loadAll(): PendingRevisionEntry[] {
-  try {
-    const rawStr = getStoredValue(STORE_KEY, '[]');
-    let raw: any = [];
-    try {
-      raw = JSON.parse(rawStr);
-    } catch {
-      raw = [];
-    }
-    if (!Array.isArray(raw)) return [];
-    const now = Date.now();
-    const filtered: PendingRevisionEntry[] = [];
-    for (const entry of raw) {
-      if (!entry || typeof entry !== 'object') continue;
-      if (typeof entry.patchId !== 'string' || typeof entry.scopeKey !== 'string') continue;
-      const expiresAt = typeof entry.expiresAt === 'number' ? entry.expiresAt : now + MAX_AGE_MS;
-      if (expiresAt < now) continue;
-      filtered.push({
-        patchId: entry.patchId,
-        scopeKey: entry.scopeKey,
-        paths: normalizePaths(entry.paths),
-        headOid: typeof entry.headOid === 'string' ? entry.headOid : undefined,
-        targetHeadOid: typeof entry.targetHeadOid === 'string' ? entry.targetHeadOid : undefined,
-        attribution: entry.attribution,
-        timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : new Date().toISOString(),
-        expiresAt
-      });
-    }
-    return filtered;
+    const raw = getStoredValue(REVIEW_STORE_KEY, '');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((r) => r && typeof r.patchId === 'string' && typeof r.timestamp === 'number');
   } catch {
     return [];
   }
 }
 
-function saveAll(entries: PendingRevisionEntry[]): void {
+function saveStore(records: RevisionPendingRecord[]): void {
   try {
-    const now = Date.now();
-    const pruned = entries
-      .filter((e) => e.expiresAt >= now)
-      .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
-    // enforce caps per scope
-    const byScope = new Map<string, PendingRevisionEntry[]>();
-    for (const e of pruned) {
-      if (!byScope.has(e.scopeKey)) byScope.set(e.scopeKey, []);
-      byScope.get(e.scopeKey)!.push(e);
-    }
-    const out: PendingRevisionEntry[] = [];
-    for (const list of byScope.values()) {
-      const capped = list.slice(-MAX_ENTRIES_PER_SCOPE);
-      out.push(...capped);
-    }
-    setStoredValue(STORE_KEY, JSON.stringify(out));
+    setStoredValue(REVIEW_STORE_KEY, JSON.stringify(records));
   } catch {
     // ignore storage errors
   }
 }
 
-export function isRevisionPending(patchId: string, scopeKey: ReviewScopeKey): boolean {
-  if (!patchId || !scopeKey) return false;
-  const entries = loadAll();
-  return entries.some((e) => e.patchId === patchId && e.scopeKey === scopeKey);
+function normalizeScopeKeyParts(parts: Partial<RevisionPendingRecord>): string {
+  return [
+    (parts.profileKey || '').toLowerCase().trim(),
+    (parts.repoFullName || '').toLowerCase().trim(),
+    (parts.sourceBranch || '').toLowerCase().trim(),
+    (parts.targetBranch || '').toLowerCase().trim(),
+    (parts.convoKey || '').trim()
+  ].join('|');
 }
 
-export function getPendingEntry(patchId: string, scopeKey: ReviewScopeKey): PendingRevisionEntry | null {
-  if (!patchId || !scopeKey) return null;
-  const entries = loadAll();
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i];
-    if (e.patchId === patchId && e.scopeKey === scopeKey) return e;
+export function buildConvoKey(): string {
+  try {
+    if (typeof window !== 'undefined') {
+      const loc = window.location;
+      if (loc && loc.origin && loc.pathname) {
+        // Use origin + pathname for conversation scope; fallback to session id
+        const base = loc.origin + loc.pathname;
+        if (base.length > 0) return base;
+      }
+    }
+  } catch {}
+  // Per-tab session identifier fallback
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      let sid = sessionStorage.getItem('ggb_review_convo_session');
+      if (!sid) {
+        sid = 'sess_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        sessionStorage.setItem('ggb_review_convo_session', sid);
+      }
+      return sid;
+    }
+  } catch {}
+  return 'default';
+}
+
+export function buildReviewScopeKey(parts: {
+  profileKey: string;
+  repoFullName: string;
+  sourceBranch: string;
+  targetBranch: string;
+  convoKey?: string;
+}): string {
+  return normalizeScopeKeyParts({ ...parts, convoKey: parts.convoKey || buildConvoKey() });
+}
+
+export function isRevisionPending(
+  patchId: string,
+  scope: { profileKey: string; repoFullName: string; sourceBranch: string; targetBranch: string; convoKey?: string }
+): boolean {
+  const scopeKey = buildReviewScopeKey(scope);
+  const now = Date.now();
+  const records = loadStore().filter((r) => now - r.timestamp <= MAX_AGE_MS);
+  if (records.length !== loadStore().length) {
+    saveStore(records);
   }
-  return null;
+  return records.some((r) => r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey);
 }
 
-export function getPendingForScope(scopeKey: ReviewScopeKey): PendingRevisionEntry[] {
-  if (!scopeKey) return [];
-  const entries = loadAll();
-  return entries.filter((e) => e.scopeKey === scopeKey);
-}
-
-export function markRevisionPending(entry: Omit<PendingRevisionEntry, 'timestamp' | 'expiresAt'> & Partial<Pick<PendingRevisionEntry, 'timestamp' | 'expiresAt'>>): PendingRevisionEntry {
-  const now = Date.now();
-  const normalized: PendingRevisionEntry = {
-    patchId: entry.patchId,
-    scopeKey: entry.scopeKey,
-    paths: normalizePaths(entry.paths),
-    headOid: entry.headOid,
-    targetHeadOid: entry.targetHeadOid,
-    attribution: entry.attribution,
-    timestamp: entry.timestamp || new Date().toISOString(),
-    expiresAt: typeof entry.expiresAt === 'number' ? entry.expiresAt : now + MAX_AGE_MS
+export function markRevisionPending(
+  patchId: string,
+  scopeKey: string,
+  paths: string[]
+): void {
+  const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
+  // Remove any existing record for this patchId in same scope
+  const filtered = records.filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
+  
+  // Parse scope key back
+  const parts = scopeKey.split('|');
+  const record: RevisionPendingRecord = {
+    patchId,
+    profileKey: parts[0] || '',
+    repoFullName: parts[1] || '',
+    sourceBranch: parts[2] || '',
+    targetBranch: parts[3] || '',
+    convoKey: parts[4] || buildConvoKey(),
+    paths: paths.filter(Boolean),
+    timestamp: Date.now()
   };
-  const entries = loadAll();
-  // replace existing for same patchId+scopeKey
-  const filtered = entries.filter((e) => !(e.patchId === normalized.patchId && e.scopeKey === normalized.scopeKey));
-  filtered.push(normalized);
-  saveAll(filtered);
-  return normalized;
+  
+  filtered.push(record);
+  
+  // Cap by scope count
+  const scopeRecords = filtered.filter((r) => normalizeScopeKeyParts(r) === scopeKey);
+  const otherRecords = filtered.filter((r) => normalizeScopeKeyParts(r) !== scopeKey);
+  if (scopeRecords.length > MAX_RECORDS_PER_SCOPE) {
+    scopeRecords.sort((a, b) => a.timestamp - b.timestamp);
+    scopeRecords.splice(0, scopeRecords.length - MAX_RECORDS_PER_SCOPE);
+  }
+  
+  saveStore([...otherRecords, ...scopeRecords]);
 }
 
-export function restoreRevisionPending(patchId: string, scopeKey: ReviewScopeKey): boolean {
-  if (!patchId || !scopeKey) return false;
-  const entries = loadAll();
-  const filtered = entries.filter((e) => !(e.patchId === patchId && e.scopeKey === scopeKey));
-  if (filtered.length === entries.length) return false;
-  saveAll(filtered);
-  return true;
+export function restoreRevisionPending(
+  patchId: string,
+  scope: { profileKey: string; repoFullName: string; sourceBranch: string; targetBranch: string; convoKey?: string }
+): void {
+  const scopeKey = buildReviewScopeKey(scope);
+  const records = loadStore().filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
+  saveStore(records);
 }
 
-export function clearPendingForScope(scopeKey: ReviewScopeKey): void {
-  if (!scopeKey) return;
-  const entries = loadAll();
-  const filtered = entries.filter((e) => e.scopeKey !== scopeKey);
-  saveAll(filtered);
+export function getPendingEntry(patchId: string, scopeKey: string): RevisionPendingRecord | null {
+  const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
+  const found = records.find((r) => r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey);
+  return found || null;
 }
 
-export function pruneExpired(): number {
-  const entries = loadAll();
-  const now = Date.now();
-  const filtered = entries.filter((e) => e.expiresAt >= now);
-  if (filtered.length === entries.length) return 0;
-  saveAll(filtered);
-  return entries.length - filtered.length;
+export function getPendingForScope(scopeKeyOrScope: string | { profileKey: string; repoFullName: string; sourceBranch: string; targetBranch: string; convoKey?: string }): RevisionPendingRecord[] {
+  const scopeKey = typeof scopeKeyOrScope === 'string' ? scopeKeyOrScope : buildReviewScopeKey(scopeKeyOrScope);
+  const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
+  return records.filter((r) => normalizeScopeKeyParts(r) === scopeKey);
 }
 
-export function pathsOverlap(a: string[] | undefined, b: string[] | undefined): boolean {
-  const na = normalizePaths(a);
-  const nb = normalizePaths(b);
-  if (na.length === 0 || nb.length === 0) return false;
-  const setB = new Set(nb);
-  for (const p of na) {
-    if (setB.has(p)) return true;
+export function pathsOverlap(a: string[], b: string[]): boolean {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  const setA = new Set(a.filter(Boolean).map((p) => p.toLowerCase()));
+  for (const p of b) {
+    if (p && setA.has(p.toLowerCase())) return true;
   }
   return false;
 }

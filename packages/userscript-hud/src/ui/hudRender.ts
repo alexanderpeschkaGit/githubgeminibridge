@@ -2,6 +2,21 @@ import type { HarvestedPatch, HudConfig, HudState } from '../types';
 import { injectPromptText } from '../dom/injector';
 import { buildSelfHealingPrompt, MAX_SELF_HEALING_RETRIES } from '../services/selfHealing';
 import { createHudElement, type HudDomElements } from './hudStylesAndDom';
+import { buildReviewScopeKey, buildConvoKey } from '../services/patchReviewStore';
+
+function buildReviewScopeKeyLocal(config: HudConfig): string {
+  try {
+    return buildReviewScopeKey({
+      profileKey: config.owner || config.repo || 'default',
+      repoFullName: config.repo,
+      sourceBranch: config.branch,
+      targetBranch: config.targetBranch || config.branch,
+      convoKey: buildConvoKey()
+    });
+  } catch {
+    return '';
+  }
+}
 
 export interface HudRenderDeps {
   dom: HudDomElements;
@@ -48,6 +63,7 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
     dom.statusBox.appendChild(errList);
 
     const healBtn = createHudElement('button', 'hud-btn hud-btn-secondary', '🔧 Send Self-Healing Prompt to Chat');
+    healBtn.title = 'Send repair prompt for current errors (manual; does not auto-submit)';
     healBtn.style.cssText =
       'margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;';
     healBtn.onclick = () => {
@@ -81,6 +97,22 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
   const patchCount = state.harvestedPatches.length;
   const isBusy = state.status === 'PATCHING' || state.status === 'MIXING';
 
+  // Add queue hint
+  if (dom.checkAllBtn && dom.applyAllBtn) {
+    // Check if hint exists
+    let hintEl = dom.patchQueueEl.parentElement?.querySelector('.hud-queue-hint') as HTMLElement | null;
+    if (!hintEl) {
+      hintEl = document.createElement('div');
+      hintEl.className = 'hud-queue-hint';
+      hintEl.style.cssText = 'color: #94a3b8; font-size: 10px; margin-top: 4px; margin-bottom: 4px;';
+      const queueHeader = dom.patchQueueEl.previousElementSibling;
+      if (queueHeader && queueHeader.parentElement) {
+        queueHeader.parentElement.insertBefore(hintEl, dom.patchQueueEl);
+      }
+    }
+    hintEl.textContent = 'Check = this patch only; Check All = complete queue including dependencies.';
+  }
+
   if (state.continuationQueue && state.continuationQueue.length > 0) {
     const nextBatch = state.continuationQueue.slice(0, 10);
     const first = nextBatch[0]?.partIndex ?? 11;
@@ -98,6 +130,7 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
 
   dom.checkAllBtn.disabled = patchCount === 0 || isBusy;
   dom.checkAllBtn.textContent = patchCount > 0 ? `🔍 Check All (${patchCount})` : '🔍 Check All';
+  dom.checkAllBtn.title = 'Check = this patch only (dry-run). Check All = complete queue including dependencies.';
   dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
   dom.applyAllBtn.textContent = patchCount > 0 ? `⚡ Apply All (${patchCount})` : '⚡ Apply All';
   dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
@@ -109,6 +142,9 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
   } else {
     state.harvestedPatches.forEach((patch) => {
       const item = createHudElement('div', 'hud-patch-item');
+      if ((patch as any).reviewStatus === 'revision-pending') {
+        item.classList.add('hud-patch-item-pending');
+      }
       const meta = createHudElement('div', 'hud-patch-item-meta');
       const paths = (patch.payload.patches || []).map((p) => p.path);
       const pathLabel = paths.length > 0 ? paths.join(', ') : patch.commitMessage;
@@ -121,17 +157,64 @@ export function renderHudState({ dom, state, config, updateState, onApplyPatch }
       const itemSub = createHudElement('div', 'hud-patch-item-sub', patch.commitMessage);
       itemSub.title = patch.commitMessage;
 
-      const applyBtn = createHudElement('button', 'hud-btn hud-btn-primary', 'Apply');
-      applyBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
-      applyBtn.disabled = isBusy;
-      applyBtn.onclick = () => {
-        onApplyPatch(patch);
-      };
+      if ((patch as any).reviewStatus === 'revision-pending') {
+        const pendingNote = createHudElement('div', 'hud-patch-item-pending-note', '⏸️ Revision pending — ignored after reload until restored or replaced');
+        pendingNote.style.cssText = 'color: #fbbf24; font-size: 10px; margin-top: 2px;';
+        item.appendChild(pendingNote);
+      }
+
+      const actions = createHudElement('div', 'hud-patch-item-actions');
+      actions.style.cssText = 'display: flex; gap: 4px; flex-wrap: wrap;';
+
+      if ((patch as any).reviewStatus === 'revision-pending') {
+        const restoreBtn = createHudElement('button', 'hud-btn hud-btn-secondary', 'Restore');
+        restoreBtn.style.cssText = 'padding: 3px 6px; font-size: 10px;';
+        restoreBtn.onclick = () => {
+          try {
+            const scopeKey = buildReviewScopeKeyLocal(config);
+            const { restoreRevisionPending } = require('../services/patchReviewStore');
+            restoreRevisionPending(patch.id, scopeKey);
+          } catch {}
+          // trigger re-render via updateState
+          updateState({});
+        };
+        actions.appendChild(restoreBtn);
+      } else {
+        const checkBtn = createHudElement('button', 'hud-btn hud-btn-secondary', 'Check');
+        checkBtn.style.cssText = 'padding: 3px 6px; font-size: 10px;';
+        checkBtn.title = 'Check this patch only (dry-run)';
+        checkBtn.onclick = () => {
+          const evt = new CustomEvent('ggb-check-patch', { detail: { patchId: patch.id } });
+          document.dispatchEvent(evt);
+        };
+
+        const applyBtn = createHudElement('button', 'hud-btn hud-btn-primary', 'Apply');
+        applyBtn.style.cssText = 'padding: 3px 6px; font-size: 10px;';
+        applyBtn.disabled = isBusy;
+        applyBtn.onclick = () => {
+          onApplyPatch(patch);
+        };
+
+        const reviseBtn = createHudElement('button', 'hud-btn hud-btn-secondary', 'Revise');
+        reviseBtn.style.cssText = 'padding: 3px 6px; font-size: 10px;';
+        reviseBtn.onclick = () => {
+          try {
+            const scopeKey = buildReviewScopeKeyLocal(config);
+            const { markRevisionPending } = require('../services/patchReviewStore');
+            markRevisionPending(patch.id, scopeKey, paths.filter(Boolean));
+          } catch {}
+          updateState({});
+        };
+
+        actions.appendChild(checkBtn);
+        actions.appendChild(applyBtn);
+        actions.appendChild(reviseBtn);
+      }
 
       meta.appendChild(itemTitle);
       meta.appendChild(itemSub);
       item.appendChild(meta);
-      item.appendChild(applyBtn);
+      item.appendChild(actions);
       dom.patchQueueEl.appendChild(item);
     });
   }

@@ -217,7 +217,8 @@ export function buildHudDomTree(config: HudConfig, state: HudState): HudDomEleme
   autoPilotGroup.style.cssText = 'display: flex; align-items: center; gap: 6px;';
 
   const autoPilotLabel = createHudElement('label', 'hud-toggle-label');
-  autoPilotLabel.title = 'Auto-Pilot Self-Healing (max 3 retries)';
+  autoPilotLabel.title =
+    'Auto-Pilot: automatically injects focused self-healing prompts (max 3 retries) when a single-patch preflight fails. Manual "Send Self-Healing Prompt to Chat" available below.';
   const autoPilotCheck = createHudElement('input');
   autoPilotCheck.type = 'checkbox';
   autoPilotCheck.checked = config.autoPilot;

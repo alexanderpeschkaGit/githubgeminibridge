@@ -24,6 +24,7 @@ import { resolvePatchPaths } from '../services/patchPaths';
 import { classifyRepoOwner, ownerOfRepo } from '../services/accountProfiles';
 import { recordFromConfig } from '../services/repoHistory';
 import { refreshRepoHistorySelectNow } from './hudConfigBindings';
+import { buildReviewScopeKey, buildConvoKey, markRevisionPending } from '../services/patchReviewStore';
 
 export interface HudApplyPatchDeps {
   config: HudConfig;
@@ -248,6 +249,7 @@ export async function applyHudPatch(
 export interface HolisticQueuePatchDeps extends HudApplyPatchDeps {
   dryRun: boolean;
   onMarkQueueSuperseded?: (ids: string[]) => void;
+  isFocused?: boolean; // true if checking/applying a single selected patch
 }
 
 /**
@@ -277,22 +279,6 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
   });
 
   try {
-    if (partition.validBatch && !isPatchSnapshotReady(deps.state)) {
-      deps.updateState({
-        status: 'PATCHING',
-        statusMessage: `🔄 No snapshot OID — resolving current HEAD of ${deps.config.repo}@${deps.config.branch}...`,
-      });
-      try {
-        const resolvedOid = await requestBranchHead(deps.config, deps.config.repo, deps.config.branch);
-        setSourceHeadOid(deps.config, deps.state, resolvedOid);
-      } catch (resolveErr: any) {
-        deps.updateState({
-          status: 'ERROR',
-          statusMessage: `❌ HEAD lookup failed: ${resolveErr.message || String(resolveErr)}`,
-        });
-        return false;
-      }
-    }
 
     let workerRes: WorkerPatchResponse | undefined;
     if (partition.validBatch && deps.state.headOid) {
@@ -317,20 +303,56 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
 
     if (allErrors.length > 0) {
       deps.onMarkQueueSuperseded?.(deps.state.harvestedPatches.map((p) => p.id));
+      
+      // If focused check (single patch) and preflight failed, mark as revision pending
+      if (deps.isFocused && deps.state.harvestedPatches.length === 1) {
+        const patch = deps.state.harvestedPatches[0];
+        try {
+          const scopeKey = buildReviewScopeKey({
+            profileKey: deps.config.owner || deps.config.repo || 'default',
+            repoFullName: deps.config.repo,
+            sourceBranch: deps.config.branch,
+            targetBranch: deps.config.targetBranch || deps.config.branch,
+            convoKey: buildConvoKey()
+          });
+          const paths = Array.from(new Set(targetFiles.filter(Boolean)));
+          markRevisionPending(patch.id, scopeKey, paths);
+        } catch {}
+      }
+      
+      if (deps.dryRun && !deps.isFocused) {
+        // For holistic check all (not focused), don't auto-submit repair prompt
+        deps.updateState({
+          status: 'PREFLIGHT_FAILED',
+          statusMessage: `⚠️ Holistic check failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). Batch checked as a whole - use "Send Batch Repair Prompt" to get guidance.`,
+          retryCount: deps.state.retryCount,
+          lastErrors: allErrors,
+        });
+        return false;
+      }
+      
+      // For focused or apply operations, pass only affected patch errors/targets to self-healing
+      let targetFilesForHealing = targetFiles;
+      if (deps.isFocused && deps.state.harvestedPatches.length === 1) {
+        targetFilesForHealing = targetFiles;
+      }
+      
       return handlePreflightFailure(
         { status: 'PREFLIGHT_FAILED', errors: allErrors },
         deps.config,
         deps.state,
         deps.updateState,
-        `Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)).`,
-        targetFiles
+        deps.isFocused ? `Check failed for this patch.` : `Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)).`,
+        targetFilesForHealing
       );
     }
 
     if (deps.dryRun || workerRes?.status === 'VALIDATED') {
       deps.updateState({
         status: 'IDLE',
-        statusMessage: `✅ All ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) passed preflight & syntax validation! Click "⚡ Apply All" to commit.`,
+        statusMessage: deps.isFocused 
+          ? `✅ This patch passed preflight & syntax validation (dry-run).`
+          : `✅ All ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) passed preflight & syntax validation! Click "⚡ Apply All" to commit.`,
         lastErrors: [],
         retryCount: 0,
       });
