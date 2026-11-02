@@ -279,6 +279,22 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
   });
 
   try {
+    if (partition.validBatch && !isPatchSnapshotReady(deps.state)) {
+      deps.updateState({
+        status: 'PATCHING',
+        statusMessage: `🔄 No snapshot OID — resolving current HEAD of ${deps.config.repo}@${deps.config.branch}...`,
+      });
+      try {
+        const resolvedOid = await requestBranchHead(deps.config, deps.config.repo, deps.config.branch);
+        setSourceHeadOid(deps.config, deps.state, resolvedOid);
+      } catch (resolveErr: any) {
+        if (partition.localErrors.length === 0) {
+          throw new Error(
+            `${patchSnapshotRequiredMessage(deps.config, 'batch queue')} (HEAD lookup failed: ${resolveErr.message || String(resolveErr)})`
+          );
+        }
+      }
+    }
 
     let workerRes: WorkerPatchResponse | undefined;
     if (partition.validBatch && deps.state.headOid) {
@@ -302,11 +318,18 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
     ];
 
     if (allErrors.length > 0) {
-      deps.onMarkQueueSuperseded?.(deps.state.harvestedPatches.map((p) => p.id));
+      if (!deps.isFocused) {
+        deps.onMarkQueueSuperseded?.(
+          deps.state.harvestedPatches
+            .filter((p) => p.reviewStatus !== 'revision-pending')
+            .map((p) => p.id)
+        );
+      }
       
       // If focused check (single patch) and preflight failed, mark as revision pending
       if (deps.isFocused && deps.state.harvestedPatches.length === 1) {
         const patch = deps.state.harvestedPatches[0];
+        patch.reviewStatus = 'revision-pending';
         try {
           const scopeKey = buildReviewScopeKey({
             profileKey: deps.config.owner || deps.config.repo || 'default',
@@ -347,7 +370,10 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
       );
     }
 
-    if (deps.dryRun || workerRes?.status === 'VALIDATED') {
+    if (
+      workerRes?.status === 'VALIDATED' ||
+      (deps.dryRun && workerRes?.status === 'NO_CHANGES_NEEDED')
+    ) {
       deps.updateState({
         status: 'IDLE',
         statusMessage: deps.isFocused 
@@ -364,7 +390,9 @@ export async function runHolisticQueuePatch(deps: HolisticQueuePatchDeps): Promi
         recordFromConfig(deps.config);
         refreshRepoHistorySelectNow();
       } catch {}
-      deps.state.harvestedPatches = [];
+      deps.state.harvestedPatches = deps.state.harvestedPatches.filter(
+        (p) => p.reviewStatus === 'revision-pending'
+      );
       applyPatchResponseOids(deps.config, deps.state, workerRes);
       const branchLabel = workerRes.targetBranch || deps.config.targetBranch?.trim() || deps.config.branch;
       const prMsg = workerRes.pullRequestUrl ? ` | 🔗 PR: ${workerRes.pullRequestUrl}` : '';

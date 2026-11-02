@@ -309,6 +309,7 @@ export function startDomHarvester(
       user-select: none !important;
       transition: all 0.2s ease !important;
     `;
+    checkBtn.textContent = '🔍 Check Patch';
     checkBtn.title = 'Check this patch only (dry-run, no commit). Does not include other queued changes.';
     checkBtn.onclick = (e) => {
       e.preventDefault();

@@ -37,9 +37,9 @@ export function removeHarvestedPatch(queue: HarvestedPatch[], patchId: string): 
   return queue.filter((entry) => entry.id !== patchId);
 }
 
-/** FIFO order: the oldest harvest is applied first. */
+/** FIFO order: the oldest active harvest is applied first (skips revision-pending entries). */
 export function fifoQueue(queue: HarvestedPatch[]): HarvestedPatch[] {
-  return [...queue].reverse();
+  return [...queue].filter((entry) => entry.reviewStatus !== 'revision-pending').reverse();
 }
 
 /**

@@ -1,5 +1,16 @@
 import type { HarvestedPatch } from '../types';
+import { normalizeRepoPath } from '../../../../shared/repoPaths';
 import { getStoredValue, setStoredValue } from './storage';
+
+export type ReviewScopeInput =
+  | string
+  | {
+      profileKey: string;
+      repoFullName: string;
+      sourceBranch: string;
+      targetBranch: string;
+      convoKey?: string;
+    };
 
 export interface RevisionPendingRecord {
   patchId: string;
@@ -83,9 +94,9 @@ export function buildReviewScopeKey(parts: {
 
 export function isRevisionPending(
   patchId: string,
-  scope: { profileKey: string; repoFullName: string; sourceBranch: string; targetBranch: string; convoKey?: string }
+  scope: ReviewScopeInput
 ): boolean {
-  const scopeKey = buildReviewScopeKey(scope);
+  const scopeKey = typeof scope === 'string' ? scope : buildReviewScopeKey(scope);
   const now = Date.now();
   const records = loadStore().filter((r) => now - r.timestamp <= MAX_AGE_MS);
   if (records.length !== loadStore().length) {
@@ -96,9 +107,10 @@ export function isRevisionPending(
 
 export function markRevisionPending(
   patchId: string,
-  scopeKey: string,
+  scopeOrKey: ReviewScopeInput,
   paths: string[]
 ): void {
+  const scopeKey = typeof scopeOrKey === 'string' ? scopeOrKey : buildReviewScopeKey(scopeOrKey);
   const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
   // Remove any existing record for this patchId in same scope
   const filtered = records.filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
@@ -112,7 +124,7 @@ export function markRevisionPending(
     sourceBranch: parts[2] || '',
     targetBranch: parts[3] || '',
     convoKey: parts[4] || buildConvoKey(),
-    paths: paths.filter(Boolean),
+    paths: paths.map((p) => normalizeRepoPath(p)).filter(Boolean),
     timestamp: Date.now()
   };
   
@@ -131,9 +143,9 @@ export function markRevisionPending(
 
 export function restoreRevisionPending(
   patchId: string,
-  scope: { profileKey: string; repoFullName: string; sourceBranch: string; targetBranch: string; convoKey?: string }
+  scope: ReviewScopeInput
 ): void {
-  const scopeKey = buildReviewScopeKey(scope);
+  const scopeKey = typeof scope === 'string' ? scope : buildReviewScopeKey(scope);
   const records = loadStore().filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
   saveStore(records);
 }
@@ -152,9 +164,14 @@ export function getPendingForScope(scopeKeyOrScope: string | { profileKey: strin
 
 export function pathsOverlap(a: string[], b: string[]): boolean {
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
-  const setA = new Set(a.filter(Boolean).map((p) => p.toLowerCase()));
+  const setA = new Set(
+    a
+      .map((p) => normalizeRepoPath(p).toLowerCase())
+      .filter(Boolean)
+  );
   for (const p of b) {
-    if (p && setA.has(p.toLowerCase())) return true;
+    const normB = normalizeRepoPath(p).toLowerCase();
+    if (normB && setA.has(normB)) return true;
   }
   return false;
 }
