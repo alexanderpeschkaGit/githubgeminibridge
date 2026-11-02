@@ -3460,7 +3460,82 @@ Fix Instructions:
         return;
       }
       const scope = resolveCodeBlockScope(pre);
-      if (hasInlineBtn(scope) || hasInlineBtn(pre) || hasInlineBtn(pre.shadowRoot) || hasInlineBtn(scope.shadowRoot)) {
+      const searchRootsEarly = [
+        pre.shadowRoot,
+        scope.shadowRoot,
+        scope,
+        pre
+      ];
+      const hasApplyBtn = searchRootsEarly.some(
+        (root) => root && typeof root.querySelector === "function" && root.querySelector(".ggb-inline-btn:not(.ggb-inline-check-btn)")
+      );
+      const hasCheckBtn = searchRootsEarly.some(
+        (root) => root && typeof root.querySelector === "function" && root.querySelector(".ggb-inline-check-btn")
+      );
+      if (hasApplyBtn && hasCheckBtn) {
+        processedSet.add(pre);
+        pre.setAttribute("data-ggh-processed", "true");
+        return;
+      }
+      if (hasApplyBtn && !hasCheckBtn) {
+        const copyBtn2 = findCopyButton(searchRootsEarly);
+        if (copyBtn2 && copyBtn2.parentElement && !copyBtn2.parentElement.querySelector(".ggb-inline-check-btn")) {
+          const checkBtn2 = document.createElement("button");
+          checkBtn2.className = "ggb-inline-btn ggb-inline-check-btn";
+          checkBtn2.style.cssText = `
+          display: inline-flex !important;
+          align-items: center !important;
+          gap: 6px !important;
+          padding: 5px 10px !important;
+          background: linear-gradient(135deg, #334155, #1e293b) !important;
+          color: #e2e8f0 !important;
+          border: 1px solid #475569 !important;
+          border-radius: 8px !important;
+          font-family: ui-sans-serif, system-ui, sans-serif !important;
+          font-size: 12px !important;
+          font-weight: 600 !important;
+          cursor: pointer !important;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
+          margin: 6px 0 6px 6px !important;
+          z-index: 2147483647 !important;
+          user-select: none !important;
+          transition: all 0.2s ease !important;
+        `;
+          checkBtn2.textContent = "\u{1F50D} Check Patch";
+          copyBtn2.parentElement.insertBefore(checkBtn2, copyBtn2);
+          processedSet.add(pre);
+          pre.setAttribute("data-ggh-processed", "true");
+          return;
+        }
+        const codeHeader = findCodeHeader(searchRootsEarly, pre, (pre.shadowRoot || pre).querySelector("code") || pre.querySelector("code") || pre);
+        if (codeHeader && !codeHeader.querySelector(".ggb-inline-check-btn")) {
+          const checkBtn2 = document.createElement("button");
+          checkBtn2.className = "ggb-inline-btn ggb-inline-check-btn";
+          checkBtn2.style.cssText = `
+          display: inline-flex !important;
+          align-items: center !important;
+          gap: 6px !important;
+          padding: 5px 10px !important;
+          background: linear-gradient(135deg, #334155, #1e293b) !important;
+          color: #e2e8f0 !important;
+          border: 1px solid #475569 !important;
+          border-radius: 8px !important;
+          font-family: ui-sans-serif, system-ui, sans-serif !important;
+          font-size: 12px !important;
+          font-weight: 600 !important;
+          cursor: pointer !important;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
+          margin: 6px 0 6px 6px !important;
+          z-index: 2147483647 !important;
+          user-select: none !important;
+          transition: all 0.2s ease !important;
+        `;
+          checkBtn2.textContent = "\u{1F50D} Check Patch";
+          codeHeader.appendChild(checkBtn2);
+          processedSet.add(pre);
+          pre.setAttribute("data-ggh-processed", "true");
+          return;
+        }
         processedSet.add(pre);
         pre.setAttribute("data-ggh-processed", "true");
         return;
