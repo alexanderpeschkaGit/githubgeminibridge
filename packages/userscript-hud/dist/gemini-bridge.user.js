@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Git Bridge & Shadow-DOM HUD
 // @namespace    https://gemini-git-bridge.sikanda.workers.dev/
-// @version      0.80.17
+// @version      0.80.18
 // @description  Commit code & search/replace patches directly from Google Gemini & AI Studio to GitHub via Cloudflare Worker (Shadow-DOM HUD)
 // @author       Antigravity
 // @match        https://gemini.google.com/*
@@ -41,8 +41,33 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
 
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __esm = (fn, res, err) => function __init() {
+    if (err) throw err[0];
+    try {
+      return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+    } catch (e) {
+      throw err = [e], e;
+    }
+  };
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
   // src/services/storage.ts
-  var PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
   function sanitizeNoGithubPat(value, fieldName = "value") {
     if (!value) return "";
     if (PAT_REGEX.test(value)) {
@@ -101,27 +126,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
       console.warn(`[Gemini Bridge Storage] localStorage.setItem error for ${key}:`, err);
     }
   }
-  var PROFILE_FIELDS = ["worker_url", "worker_secret", "owner", "owner_repo", "branch", "target_branch"];
-  var PROFILE_MIGRATION_KEY = "account_profiles_migration_v1";
   function getActiveProfileId() {
     return getStoredValue("active_profile", "account1") === "account2" ? "account2" : "account1";
   }
-  var DEFAULT_HUD_CONFIG = {
-    workerUrl: "https://gemini-git-bridge.sikanda.workers.dev",
-    // No bundled credential: the WORKER_SECRET is entered once in the HUD panel and kept
-    // in GM storage. Shipping it in the userscript would publish it with every release.
-    workerSecret: "",
-    owner: "alexanderpeschkaGit",
-    repo: "alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0",
-    branch: "main",
-    targetBranch: "",
-    includePaths: [],
-    autoPilot: false,
-    persistToGitHub: false,
-    maxChunkChars: 85e3,
-    includeRecentCommits: false
-  };
-  var RECENT_COMMITS_MIGRATION_KEY = "recent_commits_opt_in_migration_v1";
   function migrateAccountProfiles() {
     if (getStoredValue(PROFILE_MIGRATION_KEY, "") === "true") return;
     for (const key of PROFILE_FIELDS) {
@@ -250,6 +257,165 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     }
     return updated;
   }
+  var PAT_REGEX, PROFILE_FIELDS, PROFILE_MIGRATION_KEY, DEFAULT_HUD_CONFIG, RECENT_COMMITS_MIGRATION_KEY;
+  var init_storage = __esm({
+    "src/services/storage.ts"() {
+      "use strict";
+      PAT_REGEX = /(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{30,}|gho_[a-zA-Z0-9]{20,}|ghs_[a-zA-Z0-9]{20,})/;
+      PROFILE_FIELDS = ["worker_url", "worker_secret", "owner", "owner_repo", "branch", "target_branch"];
+      PROFILE_MIGRATION_KEY = "account_profiles_migration_v1";
+      DEFAULT_HUD_CONFIG = {
+        workerUrl: "https://gemini-git-bridge.sikanda.workers.dev",
+        // No bundled credential: the WORKER_SECRET is entered once in the HUD panel and kept
+        // in GM storage. Shipping it in the userscript would publish it with every release.
+        workerSecret: "",
+        owner: "alexanderpeschkaGit",
+        repo: "alexanderpeschkaGit/Portfolio_VJ_Brave_V2_0",
+        branch: "main",
+        targetBranch: "",
+        includePaths: [],
+        autoPilot: false,
+        persistToGitHub: false,
+        maxChunkChars: 85e3,
+        includeRecentCommits: false
+      };
+      RECENT_COMMITS_MIGRATION_KEY = "recent_commits_opt_in_migration_v1";
+    }
+  });
+
+  // src/services/patchReviewStore.ts
+  var patchReviewStore_exports = {};
+  __export(patchReviewStore_exports, {
+    buildConvoKey: () => buildConvoKey,
+    buildReviewScopeKey: () => buildReviewScopeKey,
+    getPendingEntry: () => getPendingEntry,
+    getPendingForScope: () => getPendingForScope,
+    isRevisionPending: () => isRevisionPending,
+    markRevisionPending: () => markRevisionPending,
+    pathsOverlap: () => pathsOverlap,
+    restoreRevisionPending: () => restoreRevisionPending
+  });
+  function loadStore() {
+    try {
+      const raw = getStoredValue(REVIEW_STORE_KEY, "");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((r) => r && typeof r.patchId === "string" && typeof r.timestamp === "number");
+    } catch {
+      return [];
+    }
+  }
+  function saveStore(records) {
+    try {
+      setStoredValue(REVIEW_STORE_KEY, JSON.stringify(records));
+    } catch {
+    }
+  }
+  function normalizeScopeKeyParts(parts) {
+    return [
+      (parts.profileKey || "").toLowerCase().trim(),
+      (parts.repoFullName || "").toLowerCase().trim(),
+      (parts.sourceBranch || "").toLowerCase().trim(),
+      (parts.targetBranch || "").toLowerCase().trim(),
+      (parts.convoKey || "").trim()
+    ].join("|");
+  }
+  function buildConvoKey() {
+    try {
+      if (typeof window !== "undefined") {
+        const loc = window.location;
+        if (loc && loc.origin && loc.pathname) {
+          const base = loc.origin + loc.pathname;
+          if (base.length > 0) return base;
+        }
+      }
+    } catch {
+    }
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        let sid = sessionStorage.getItem("ggb_review_convo_session");
+        if (!sid) {
+          sid = "sess_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+          sessionStorage.setItem("ggb_review_convo_session", sid);
+        }
+        return sid;
+      }
+    } catch {
+    }
+    return "default";
+  }
+  function buildReviewScopeKey(parts) {
+    return normalizeScopeKeyParts({ ...parts, convoKey: parts.convoKey || buildConvoKey() });
+  }
+  function isRevisionPending(patchId, scope) {
+    const scopeKey = buildReviewScopeKey(scope);
+    const now = Date.now();
+    const records = loadStore().filter((r) => now - r.timestamp <= MAX_AGE_MS);
+    if (records.length !== loadStore().length) {
+      saveStore(records);
+    }
+    return records.some((r) => r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey);
+  }
+  function markRevisionPending(patchId, scopeKey, paths) {
+    const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
+    const filtered = records.filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
+    const parts = scopeKey.split("|");
+    const record = {
+      patchId,
+      profileKey: parts[0] || "",
+      repoFullName: parts[1] || "",
+      sourceBranch: parts[2] || "",
+      targetBranch: parts[3] || "",
+      convoKey: parts[4] || buildConvoKey(),
+      paths: paths.filter(Boolean),
+      timestamp: Date.now()
+    };
+    filtered.push(record);
+    const scopeRecords = filtered.filter((r) => normalizeScopeKeyParts(r) === scopeKey);
+    const otherRecords = filtered.filter((r) => normalizeScopeKeyParts(r) !== scopeKey);
+    if (scopeRecords.length > MAX_RECORDS_PER_SCOPE) {
+      scopeRecords.sort((a, b) => a.timestamp - b.timestamp);
+      scopeRecords.splice(0, scopeRecords.length - MAX_RECORDS_PER_SCOPE);
+    }
+    saveStore([...otherRecords, ...scopeRecords]);
+  }
+  function restoreRevisionPending(patchId, scope) {
+    const scopeKey = buildReviewScopeKey(scope);
+    const records = loadStore().filter((r) => !(r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey));
+    saveStore(records);
+  }
+  function getPendingEntry(patchId, scopeKey) {
+    const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
+    const found = records.find((r) => r.patchId === patchId && normalizeScopeKeyParts(r) === scopeKey);
+    return found || null;
+  }
+  function getPendingForScope(scopeKeyOrScope) {
+    const scopeKey = typeof scopeKeyOrScope === "string" ? scopeKeyOrScope : buildReviewScopeKey(scopeKeyOrScope);
+    const records = loadStore().filter((r) => Date.now() - r.timestamp <= MAX_AGE_MS);
+    return records.filter((r) => normalizeScopeKeyParts(r) === scopeKey);
+  }
+  function pathsOverlap(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    const setA = new Set(a.filter(Boolean).map((p) => p.toLowerCase()));
+    for (const p of b) {
+      if (p && setA.has(p.toLowerCase())) return true;
+    }
+    return false;
+  }
+  var REVIEW_STORE_KEY, MAX_RECORDS_PER_SCOPE, MAX_AGE_MS;
+  var init_patchReviewStore = __esm({
+    "src/services/patchReviewStore.ts"() {
+      "use strict";
+      init_storage();
+      REVIEW_STORE_KEY = "patch_review_store_v1";
+      MAX_RECORDS_PER_SCOPE = 50;
+      MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+    }
+  });
+
+  // src/ui/shadowHud.ts
+  init_storage();
 
   // src/services/runtimeInfo.ts
   var INIT_FAILURE_ID = "gemini-edge-hud-init-error";
@@ -284,6 +450,9 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     ].join(";");
     document.body.appendChild(box);
   }
+
+  // src/services/patchOidStore.ts
+  init_storage();
 
   // src/services/patchOidState.ts
   var OID_REGEX = /^[0-9a-f]{40}$/i;
@@ -1003,7 +1172,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     const autoPilotGroup = createHudElement("div");
     autoPilotGroup.style.cssText = "display: flex; align-items: center; gap: 6px;";
     const autoPilotLabel = createHudElement("label", "hud-toggle-label");
-    autoPilotLabel.title = "Auto-Pilot Self-Healing (max 3 retries)";
+    autoPilotLabel.title = 'Auto-Pilot: automatically injects focused self-healing prompts (max 3 retries) when a single-patch preflight fails. Manual "Send Self-Healing Prompt to Chat" available below.';
     const autoPilotCheck = createHudElement("input");
     autoPilotCheck.type = "checkbox";
     autoPilotCheck.checked = config.autoPilot;
@@ -1097,6 +1266,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   }
 
   // src/services/updateChecker.ts
+  init_storage();
   var SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/alexanderpeschkaGit/githubgeminibridge/main/gemini-bridge.user.js";
   var LAST_CHECK_KEY = "script_update_last_check";
   var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
@@ -1291,6 +1461,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   }
 
   // src/ui/hudConfigBindings.ts
+  init_storage();
   var refreshRepoHistorySelect = null;
   function setRepoHistorySelectRefresher(fn) {
     refreshRepoHistorySelect = fn;
@@ -1411,6 +1582,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   }
 
   // src/services/repoHistory.ts
+  init_storage();
   var HISTORY_KEY = "repo_history_v1";
   var MAX_ENTRIES = 4;
   function historyKey() {
@@ -1488,6 +1660,7 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
   }
 
   // src/ui/hudRepoHistoryDropdown.ts
+  init_storage();
   var activeDocumentClickHandler = null;
   var activeDocumentKeydownHandler = null;
   function formatRepoHistoryLabel(entry) {
@@ -1621,7 +1794,11 @@ if (typeof window !== 'undefined' && window.trustedTypes && typeof window.truste
     return refresher;
   }
 
+  // src/ui/hudAccountSwitch.ts
+  init_storage();
+
   // src/services/accountProfiles.ts
+  init_storage();
   var ACCOUNT_PROFILES = [
     { id: "account1", label: "Account 1", workerName: "gemini-git-bridge" },
     { id: "account2", label: "Account 2", workerName: "gemini-git-bridge-account2" }
@@ -1984,6 +2161,20 @@ Fix Instructions:
   }
 
   // src/ui/hudRender.ts
+  init_patchReviewStore();
+  function buildReviewScopeKeyLocal(config) {
+    try {
+      return buildReviewScopeKey({
+        profileKey: config.owner || config.repo || "default",
+        repoFullName: config.repo,
+        sourceBranch: config.branch,
+        targetBranch: config.targetBranch || config.branch,
+        convoKey: buildConvoKey()
+      });
+    } catch {
+      return "";
+    }
+  }
   function renderHudState({ dom, state, config, updateState, onApplyPatch }) {
     dom.triggerBadge.className = `hud-trigger-badge ${state.status.toLowerCase()}`;
     dom.triggerBadge.textContent = state.status;
@@ -2017,6 +2208,7 @@ Fix Instructions:
       });
       dom.statusBox.appendChild(errList);
       const healBtn = createHudElement("button", "hud-btn hud-btn-secondary", "\u{1F527} Send Self-Healing Prompt to Chat");
+      healBtn.title = "Send repair prompt for current errors (manual; does not auto-submit)";
       healBtn.style.cssText = "margin-top: 8px; width: 100%; font-size: 11px; padding: 5px 8px; border-color: #38bdf8; color: #38bdf8;";
       healBtn.onclick = () => {
         const nextRetry = (state.retryCount || 0) + 1;
@@ -2047,6 +2239,19 @@ Fix Instructions:
     }
     const patchCount = state.harvestedPatches.length;
     const isBusy = state.status === "PATCHING" || state.status === "MIXING";
+    if (dom.checkAllBtn && dom.applyAllBtn) {
+      let hintEl = dom.patchQueueEl.parentElement?.querySelector(".hud-queue-hint");
+      if (!hintEl) {
+        hintEl = document.createElement("div");
+        hintEl.className = "hud-queue-hint";
+        hintEl.style.cssText = "color: #94a3b8; font-size: 10px; margin-top: 4px; margin-bottom: 4px;";
+        const queueHeader = dom.patchQueueEl.previousElementSibling;
+        if (queueHeader && queueHeader.parentElement) {
+          queueHeader.parentElement.insertBefore(hintEl, dom.patchQueueEl);
+        }
+      }
+      hintEl.textContent = "Check = this patch only; Check All = complete queue including dependencies.";
+    }
     if (state.continuationQueue && state.continuationQueue.length > 0) {
       const nextBatch = state.continuationQueue.slice(0, 10);
       const first = nextBatch[0]?.partIndex ?? 11;
@@ -2062,6 +2267,7 @@ Fix Instructions:
     }
     dom.checkAllBtn.disabled = patchCount === 0 || isBusy;
     dom.checkAllBtn.textContent = patchCount > 0 ? `\u{1F50D} Check All (${patchCount})` : "\u{1F50D} Check All";
+    dom.checkAllBtn.title = "Check = this patch only (dry-run). Check All = complete queue including dependencies.";
     dom.applyAllBtn.disabled = patchCount === 0 || isBusy;
     dom.applyAllBtn.textContent = patchCount > 0 ? `\u26A1 Apply All (${patchCount})` : "\u26A1 Apply All";
     dom.clearQueueBtn.disabled = patchCount === 0 || isBusy;
@@ -2071,6 +2277,9 @@ Fix Instructions:
     } else {
       state.harvestedPatches.forEach((patch) => {
         const item = createHudElement("div", "hud-patch-item");
+        if (patch.reviewStatus === "revision-pending") {
+          item.classList.add("hud-patch-item-pending");
+        }
         const meta = createHudElement("div", "hud-patch-item-meta");
         const paths = (patch.payload.patches || []).map((p) => p.path);
         const pathLabel = paths.length > 0 ? paths.join(", ") : patch.commitMessage;
@@ -2082,16 +2291,59 @@ Fix Instructions:
         itemTitle.title = pathLabel;
         const itemSub = createHudElement("div", "hud-patch-item-sub", patch.commitMessage);
         itemSub.title = patch.commitMessage;
-        const applyBtn = createHudElement("button", "hud-btn hud-btn-primary", "Apply");
-        applyBtn.style.cssText = "padding: 3px 8px; font-size: 11px;";
-        applyBtn.disabled = isBusy;
-        applyBtn.onclick = () => {
-          onApplyPatch(patch);
-        };
+        if (patch.reviewStatus === "revision-pending") {
+          const pendingNote = createHudElement("div", "hud-patch-item-pending-note", "\u23F8\uFE0F Revision pending \u2014 ignored after reload until restored or replaced");
+          pendingNote.style.cssText = "color: #fbbf24; font-size: 10px; margin-top: 2px;";
+          item.appendChild(pendingNote);
+        }
+        const actions = createHudElement("div", "hud-patch-item-actions");
+        actions.style.cssText = "display: flex; gap: 4px; flex-wrap: wrap;";
+        if (patch.reviewStatus === "revision-pending") {
+          const restoreBtn = createHudElement("button", "hud-btn hud-btn-secondary", "Restore");
+          restoreBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
+          restoreBtn.onclick = () => {
+            try {
+              const scopeKey = buildReviewScopeKeyLocal(config);
+              const { restoreRevisionPending: restoreRevisionPending2 } = (init_patchReviewStore(), __toCommonJS(patchReviewStore_exports));
+              restoreRevisionPending2(patch.id, scopeKey);
+            } catch {
+            }
+            updateState({});
+          };
+          actions.appendChild(restoreBtn);
+        } else {
+          const checkBtn = createHudElement("button", "hud-btn hud-btn-secondary", "Check");
+          checkBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
+          checkBtn.title = "Check this patch only (dry-run)";
+          checkBtn.onclick = () => {
+            const evt = new CustomEvent("ggb-check-patch", { detail: { patchId: patch.id } });
+            document.dispatchEvent(evt);
+          };
+          const applyBtn = createHudElement("button", "hud-btn hud-btn-primary", "Apply");
+          applyBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
+          applyBtn.disabled = isBusy;
+          applyBtn.onclick = () => {
+            onApplyPatch(patch);
+          };
+          const reviseBtn = createHudElement("button", "hud-btn hud-btn-secondary", "Revise");
+          reviseBtn.style.cssText = "padding: 3px 6px; font-size: 10px;";
+          reviseBtn.onclick = () => {
+            try {
+              const scopeKey = buildReviewScopeKeyLocal(config);
+              const { markRevisionPending: markRevisionPending3 } = (init_patchReviewStore(), __toCommonJS(patchReviewStore_exports));
+              markRevisionPending3(patch.id, scopeKey, paths.filter(Boolean));
+            } catch {
+            }
+            updateState({});
+          };
+          actions.appendChild(checkBtn);
+          actions.appendChild(applyBtn);
+          actions.appendChild(reviseBtn);
+        }
         meta.appendChild(itemTitle);
         meta.appendChild(itemSub);
         item.appendChild(meta);
-        item.appendChild(applyBtn);
+        item.appendChild(actions);
         dom.patchQueueEl.appendChild(item);
       });
     }
@@ -2433,6 +2685,7 @@ Fix Instructions:
   }
 
   // src/ui/hudApplyPatch.ts
+  init_patchReviewStore();
   function checkForeignOwnerBlocked(config, updateState) {
     if (classifyRepoOwner(config) !== "foreign") return false;
     updateState({
@@ -2609,22 +2862,6 @@ Fix Instructions:
       statusMessage: deps.dryRun ? `\u23F3 Checking ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) (Dry-Run)...` : `\u23F3 Validating and applying ${totalSnippets} snippet(s) across ${targetFiles.length} file(s)...`
     });
     try {
-      if (partition.validBatch && !isPatchSnapshotReady(deps.state)) {
-        deps.updateState({
-          status: "PATCHING",
-          statusMessage: `\u{1F504} No snapshot OID \u2014 resolving current HEAD of ${deps.config.repo}@${deps.config.branch}...`
-        });
-        try {
-          const resolvedOid = await requestBranchHead(deps.config, deps.config.repo, deps.config.branch);
-          setSourceHeadOid(deps.config, deps.state, resolvedOid);
-        } catch (resolveErr) {
-          deps.updateState({
-            status: "ERROR",
-            statusMessage: `\u274C HEAD lookup failed: ${resolveErr.message || String(resolveErr)}`
-          });
-          return false;
-        }
-      }
       let workerRes;
       if (partition.validBatch && deps.state.headOid) {
         const effectiveDryRun = deps.dryRun || partition.localErrors.length > 0;
@@ -2645,19 +2882,47 @@ Fix Instructions:
       ];
       if (allErrors.length > 0) {
         deps.onMarkQueueSuperseded?.(deps.state.harvestedPatches.map((p) => p.id));
+        if (deps.isFocused && deps.state.harvestedPatches.length === 1) {
+          const patch = deps.state.harvestedPatches[0];
+          try {
+            const scopeKey = buildReviewScopeKey({
+              profileKey: deps.config.owner || deps.config.repo || "default",
+              repoFullName: deps.config.repo,
+              sourceBranch: deps.config.branch,
+              targetBranch: deps.config.targetBranch || deps.config.branch,
+              convoKey: buildConvoKey()
+            });
+            const paths = Array.from(new Set(targetFiles.filter(Boolean)));
+            markRevisionPending(patch.id, scopeKey, paths);
+          } catch {
+          }
+        }
+        if (deps.dryRun && !deps.isFocused) {
+          deps.updateState({
+            status: "PREFLIGHT_FAILED",
+            statusMessage: `\u26A0\uFE0F Holistic check failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)). Batch checked as a whole - use "Send Batch Repair Prompt" to get guidance.`,
+            retryCount: deps.state.retryCount,
+            lastErrors: allErrors
+          });
+          return false;
+        }
+        let targetFilesForHealing = targetFiles;
+        if (deps.isFocused && deps.state.harvestedPatches.length === 1) {
+          targetFilesForHealing = targetFiles;
+        }
         return handlePreflightFailure(
           { status: "PREFLIGHT_FAILED", errors: allErrors },
           deps.config,
           deps.state,
           deps.updateState,
-          `Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)).`,
-          targetFiles
+          deps.isFocused ? `Check failed for this patch.` : `Holistic validation failed (${allErrors.length} error(s) across ${totalSnippets} snippet(s)).`,
+          targetFilesForHealing
         );
       }
       if (deps.dryRun || workerRes?.status === "VALIDATED") {
         deps.updateState({
           status: "IDLE",
-          statusMessage: `\u2705 All ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) passed preflight & syntax validation! Click "\u26A1 Apply All" to commit.`,
+          statusMessage: deps.isFocused ? `\u2705 This patch passed preflight & syntax validation (dry-run).` : `\u2705 All ${totalSnippets} snippet(s) across ${targetFiles.length} file(s) passed preflight & syntax validation! Click "\u26A1 Apply All" to commit.`,
           lastErrors: [],
           retryCount: 0
         });
@@ -2696,137 +2961,8 @@ Fix Instructions:
     }
   }
 
-  // src/services/patchReviewStore.ts
-  var STORE_KEY = "gm_patch_review_pending_v1";
-  var MAX_ENTRIES_PER_SCOPE = 20;
-  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
-  var FALLBACK_TAB_KEY = "gm_patch_review_tab_key_v1";
-  function getOrCreateTabKey() {
-    try {
-      const existing = getStoredValue(FALLBACK_TAB_KEY, "");
-      if (existing && typeof existing === "string" && existing.length > 0) {
-        return existing;
-      }
-      const key = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-      setStoredValue(FALLBACK_TAB_KEY, key);
-      return key;
-    } catch {
-      return `tab_${Date.now().toString(36)}`;
-    }
-  }
-  function buildConvoKey() {
-    try {
-      if (typeof location !== "undefined") {
-        const origin = location.origin || "";
-        const pathname = location.pathname || "";
-        if (origin || pathname) {
-          return `${origin}${pathname}`;
-        }
-      }
-    } catch {
-    }
-    return getOrCreateTabKey();
-  }
-  function buildReviewScopeKey(params) {
-    const profileKey = params.profileKey || "default";
-    const repoFullName = params.repoFullName || "unknown";
-    const sourceBranch = params.sourceBranch || "unknown";
-    const targetBranch = params.targetBranch || sourceBranch || "unknown";
-    const convoKey = params.convoKey || buildConvoKey();
-    return `${profileKey}|${repoFullName}|${sourceBranch}|${targetBranch}|${convoKey}`;
-  }
-  function normalizePaths(paths) {
-    if (!Array.isArray(paths)) return [];
-    const set = /* @__PURE__ */ new Set();
-    for (const p of paths) {
-      if (typeof p !== "string") continue;
-      const norm = normalizeRepoPath(p).replace(/\\/g, "/");
-      if (norm === "" || norm === ".") continue;
-      set.add(norm);
-    }
-    return Array.from(set);
-  }
-  function loadAll() {
-    try {
-      const rawStr = getStoredValue(STORE_KEY, "[]");
-      let raw = [];
-      try {
-        raw = JSON.parse(rawStr);
-      } catch {
-        raw = [];
-      }
-      if (!Array.isArray(raw)) return [];
-      const now = Date.now();
-      const filtered = [];
-      for (const entry of raw) {
-        if (!entry || typeof entry !== "object") continue;
-        if (typeof entry.patchId !== "string" || typeof entry.scopeKey !== "string") continue;
-        const expiresAt = typeof entry.expiresAt === "number" ? entry.expiresAt : now + MAX_AGE_MS;
-        if (expiresAt < now) continue;
-        filtered.push({
-          patchId: entry.patchId,
-          scopeKey: entry.scopeKey,
-          paths: normalizePaths(entry.paths),
-          headOid: typeof entry.headOid === "string" ? entry.headOid : void 0,
-          targetHeadOid: typeof entry.targetHeadOid === "string" ? entry.targetHeadOid : void 0,
-          attribution: entry.attribution,
-          timestamp: typeof entry.timestamp === "string" ? entry.timestamp : (/* @__PURE__ */ new Date()).toISOString(),
-          expiresAt
-        });
-      }
-      return filtered;
-    } catch {
-      return [];
-    }
-  }
-  function saveAll(entries) {
-    try {
-      const now = Date.now();
-      const pruned = entries.filter((e) => e.expiresAt >= now).sort((a, b) => a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0);
-      const byScope = /* @__PURE__ */ new Map();
-      for (const e of pruned) {
-        if (!byScope.has(e.scopeKey)) byScope.set(e.scopeKey, []);
-        byScope.get(e.scopeKey).push(e);
-      }
-      const out = [];
-      for (const list of byScope.values()) {
-        const capped = list.slice(-MAX_ENTRIES_PER_SCOPE);
-        out.push(...capped);
-      }
-      setStoredValue(STORE_KEY, JSON.stringify(out));
-    } catch {
-    }
-  }
-  function isRevisionPending(patchId, scopeKey) {
-    if (!patchId || !scopeKey) return false;
-    const entries = loadAll();
-    return entries.some((e) => e.patchId === patchId && e.scopeKey === scopeKey);
-  }
-  function getPendingForScope(scopeKey) {
-    if (!scopeKey) return [];
-    const entries = loadAll();
-    return entries.filter((e) => e.scopeKey === scopeKey);
-  }
-  function restoreRevisionPending(patchId, scopeKey) {
-    if (!patchId || !scopeKey) return false;
-    const entries = loadAll();
-    const filtered = entries.filter((e) => !(e.patchId === patchId && e.scopeKey === scopeKey));
-    if (filtered.length === entries.length) return false;
-    saveAll(filtered);
-    return true;
-  }
-  function pathsOverlap(a, b) {
-    const na = normalizePaths(a);
-    const nb = normalizePaths(b);
-    if (na.length === 0 || nb.length === 0) return false;
-    const setB = new Set(nb);
-    for (const p of na) {
-      if (setB.has(p)) return true;
-    }
-    return false;
-  }
-
   // src/ui/shadowHud.ts
+  init_patchReviewStore();
   function mountShadowHud(onApplyPatchCustom) {
     if (typeof document === "undefined") {
       throw new Error("mountShadowHud requires a DOM environment");
@@ -2949,6 +3085,7 @@ Fix Instructions:
         openPanel,
         updateState: (partial) => updateState(partial),
         dryRun: true,
+        isFocused: true,
         onMarkQueueSuperseded: (_ids) => {
           supersededPatchIds = new Set(_ids);
         }
@@ -2967,6 +3104,7 @@ Fix Instructions:
         openPanel,
         updateState: (partial) => updateState(partial),
         dryRun: true,
+        isFocused: false,
         onMarkQueueSuperseded: (ids) => {
           supersededPatchIds = new Set(ids);
         }
@@ -3019,6 +3157,7 @@ Fix Instructions:
         openPanel,
         updateState: (partial) => updateState(partial),
         dryRun: false,
+        isFocused: false,
         onMarkQueueSuperseded: (ids) => {
           supersededPatchIds = new Set(ids);
         }
@@ -3051,13 +3190,25 @@ Fix Instructions:
               if (pending.patchId && pending.patchId !== patch.id) {
                 state.harvestedPatches = state.harvestedPatches.filter((p) => p.id !== pending.patchId);
               }
-              restoreRevisionPending(pending.patchId, reviewScopeKey);
+              restoreRevisionPending(pending.patchId, {
+                profileKey: config.owner || config.repo || "default",
+                repoFullName: config.repo,
+                sourceBranch: config.branch,
+                targetBranch: config.targetBranch || config.branch,
+                convoKey: buildConvoKey()
+              });
               break;
             }
           }
         } catch {
         }
-        if (isRevisionPending(patch.id, reviewScopeKey)) {
+        if (isRevisionPending(patch.id, {
+          profileKey: config.owner || config.repo || "default",
+          repoFullName: config.repo,
+          sourceBranch: config.branch,
+          targetBranch: config.targetBranch || config.branch,
+          convoKey: buildConvoKey()
+        })) {
           return;
         }
         const next = enqueueHarvestedPatch(state.harvestedPatches, patch);
@@ -3506,6 +3657,7 @@ Fix Instructions:
           transition: all 0.2s ease !important;
         `;
           checkBtn2.textContent = "\u{1F50D} Check Patch";
+          checkBtn2.title = "Check this patch only (dry-run, no commit). Does not include other queued changes.";
           copyBtn2.parentElement.insertBefore(checkBtn2, copyBtn2);
           processedSet.add(pre);
           pre.setAttribute("data-ggh-processed", "true");
@@ -3535,6 +3687,7 @@ Fix Instructions:
           transition: all 0.2s ease !important;
         `;
           checkBtn2.textContent = "\u{1F50D} Check Patch";
+          checkBtn2.title = "Check this patch only (dry-run, no commit). Does not include other queued changes.";
           codeHeader.appendChild(checkBtn2);
           processedSet.add(pre);
           pre.setAttribute("data-ggh-processed", "true");
@@ -3629,7 +3782,7 @@ Fix Instructions:
       user-select: none !important;
       transition: all 0.2s ease !important;
     `;
-      checkBtn.textContent = "\u{1F50D} Check Patch";
+      checkBtn.title = "Check this patch only (dry-run, no commit). Does not include other queued changes.";
       checkBtn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -3782,6 +3935,8 @@ Fix Instructions:
   }
 
   // src/index.ts
+  init_storage();
+  init_storage();
   var controllerInstance = null;
   function initGeminiEdgeHud() {
     if (typeof window === "undefined" || typeof document === "undefined") {
